@@ -1,0 +1,644 @@
+
+> hackus404@0.1.0 build
+> next build
+
+ÔÜá turbopack.root should be absolute, using: C:\Users\lenovo\OneDrive\Desktop\sdfs\PROCURELINK
+Ôû▓ Next.js 16.1.6 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+
+> Build error occurred
+Error: Turbopack build failed with 24 errors:
+./src/services/firebase.ts:5:1
+Module not found: Can't resolve 'firebase/analytics'
+  3 | import { Firestore, getFirestore } from "firebase/firestore";
+  4 | import { FirebaseStorage, getStorage } from "firebase/storage";
+> 5 | import { Analytics, getAnalytics, isSupported } from "firebase/analytics";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  6 |
+  7 | const firebaseConfig = {
+  8 |   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "",
+
+
+
+Import traces:
+  App Route:
+    ./src/services/firebase.ts
+    ./src/app/api/ai/analyze-proposal/route.ts
+
+  Client Component Browser:
+    ./src/services/firebase.ts [Client Component Browser]
+    ./src/app/contracts/page.tsx [Client Component Browser]
+    ./src/app/contracts/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/services/firebase.ts [Client Component SSR]
+    ./src/app/contracts/page.tsx [Client Component SSR]
+    ./src/app/contracts/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./src/services/firebase.ts:1:1
+Module not found: Can't resolve 'firebase/app'
+> 1 | import { FirebaseApp, getApps, initializeApp } from "firebase/app";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  2 | import { Auth, getAuth } from "firebase/auth";
+  3 | import { Firestore, getFirestore } from "firebase/firestore";
+  4 | import { FirebaseStorage, getStorage } from "firebase/storage";
+
+
+
+Import traces:
+  App Route:
+    ./src/services/firebase.ts
+    ./src/app/api/ai/analyze-proposal/route.ts
+
+  Client Component Browser:
+    ./src/services/firebase.ts [Client Component Browser]
+    ./src/app/contracts/page.tsx [Client Component Browser]
+    ./src/app/contracts/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/services/firebase.ts [Client Component SSR]
+    ./src/app/contracts/page.tsx [Client Component SSR]
+    ./src/app/contracts/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./src/app/login/page.tsx:4:1
+Module not found: Can't resolve 'firebase/auth'
+  2 |
+  3 | import { useState } from "react";
+> 4 | import { signInWithEmailAndPassword } from "firebase/auth";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  5 | import { auth } from "@/services/firebase";
+  6 | import { useRouter } from "next/navigation";
+  7 | import Link from "next/link";
+
+
+
+Import traces:
+  Client Component Browser:
+    ./src/app/login/page.tsx [Client Component Browser]
+    ./src/app/login/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/login/page.tsx [Client Component SSR]
+    ./src/app/login/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./src/app/signup/page.tsx:4:1
+Module not found: Can't resolve 'firebase/auth'
+  2 |
+  3 | import { useState } from "react";
+> 4 | import { createUserWithEmailAndPassword } from "firebase/auth";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  5 | import { doc, setDoc } from "firebase/firestore";
+  6 | import { auth, db } from "@/services/firebase";
+  7 | import { useRouter } from "next/navigation";
+
+
+
+Import traces:
+  Client Component Browser:
+    ./src/app/signup/page.tsx [Client Component Browser]
+    ./src/app/signup/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/signup/page.tsx [Client Component SSR]
+    ./src/app/signup/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./src/services/firebase.ts:2:1
+Module not found: Can't resolve 'firebase/auth'
+  1 | import { FirebaseApp, getApps, initializeApp } from "firebase/app";
+> 2 | import { Auth, getAuth } from "firebase/auth";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  3 | import { Firestore, getFirestore } from "firebase/firestore";
+  4 | import { FirebaseStorage, getStorage } from "firebase/storage";
+  5 | import { Analytics, getAnalytics, isSupported } from "firebase/analytics";
+
+
+
+Import traces:
+  App Route:
+    ./src/services/firebase.ts
+    ./src/app/api/ai/analyze-proposal/route.ts
+
+  Client Component Browser:
+    ./src/services/firebase.ts [Client Component Browser]
+    ./src/app/contracts/page.tsx [Client Component Browser]
+    ./src/app/contracts/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/services/firebase.ts [Client Component SSR]
+    ./src/app/contracts/page.tsx [Client Component SSR]
+    ./src/app/contracts/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./src/app/api/ai/analyze-proposal/route.ts:2:1
+Module not found: Can't resolve 'firebase/firestore'
+  1 | import { NextRequest, NextResponse } from "next/server";
+> 2 | import { collection, doc, getDoc, getDocs, query, updateDoc, where } from "firebase/firestore";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  3 | import { getDownloadURL, ref } from "firebase/storage";
+  4 | import { db, storage } from "@/services/firebase";
+  5 | import pdfParse from "pdf-parse";
+
+
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./src/app/companies/[id]/page.tsx:4:1
+Module not found: Can't resolve 'firebase/firestore'
+  2 |
+  3 | import { useEffect, useState } from "react";
+> 4 | import { doc, getDoc, updateDoc, arrayUnion, arrayRemove, collection, query, where, addDoc, serverTimestamp, getDocs } from "firebase/firestore";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  5 | import { db } from "@/services/firebase";
+  6 | import { useAuth } from "@/contexts/AuthContext";
+  7 | import ProfileHeader from "@/components/ProfileHeader";
+
+
+
+Import traces:
+  Client Component Browser:
+    ./src/app/companies/[id]/page.tsx [Client Component Browser]
+    ./src/app/companies/[id]/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/companies/[id]/page.tsx [Client Component SSR]
+    ./src/app/companies/[id]/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./src/app/companies/page.tsx:4:1
+Module not found: Can't resolve 'firebase/firestore'
+  2 |
+  3 | import { useEffect, useState } from "react";
+> 4 | import { collection, doc, updateDoc, arrayUnion, arrayRemove, getDocs } from "firebase/firestore";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  5 | import { db } from "@/services/firebase";
+  6 | import { useAuth } from "@/contexts/AuthContext";
+  7 | import Link from "next/link";
+
+
+
+Import traces:
+  Client Component Browser:
+    ./src/app/companies/page.tsx [Client Component Browser]
+    ./src/app/companies/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/companies/page.tsx [Client Component SSR]
+    ./src/app/companies/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./src/app/contracts/[id]/apply/page.tsx:4:1
+Module not found: Can't resolve 'firebase/firestore'
+  2 |
+  3 | import { useEffect, useState, useRef, useCallback } from "react";
+> 4 | import { doc, getDoc, collection, addDoc, Timestamp } from "firebase/firestore";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  5 | import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
+  6 | import { db, storage } from "@/services/firebase";
+  7 | import { useAuth } from "@/contexts/AuthContext";
+
+
+
+Import traces:
+  Client Component Browser:
+    ./src/app/contracts/[id]/apply/page.tsx [Client Component Browser]
+    ./src/app/contracts/[id]/apply/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/contracts/[id]/apply/page.tsx [Client Component SSR]
+    ./src/app/contracts/[id]/apply/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./src/app/contracts/[id]/page.tsx:4:1
+Module not found: Can't resolve 'firebase/firestore'
+  2 |
+  3 | import { useEffect, useState } from "react";
+> 4 | import { doc, getDoc, collection, query, where, updateDoc, addDoc, getDocs, deleteDoc, Timestamp } from "firebase/firestore";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  5 | import { db } from "@/services/firebase";
+  6 | import { useAuth } from "@/contexts/AuthContext";
+  7 | import { useParams } from "next/navigation";
+
+
+
+Import traces:
+  Client Component Browser:
+    ./src/app/contracts/[id]/page.tsx [Client Component Browser]
+    ./src/app/contracts/[id]/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/contracts/[id]/page.tsx [Client Component SSR]
+    ./src/app/contracts/[id]/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./src/app/contracts/page.tsx:4:1
+Module not found: Can't resolve 'firebase/firestore'
+  2 |
+  3 | import { useEffect, useState } from "react";
+> 4 | import { collection, orderBy, query, where, updateDoc, deleteDoc, doc, Timestamp, getDocs } from "firebase/firestore";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  5 | import { db } from "@/services/firebase";
+  6 | import { useAuth } from "@/contexts/AuthContext";
+  7 | import Link from "next/link";
+
+
+
+Import traces:
+  Client Component Browser:
+    ./src/app/contracts/page.tsx [Client Component Browser]
+    ./src/app/contracts/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/contracts/page.tsx [Client Component SSR]
+    ./src/app/contracts/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./src/app/insights/page.tsx:4:1
+Module not found: Can't resolve 'firebase/firestore'
+  2 |
+  3 | import { useEffect, useState } from "react";
+> 4 | import { collection, query, where, updateDoc, doc, deleteDoc, addDoc, getDocs, getDoc, Timestamp, writeBatch, deleteField } from "firebase/firestore";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  5 | import { db } from "@/services/firebase";
+  6 | import { useAuth } from "@/contexts/AuthContext";
+  7 | import { runFullPipeline, ProposalAnalysis, JudgeResult, FullPipelineResult } from "@/services/aiService";
+
+
+
+Import traces:
+  Client Component Browser:
+    ./src/app/insights/page.tsx [Client Component Browser]
+    ./src/app/insights/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/insights/page.tsx [Client Component SSR]
+    ./src/app/insights/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./src/app/messages/page.tsx:4:1
+Module not found: Can't resolve 'firebase/firestore'
+  2 |
+  3 | import { useEffect, useState } from "react";
+> 4 | import { collection, query, where, or, doc, getDoc, getDocs } from "firebase/firestore";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  5 | import { db } from "@/services/firebase";
+  6 | import { useAuth } from "@/contexts/AuthContext";
+  7 | import { useRouter } from "next/navigation";
+
+
+
+Import traces:
+  Client Component Browser:
+    ./src/app/messages/page.tsx [Client Component Browser]
+    ./src/app/messages/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/messages/page.tsx [Client Component SSR]
+    ./src/app/messages/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./src/app/notifications/page.tsx:4:1
+Module not found: Can't resolve 'firebase/firestore'
+  2 |
+  3 | import { useEffect, useState } from "react";
+> 4 | import { collection, query, where, orderBy, doc, updateDoc, deleteDoc, Timestamp, getDocs } from "firebase/firestore";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  5 | import { db } from "@/services/firebase";
+  6 | import { useAuth } from "@/contexts/AuthContext";
+  7 | import { useRouter } from "next/navigation";
+
+
+
+Import traces:
+  Client Component Browser:
+    ./src/app/notifications/page.tsx [Client Component Browser]
+    ./src/app/notifications/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/notifications/page.tsx [Client Component SSR]
+    ./src/app/notifications/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./src/app/page.tsx:4:1
+Module not found: Can't resolve 'firebase/firestore'
+  2 |
+  3 | import { useEffect, useState, useRef } from "react";
+> 4 | import { collection, query, orderBy, addDoc, serverTimestamp, getDocs, doc, updateDoc, arrayUnion, arrayRemove } from "firebase/firestore";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  5 | import { db } from "@/services/firebase";
+  6 | import { useAuth } from "@/contexts/AuthContext";
+  7 | import PostCard from "@/components/PostCard";
+
+
+
+Import traces:
+  Client Component Browser:
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./src/app/profile/page.tsx:4:1
+Module not found: Can't resolve 'firebase/firestore'
+  2 |
+  3 | import { useEffect, useState } from "react";
+> 4 | import { doc, updateDoc, collection, query, where, arrayUnion, orderBy, Timestamp, getDocs } from "firebase/firestore";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  5 | import { db } from "@/services/firebase";
+  6 | import { useAuth } from "@/contexts/AuthContext";
+  7 | import ProfileHeader from "@/components/ProfileHeader";
+
+
+
+Import traces:
+  Client Component Browser:
+    ./src/app/profile/page.tsx [Client Component Browser]
+    ./src/app/profile/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/profile/page.tsx [Client Component SSR]
+    ./src/app/profile/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./src/app/signup/page.tsx:5:1
+Module not found: Can't resolve 'firebase/firestore'
+  3 | import { useState } from "react";
+  4 | import { createUserWithEmailAndPassword } from "firebase/auth";
+> 5 | import { doc, setDoc } from "firebase/firestore";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  6 | import { auth, db } from "@/services/firebase";
+  7 | import { useRouter } from "next/navigation";
+  8 | import Link from "next/link";
+
+
+
+Import traces:
+  Client Component Browser:
+    ./src/app/signup/page.tsx [Client Component Browser]
+    ./src/app/signup/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/signup/page.tsx [Client Component SSR]
+    ./src/app/signup/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./src/components/MessageBox.tsx:4:1
+Module not found: Can't resolve 'firebase/firestore'
+  2 |
+  3 | import { useEffect, useRef, useState } from "react";
+> 4 | import { collection, query, where, addDoc, or, Timestamp, getDocs } from "firebase/firestore";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  5 | import { db } from "@/services/firebase";
+  6 | import { useAuth } from "@/contexts/AuthContext";
+  7 | import { format, isToday, isYesterday } from "date-fns";
+
+
+
+Import traces:
+  Client Component Browser:
+    ./src/components/MessageBox.tsx [Client Component Browser]
+    ./src/app/messages/page.tsx [Client Component Browser]
+    ./src/app/messages/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/components/MessageBox.tsx [Client Component SSR]
+    ./src/app/messages/page.tsx [Client Component SSR]
+    ./src/app/messages/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./src/components/Navbar.tsx:7:1
+Module not found: Can't resolve 'firebase/firestore'
+   5 | import { useEffect, useState } from "react";
+   6 | import { usePathname } from "next/navigation";
+>  7 | import { collection, onSnapshot, query, where } from "firebase/firestore";
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   8 | import { db } from "@/services/firebase";
+   9 |
+  10 | export default function Navbar() {
+
+
+
+Import trace:
+  Server Component:
+    ./src/components/Navbar.tsx
+    ./src/app/layout.tsx
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./src/components/PostCard.tsx:5:1
+Module not found: Can't resolve 'firebase/firestore'
+  3 | import { useState, useRef } from "react";
+  4 | import { formatDistanceToNow } from "date-fns";
+> 5 | import { doc, updateDoc, arrayUnion, arrayRemove, Timestamp } from "firebase/firestore";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  6 | import { db } from "@/services/firebase";
+  7 | import { useAuth } from "@/contexts/AuthContext";
+  8 |
+
+
+
+Import traces:
+  Client Component Browser:
+    ./src/components/PostCard.tsx [Client Component Browser]
+    ./src/app/page.tsx [Client Component Browser]
+    ./src/app/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/components/PostCard.tsx [Client Component SSR]
+    ./src/app/page.tsx [Client Component SSR]
+    ./src/app/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./src/services/firebase.ts:3:1
+Module not found: Can't resolve 'firebase/firestore'
+  1 | import { FirebaseApp, getApps, initializeApp } from "firebase/app";
+  2 | import { Auth, getAuth } from "firebase/auth";
+> 3 | import { Firestore, getFirestore } from "firebase/firestore";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 | import { FirebaseStorage, getStorage } from "firebase/storage";
+  5 | import { Analytics, getAnalytics, isSupported } from "firebase/analytics";
+  6 |
+
+
+
+Import traces:
+  App Route:
+    ./src/services/firebase.ts
+    ./src/app/api/ai/analyze-proposal/route.ts
+
+  Client Component Browser:
+    ./src/services/firebase.ts [Client Component Browser]
+    ./src/app/contracts/page.tsx [Client Component Browser]
+    ./src/app/contracts/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/services/firebase.ts [Client Component SSR]
+    ./src/app/contracts/page.tsx [Client Component SSR]
+    ./src/app/contracts/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./src/app/api/ai/analyze-proposal/route.ts:3:1
+Module not found: Can't resolve 'firebase/storage'
+  1 | import { NextRequest, NextResponse } from "next/server";
+  2 | import { collection, doc, getDoc, getDocs, query, updateDoc, where } from "firebase/firestore";
+> 3 | import { getDownloadURL, ref } from "firebase/storage";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 | import { db, storage } from "@/services/firebase";
+  5 | import pdfParse from "pdf-parse";
+  6 |
+
+
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./src/app/contracts/[id]/apply/page.tsx:5:1
+Module not found: Can't resolve 'firebase/storage'
+  3 | import { useEffect, useState, useRef, useCallback } from "react";
+  4 | import { doc, getDoc, collection, addDoc, Timestamp } from "firebase/firestore";
+> 5 | import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  6 | import { db, storage } from "@/services/firebase";
+  7 | import { useAuth } from "@/contexts/AuthContext";
+  8 | import { useParams, useRouter } from "next/navigation";
+
+
+
+Import traces:
+  Client Component Browser:
+    ./src/app/contracts/[id]/apply/page.tsx [Client Component Browser]
+    ./src/app/contracts/[id]/apply/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/app/contracts/[id]/apply/page.tsx [Client Component SSR]
+    ./src/app/contracts/[id]/apply/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+./src/services/firebase.ts:4:1
+Module not found: Can't resolve 'firebase/storage'
+  2 | import { Auth, getAuth } from "firebase/auth";
+  3 | import { Firestore, getFirestore } from "firebase/firestore";
+> 4 | import { FirebaseStorage, getStorage } from "firebase/storage";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  5 | import { Analytics, getAnalytics, isSupported } from "firebase/analytics";
+  6 |
+  7 | const firebaseConfig = {
+
+
+
+Import traces:
+  App Route:
+    ./src/services/firebase.ts
+    ./src/app/api/ai/analyze-proposal/route.ts
+
+  Client Component Browser:
+    ./src/services/firebase.ts [Client Component Browser]
+    ./src/app/contracts/page.tsx [Client Component Browser]
+    ./src/app/contracts/page.tsx [Server Component]
+
+  Client Component SSR:
+    ./src/services/firebase.ts [Client Component SSR]
+    ./src/app/contracts/page.tsx [Client Component SSR]
+    ./src/app/contracts/page.tsx [Server Component]
+
+https://nextjs.org/docs/messages/module-not-found
+
+
+    at <unknown> (./src/services/firebase.ts:5:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./src/services/firebase.ts:1:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./src/app/login/page.tsx:4:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./src/app/signup/page.tsx:4:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./src/services/firebase.ts:2:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./src/app/api/ai/analyze-proposal/route.ts:2:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./src/app/companies/[id]/page.tsx:4:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./src/app/companies/page.tsx:4:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./src/app/contracts/[id]/apply/page.tsx:4:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./src/app/contracts/[id]/page.tsx:4:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./src/app/contracts/page.tsx:4:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./src/app/insights/page.tsx:4:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./src/app/messages/page.tsx:4:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./src/app/notifications/page.tsx:4:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./src/app/page.tsx:4:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./src/app/profile/page.tsx:4:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./src/app/signup/page.tsx:5:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./src/components/MessageBox.tsx:4:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./src/components/Navbar.tsx:7:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./src/components/PostCard.tsx:5:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./src/services/firebase.ts:3:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./src/app/api/ai/analyze-proposal/route.ts:3:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./src/app/contracts/[id]/apply/page.tsx:5:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)
+    at <unknown> (./src/services/firebase.ts:4:1)
+    at <unknown> (https://nextjs.org/docs/messages/module-not-found)

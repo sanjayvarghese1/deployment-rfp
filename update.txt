@@ -1,0 +1,18 @@
+Small update log:
+
+- Deleted the default home page route so the app no longer uses the root landing page.
+- Replaced the old Ollama-named shared AI client with an OpenRouter-named client.
+- Updated proposal analysis, RFP parsing, proposal chat, proposal editing, and RFP generation code to use the OpenRouter client.
+- Kept the AI workflow working through OpenRouter with the same primary and fallback models.
+- Added Firestore rules/config files so the app has matching backend access rules in the repo.
+- Added error handlers to Firestore live listeners so permission issues fail softly instead of throwing uncaught snapshot errors.
+
+
+
+# backend
+cd C:\Users\lenovo\OneDrive\Desktop\FASTAPI\backend
+C:\Users\lenovo\AppData\Local\Programs\Python\Python313\python.exe -m uvicorn app.main:app --reload --port 8000
+
+# frontend
+cd C:\Users\lenovo\OneDrive\Desktop\FASTAPI\frontend
+npm run dev

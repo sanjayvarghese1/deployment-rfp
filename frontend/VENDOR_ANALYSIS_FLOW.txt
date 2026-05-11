@@ -1,0 +1,481 @@
+================================================================================
+VENDOR RESPONSE SUBMISSION TO ANALYSIS FLOW
+================================================================================
+
+PHASE 1: VENDOR RESPONSE SUBMISSION
+================================================================================
+
+1. USER SUBMITS VENDOR PROPOSAL
+   - Location: /contracts/[id]/apply (page.tsx - client component)
+   - Entry Point: Vendor fills out form and clicks "Submit Proposal"
+   
+   Data Collected:
+   - vendor_name: string
+   - vendor_price: string (e.g., "$50,000")
+   - vendor_timeline: string (e.g., "3 months")
+   - vendor_experience: string (proposal text)
+   - proposal_data: JSON (full proposal structure)
+   - proposal_file: PDF URL (if uploaded)
+   
+   Action: Form data POSTed to /api/contracts/[id]/apply/submit
+
+2. PROPOSAL STORED IN DATABASE
+   - Database: Supabase PostgreSQL
+   - Table: "proposals"
+   
+   Fields Populated:
+   - id: UUID
+   - contract_id: reference to contracts table
+   - vendor_name: string
+   - vendor_id: reference to companies table
+   - price: string (raw or extracted)
+   - timeline: string (raw or extracted)
+   - experience: string
+   - proposal_data: JSON (full proposal)
+   - extracted_text: string (PDF text if uploaded)
+   - proposal_type: "uploaded_pdf" or "generated"
+   - proposal_file: URL to storage
+   - created_at: timestamp
+   - ai_score: null (waiting for analysis)
+   - risk_level: null (waiting for analysis)
+
+3. PROPOSAL EXTRACTION (IF PDF UPLOADED)
+   - API Route: /api/extract-pdf
+   - Trigger: User uploads PDF proposal
+   
+   Process:
+   a) PDF URL fetched from Supabase Storage
+   b) pdf-parse library extracts text from PDF
+   c) Extracted text stored in proposals.extracted_text
+   d) Text returned to UI for display
+
+   Output:
+   - extracted_text: string (readable proposal text)
+   - page_count: number
+   - text_length: number
+
+
+PHASE 2: ANALYSIS TRIGGER
+================================================================================
+
+4. BACKGROUND ANALYSIS JOB INITIATED
+   - Location: /app/contracts/[id]/page.tsx (user clicks "Analyze Responses")
+   - Endpoint: POST /api/ai/analyze-proposal/background
+   
+   Request Payload:
+   {
+     contract_id: string,
+     contract: {
+       title: string,
+       description: string,
+       budget: string,
+       deadline: string,
+       certifications: string
+     },
+     vendors: [
+       {
+         proposal_id: string,
+         vendor_name: string,
+         price: string,
+         timeline: string,
+         experience: string,
+         proposal_data: string
+       }
+     ]
+   }
+
+5. ANALYSIS JOB CREATED
+   - Database Table: "analysis_jobs"
+   
+   Fields:
+   - id: UUID
+   - contract_id: foreign key
+   - status: "queued" -> "running" -> "completed" / "failed"
+   - request: JSON (full request payload)
+   - result: JSON (analysis output once complete)
+   - progress: string (progress messages)
+   - error: string (error message if failed)
+   - created_at: timestamp
+   - updated_at: timestamp
+
+   API Response (202 Accepted):
+   {
+     job_id: string,
+     status: "queued"
+   }
+
+
+PHASE 3: AI ANALYSIS PIPELINE (3-AGENT SYSTEM)
+================================================================================
+
+6. AGENT 1: DOCUMENT EXTRACTOR
+   - Model: OpenRouter (minimax/minimax-m2.7)
+   - Input: Contract details + vendor proposal details
+   
+   Processing:
+   a) Build RFP text from contract fields:
+      - Contract Title
+      - Description
+      - Budget
+      - Deadline
+      - Required Certifications
+   
+   b) Build vendor text from proposal:
+      - Vendor Name
+      - Price
+      - Timeline
+      - Experience
+      - Full Proposal Data (if available)
+   
+   c) Prompt: "Extract evaluation-relevant content, ignore boilerplate"
+      - Removes legal text, footers, generic fluff
+      - Normalizes numbers, dates, technical specs
+      - Outputs clean Markdown structure
+   
+   Output: rfpMarkdown (string), vendorMarkdown (string)
+   
+   Example Output Structure:
+   ─────────────────────────
+   # Document Type
+   RFP / Vendor Proposal
+   
+   # Core Summary
+   3-6 line summary of document purpose
+   
+   # Evaluation-Relevant Fields
+   - Contract Title: ...
+   - Budget: ...
+   - Timeline: ...
+   - Vendor Price: ...
+   - Compliance Requirements: ...
+   
+   # Criteria Extraction
+   - Price: ...
+   - Timeline: ...
+   - Technical Fit Signals: ...
+   - Experience Signals: ...
+   
+   # Missing / Unclear Information
+   - [list gaps]
+
+
+7. AGENT 2: VENDOR SCORER
+   - Model: OpenRouter (minimax/minimax-m2.5)
+   - Input: rfpMarkdown + vendorMarkdown
+   
+   Scoring Criteria (Weighted):
+   a) Technical Fit (30%)
+      - Does proposal match scope/requirements?
+      - Specific relevance vs. generic?
+   
+   b) Cost Efficiency (20%)
+      - Is price reasonable for budget?
+      - Value proposition clear?
+   
+   c) Relevant Experience (20%)
+      - Prior similar projects?
+      - Directly relevant vs. tangential?
+   
+   d) Timeline Fit (15%)
+      - Realistic schedule?
+      - Aligned with deadline?
+   
+   e) Compliance & Completeness (15%)
+      - Full proposal vs. incomplete?
+      - All requirements addressed?
+      - Mandatory certifications met?
+   
+   Calculation:
+   overall_score = (tech_fit * 0.30) + (cost * 0.20) + (experience * 0.20) 
+                   + (timeline * 0.15) + (compliance * 0.15)
+   
+   Recommendation Mapping:
+   - 85-100: Strongly Recommended
+   - 70-84: Recommended
+   - 55-69: Consider
+   - 40-54: Risky
+   - Below 40: Not Recommended
+   
+   Output: ProposalAnalysis JSON
+   {
+     vendor_name: string,
+     overall_score: number (0-100),
+     independent_recommendation: string,
+     criterion_scores: {
+       technical_fit: { score: number, reason: string },
+       cost_efficiency: { score: number, reason: string },
+       relevant_experience: { score: number, reason: string },
+       timeline_fit: { score: number, reason: string },
+       compliance_completeness: { score: number, reason: string }
+     },
+     strengths: [string],
+     weaknesses: [string],
+     risk_flags: [string],
+     analysis_summary: string
+   }
+
+
+8. AGENT 3: VENDOR JUDGE (COMPARATIVE ANALYSIS)
+   - Model: OpenRouter (minimax/minimax-m2.7)
+   - Input: rfpMarkdown + all vendor scores from Agent 2
+   
+   Comparative Process:
+   a) Head-to-head comparison of all vendors
+   b) Ranking from best to worst fit
+   c) NOT just price-based (technical alignment prioritized)
+   d) Flag vendors with major red flags
+   
+   Comparative Labels:
+   - Best Fit
+   - Strong Candidate
+   - Qualified but Weaker Fit
+   - High Risk
+   - Not Recommended
+   
+   Output: JudgeResult JSON
+   {
+     comparative_analysis: {
+       best_vendor: string,
+       selection_summary: string,
+       ranking: [
+         {
+           vendor_name: string,
+           final_score: number,
+           comparative_recommendation: string,
+           strengths: [string],
+           weaknesses: [string],
+           why: string
+         }
+       ]
+     },
+     final_recommendation_view: {
+       recommended_vendor: string,
+       headline: string,
+       summary: string,
+       why_this_vendor_won: [string],
+       key_tradeoffs: [string],
+       other_vendors_snapshot: [
+         {
+           vendor_name: string,
+           label: string,
+           score: number,
+           note: string
+         }
+       ]
+     }
+   }
+
+
+PHASE 4: RESULTS STORAGE & PERSISTENCE
+================================================================================
+
+9. PROPOSAL SCORES SAVED
+   - Database: Supabase PostgreSQL
+   - Table: "proposals"
+   
+   For each vendor proposal:
+   UPDATE proposals
+   SET
+     ai_score = score.overall_score,
+     risk_level = "High" / "Low" (based on risk_flags)
+   WHERE id = proposal_id AND contract_id = contract_id;
+
+10. ANALYSIS RESULTS CACHED
+    - Database: Supabase PostgreSQL
+    - Table: "contracts"
+    
+    UPDATE contracts
+    SET
+      last_analysis_result = {
+        cache_key: string (unique ID for this analysis run),
+        created_at: ISO timestamp,
+        vendor_count: number,
+        analyses_by_proposal_id: {
+          [proposal_id]: ProposalAnalysis (Agent 2 output)
+        },
+        judge_result: JudgeResult (Agent 3 output)
+      }
+    WHERE id = contract_id;
+
+11. ANALYSIS JOB COMPLETED
+    - Database: "analysis_jobs"
+    
+    UPDATE analysis_jobs
+    SET
+      status = "completed",
+      progress = "Analysis complete",
+      result = { full pipeline output },
+      updated_at = now()
+    WHERE id = job_id;
+
+
+PHASE 5: UI DISPLAY & RENDERING
+================================================================================
+
+12. INSIGHTS PAGE LOADS ANALYSIS
+    - Location: /app/insights/InsightsPageClient.tsx
+    - Trigger: User navigates to Insights or Analysis Complete
+    
+    Process:
+    a) Fetch contracts with last_analysis_result
+    b) Extract vendor scores and judge ranking
+    c) Render proposal metrics dashboard:
+       - Total vendor count
+       - Avg/Median price
+       - Budget vs. proposed price chart
+       - Risk distribution (High/Low)
+       - Vendor summary table
+    
+    Display Components:
+    - ProposalMetricsComparison: Metrics cards + price chart + risk dist
+    - VendorComparisonChart: Visual comparison of vendors
+    - Proposal cards: Individual vendor details with extracted price/timeline
+
+13. CONTRACT DETAIL PAGE LOADS ANALYSIS
+    - Location: /app/contracts/[id]/page.tsx
+    - Trigger: User views contract details
+    
+    Process:
+    a) Fetch contract with cached last_analysis_result
+    b) Display vendor responses section:
+       - List of all proposals
+       - Each proposal shows:
+         * Vendor name
+         * AI score badge (color: success/warning/danger)
+         * Risk level
+         * Extracted price (sanitized)
+         * Extracted timeline (sanitized)
+         * Experience summary
+         * Collapsible "View detailed AI breakdown"
+    
+    c) Breakdown details (in collapsible):
+       - Analysis summary
+       - Criterion scores table
+       - Strengths/Weaknesses bullets
+       - Risk flags
+    
+    d) Judge's final recommendation (from Agent 3)
+       - Recommended vendor headline
+       - Why this vendor won
+       - Key tradeoffs
+       - Ranking of other vendors
+
+14. INDIVIDUAL PROPOSAL REPORT PAGE
+    - Location: /app/contracts/[id]/reports/[proposalId]/page.tsx
+    - Trigger: User clicks "View Report" on a proposal
+    
+    Display:
+    - Full proposal analysis from Agent 2
+    - Criterion-by-criterion breakdown
+    - Strength/weakness assessment
+    - Risk flags highlighted
+    - Comparison to other vendors (if Judge output available)
+    - Original proposal document link/download
+
+
+PHASE 6: ERROR HANDLING & FALLBACK
+================================================================================
+
+15. ANALYSIS JOB POLLING (REAL-TIME STATUS)
+    - If analysis is long-running, UI polls /api/ai/analysis-jobs/[jobId]
+    
+    Endpoint: GET /api/ai/analysis-jobs/{jobId}
+    
+    Response:
+    {
+      id: string,
+      status: "queued" | "running" | "completed" | "failed",
+      progress: string,
+      result: object | null,
+      error: string | null
+    }
+    
+    UI Behavior:
+    - Show "Analyzing..." while status is "queued" or "running"
+    - Display progress message
+    - On completion: refresh analysis display
+    - On failure: show error message and retry button
+
+16. CACHED ANALYSIS RESTORATION
+    - If analysis job fails or network times out
+    - Check contracts.last_analysis_result for cached data
+    - Restore from previous successful run
+    - UI shows "Restored from cached analysis"
+
+
+================================================================================
+DATA FLOW SUMMARY
+================================================================================
+
+Vendor Response
+      ↓
+  Stored in DB (proposals table)
+      ↓
+  [If PDF] Extract Text → extracted_text field
+      ↓
+  User Triggers Analysis
+      ↓
+  Create Analysis Job (queued)
+      ↓
+  AGENT 1: Extract RFP + Proposal Markdown
+      ↓
+  AGENT 2: Score Each Vendor (weighted criteria)
+      ↓
+  AGENT 3: Judge All Vendors (comparative ranking)
+      ↓
+  Save Scores → proposals table (ai_score, risk_level)
+  Save Analysis → contracts table (last_analysis_result)
+  Update Job → analysis_jobs table (status = completed)
+      ↓
+  UI Fetches & Displays Results
+      ↓
+  Show Metrics Dashboard + Vendor Ranking
+
+
+================================================================================
+KEY TABLES & RELATIONSHIPS
+================================================================================
+
+contracts
+├─ id (PK)
+├─ title, description, budget, deadline
+├─ last_analysis_result (JSON) ← Contains full analysis output
+└─ created_by (FK: users)
+
+proposals
+├─ id (PK)
+├─ contract_id (FK)
+├─ vendor_id (FK)
+├─ vendor_name, price, timeline, experience
+├─ proposal_data (JSON)
+├─ extracted_text (if PDF)
+├─ ai_score (Agent 2 output) ← Numerical score
+├─ risk_level (calculated from risk_flags)
+└─ created_at
+
+analysis_jobs
+├─ id (PK)
+├─ contract_id (FK)
+├─ status (queued|running|completed|failed)
+├─ request (JSON) ← Original analysis request
+├─ result (JSON) ← Full analysis output
+├─ progress (string) ← Status messages
+├─ error (string)
+└─ created_at, updated_at
+
+
+================================================================================
+DEPENDENCIES & EXTERNAL SERVICES
+================================================================================
+
+- Supabase: Database (PostgreSQL) + Storage
+- OpenRouter API: LLM calls (MiniMax models)
+- Langfuse: Observability & tracing (optional, for monitoring)
+- pdf-parse: PDF text extraction
+- pdfjs-dist: PDF rendering (client-side)
+- jsPDF: PDF generation for proposals
+- Nodemailer: Email notifications (on proposal accept)
+
+================================================================================
+END OF FLOW DOCUMENT
+================================================================================
