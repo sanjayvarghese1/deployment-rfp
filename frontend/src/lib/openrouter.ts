@@ -47,12 +47,13 @@ export const MODEL = {
 };
 
 export const AGENT_MODEL = {
-  DOCUMENT_ANALYSIS: MODEL.PRIMARY,
+  DOCUMENT_ANALYSIS: "qwen/qwen3-max",
   REQUIREMENT_EXTRACTION: MODEL.PRIMARY,
+  INTAKE_EXTRACTION: "qwen/qwen-turbo",
   TEMPLATE_SELECTION: MODEL.PRIMARY,
   TEMPLATE_FORMATTING: MODEL.PRIMARY,
-  RFP_WRITING: MODEL.PRIMARY,
-  QUALITY_ASSURANCE: MODEL.PRIMARY,
+  RFP_WRITING: "qwen/qwen3-max",
+  QUALITY_ASSURANCE: "qwen/qwen3-max",
 };
 
 /* ===================================================

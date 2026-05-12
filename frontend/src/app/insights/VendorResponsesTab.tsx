@@ -88,13 +88,19 @@ export default function VendorResponsesTab() {
 
   const selectedContractData = myContracts.find((c) => c.contract_id === selectedContract);
   const savedAnalysis = selectedContractData?.last_analysis_result;
-  const activeAnalysis = savedAnalysis ?? (judgeResult ? {
+  const activeAnalysis = backgroundJobId || analyzing || judgeResult || Object.keys(analyses).length > 0 ? {
     analyses_by_proposal_id: analyses,
     judge_result: judgeResult,
     vendor_count: allProposals.length,
     created_at: "",
     cache_key: "",
-  } : null);
+  } : savedAnalysis;
+
+  useEffect(() => {
+    if (backgroundJobId || analyzing) {
+      setRestoredAnalysisFor(null);
+    }
+  }, [backgroundJobId, analyzing]);
 
   useEffect(() => {
     if (!selectedContract || !selectedContractData || allProposals.length === 0) return;
@@ -157,6 +163,12 @@ export default function VendorResponsesTab() {
           }
           setAnalyses(newAnalyses);
           setJudgeResult(job.result.judge ?? null);
+          void (async () => {
+            const { data } = await supabase.from("contracts").select("*").eq("id", selectedContract).maybeSingle();
+            if (data) {
+              setMyContracts((current) => current.map((contract) => contract.contract_id === selectedContract ? { contract_id: data.id, ...normalizeDoc(data) } : contract));
+            }
+          })();
           setAnalyzing(false);
           setBackgroundJobId(null);
           window.localStorage.removeItem(`analysis-job:${selectedContract}`);

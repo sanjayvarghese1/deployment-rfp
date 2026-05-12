@@ -515,8 +515,8 @@ export async function generateRfpPdf(
         format: "A4",
         sandbox,
         remove_blank: true,
-        wait_for_network: true,
-        disable_javascript: false,
+        wait_for_network: false,
+        disable_javascript: true,
       }),
     });
 

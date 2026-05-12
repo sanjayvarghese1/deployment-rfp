@@ -25,8 +25,8 @@ export interface Contract {
   rfp_pdf_base64: string;
   rfp_decomposition?: Record<string, any>;
   rfp_template?: string;
-  uploaded_pdf_name: string;
-  uploaded_pdf_analysis: Record<string, unknown>;
+  rfp_file_name?: string;
+  last_analysis_result?: Record<string, unknown>;
   created_at?: string;
 }
 

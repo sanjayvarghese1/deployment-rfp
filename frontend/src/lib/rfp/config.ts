@@ -140,7 +140,7 @@ export const GENERATION_BATCHES: SectionKey[][] = [
 /* ─── Model config ─── */
 export const PIPELINE_MODELS = {
   documentAnalysis: "qwen/qwen-plus",
-  rfpGeneration: "qwen/qwen3-max",
+  rfpGeneration: "qwen/qwen-plus-2025-01-25",
   templateSelection: "qwen/qwen-turbo",
   qualityAssurance: "qwen/qwen-plus",
 };

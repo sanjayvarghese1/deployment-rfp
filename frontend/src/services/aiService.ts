@@ -219,7 +219,8 @@ export interface VendorInput {
 export async function runFullPipeline(
   contract: { title: string; description: string; budget: string; deadline?: string; certifications?: string },
   vendors: VendorInput[],
-  apiBaseUrl?: string
+  apiBaseUrl?: string,
+  options?: { fastMode?: boolean }
 ): Promise<FullPipelineResult> {
   // Set a 15-minute timeout for the full pipeline (matching the API's maxDuration)
   const controller = new AbortController();
@@ -237,6 +238,7 @@ export async function runFullPipeline(
         contract_deadline: contract.deadline,
         contract_certifications: contract.certifications,
         vendors,
+        fastMode: !!options?.fastMode,
       }),
       signal: controller.signal,
     });
@@ -252,7 +254,12 @@ export async function runFullPipeline(
   }
 }
 
-export async function runCachedFullPipeline(contract: PipelineContract, vendors: VendorInput[], apiBaseUrl?: string): Promise<CachedFullPipelineResult> {
+export async function runCachedFullPipeline(
+  contract: PipelineContract,
+  vendors: VendorInput[],
+  apiBaseUrl?: string,
+  options?: { fastMode?: boolean }
+): Promise<CachedFullPipelineResult> {
   const cacheKey = buildPipelineCacheKey(contract, vendors);
 
   try {
@@ -282,7 +289,7 @@ export async function runCachedFullPipeline(contract: PipelineContract, vendors:
     console.warn("Failed to read analysis cache:", error);
   }
 
-  const result = await runFullPipeline(contract, vendors, apiBaseUrl);
+  const result = await runFullPipeline(contract, vendors, apiBaseUrl, options);
 
   try {
     // Use a service-role Supabase client when available to avoid RLS failures on server-side writes
@@ -420,14 +427,23 @@ export async function saveProposalAnalysisResult(contractId: string, result: Sav
     },
   };
 
-  const { error } = await supabase
-    .from("contracts")
-    .update(payload)
-    .eq("id", contractId);
-
-  if (error) {
-    throw error;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (serviceKey && process.env.NEXT_PUBLIC_SUPABASE_URL) {
+    try {
+      const { createClient } = await import("@supabase/supabase-js");
+      const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, serviceKey, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+      const { error } = await admin.from("contracts").update(payload).eq("id", contractId);
+      if (!error) return;
+      console.warn("Service-role saveProposalAnalysisResult failed, falling back to anon client:", error);
+    } catch (serviceError) {
+      console.warn("Service-role saveProposalAnalysisResult unavailable, falling back to anon client:", serviceError);
+    }
   }
+
+  const { error } = await supabase.from("contracts").update(payload).eq("id", contractId);
+  if (error) throw error;
 }
 
 // ─── Multi-Agentic Proposal Generator ────────────────────────────

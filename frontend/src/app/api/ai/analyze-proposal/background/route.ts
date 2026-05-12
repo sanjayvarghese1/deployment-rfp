@@ -22,7 +22,7 @@ async function processBackgroundAnalysis(jobId: string, origin: string, body: an
   try {
     await updateAnalysisJob(jobId, { status: "running", progress: "Starting analysis..." });
 
-    const data = await runCachedFullPipeline(contract, vendors, origin);
+    const data = await runCachedFullPipeline(contract, vendors, origin, { fastMode: true });
 
     const vendorScores = Array.isArray(data?.vendor_scores) ? data.vendor_scores : [];
     const proposalUpdates: Promise<unknown>[] = [];

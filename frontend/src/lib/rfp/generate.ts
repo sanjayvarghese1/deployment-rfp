@@ -34,6 +34,19 @@ function getWordCount(text?: string | null): number {
 function enhanceWithVisuals(sections: Record<string, string>): Record<string, string> {
   const enhanced = { ...sections };
 
+  const appendDetailPack = (key: string, title: string, checklist: string[], matrix: { item: string; owner: string; target: string }[]) => {
+    if (!enhanced[key] || enhanced[key].length === 0) return;
+
+    const checklistLines = checklist.map((line) => `- ${line}`).join("\n");
+    const matrixRows = matrix
+      .map((row) => `| ${row.item} | ${row.owner} | ${row.target} |`)
+      .join("\n");
+
+    const detailPack = `\n\n### ${title}: Implementation Checklist\n${checklistLines}\n\n[Visual: ${title} Delivery Matrix]\n| Workstream | Owner | Target KPI |\n|------------|-------|------------|\n${matrixRows}`;
+
+    enhanced[key] += detailPack;
+  };
+
   // Add timeline/roadmap chart to project_objectives if present
   if (enhanced.project_objectives && enhanced.project_objectives.length > 0) {
     const timelineChart = `
@@ -95,6 +108,131 @@ function enhanceWithVisuals(sections: Record<string, string>): Record<string, st
 | Compliance | Low | High | Early regulatory review |
 `;
     enhanced.risk_management += riskChart;
+  }
+
+  // Add deterministic detail packs across critical sections to improve final document depth
+  // without introducing additional LLM calls.
+  appendDetailPack(
+    "executive_summary",
+    "Executive Oversight",
+    [
+      "Define executive sponsorship cadence and monthly governance checkpoints.",
+      "Confirm decision rights, escalation paths, and cross-functional accountability.",
+      "Align funding gates with milestone acceptance and KPI outcomes.",
+      "Document assumptions, dependencies, and procurement constraints upfront.",
+    ],
+    [
+      { item: "Governance cadence", owner: "Program Sponsor", target: "100% monthly steering reviews" },
+      { item: "Decision turnaround", owner: "PMO", target: "< 3 business days" },
+      { item: "KPI reporting", owner: "Delivery Lead", target: "Weekly dashboard publication" },
+      { item: "Benefit realization", owner: "Business Owner", target: ">= 90% target attainment" },
+    ],
+  );
+
+  appendDetailPack(
+    "technical_requirements",
+    "Technical Delivery",
+    [
+      "Define measurable non-functional requirements for latency, throughput, and uptime.",
+      "Specify interoperability expectations including API contracts and versioning policy.",
+      "Include secure-by-design controls and mandatory evidence artifacts.",
+      "Require test strategy coverage for unit, integration, performance, and security tests.",
+    ],
+    [
+      { item: "Availability SLA", owner: "Platform Team", target: "99.9% uptime" },
+      { item: "Performance baseline", owner: "Engineering", target: "p95 < 300ms" },
+      { item: "Security hardening", owner: "Security Team", target: "0 critical findings" },
+      { item: "Release quality", owner: "QA Lead", target: ">= 85% automated coverage" },
+    ],
+  );
+
+  appendDetailPack(
+    "implementation_timeline",
+    "Program Planning",
+    [
+      "Break milestones into entry and exit criteria with explicit acceptance checks.",
+      "Track dependency risk and recovery plan for each critical milestone.",
+      "Include change-control windows and communication milestones.",
+      "Define go-live readiness gates and rollback criteria.",
+    ],
+    [
+      { item: "Milestone readiness", owner: "Project Manager", target: "100% gate evidence" },
+      { item: "Schedule variance", owner: "PMO", target: "<= 10% variance" },
+      { item: "Dependency closure", owner: "Workstream Leads", target: ">= 95% on time" },
+      { item: "Go-live checks", owner: "Release Manager", target: "All critical checks passed" },
+    ],
+  );
+
+  appendDetailPack(
+    "evaluation_criteria",
+    "Evaluation Governance",
+    [
+      "Define weighted scoring rubric with objective evidence requirements.",
+      "Establish tie-break and clarification process with documented timelines.",
+      "Require conflict-of-interest declarations for all evaluators.",
+      "Include commercial and technical normalization approach for fairness.",
+    ],
+    [
+      { item: "Rubric completeness", owner: "Procurement", target: "100% criteria weighted" },
+      { item: "Evidence traceability", owner: "Evaluation Chair", target: "All scores evidence-backed" },
+      { item: "Panel readiness", owner: "HR/Legal", target: "100% evaluator compliance" },
+      { item: "Decision cycle", owner: "Committee", target: "<= 15 business days" },
+    ],
+  );
+
+  appendDetailPack(
+    "legal_and_contractual",
+    "Contract Controls",
+    [
+      "Define contract remedies, service credits, and escalation thresholds.",
+      "Specify data ownership, retention, and secure disposal obligations.",
+      "Set audit rights, breach-notification windows, and evidence requirements.",
+      "Include transition-out and knowledge transfer obligations.",
+    ],
+    [
+      { item: "Breach notification", owner: "Vendor Legal", target: "<= 24 hours" },
+      { item: "Audit evidence", owner: "Compliance Lead", target: "Quarterly submission" },
+      { item: "Exit readiness", owner: "Service Manager", target: "90-day transition plan" },
+      { item: "Policy alignment", owner: "Legal Counsel", target: "100% clause conformity" },
+    ],
+  );
+
+  // Add a deep-detail annex for each populated section to consistently increase
+  // document depth toward long-form (40+ page) outputs in fast mode.
+  for (const [key, value] of Object.entries(enhanced)) {
+    if (!value || value.trim().length === 0) continue;
+
+    const label = SECTION_LABELS[key as SectionKey] || key.replace(/_/g, " ");
+    const annex = `
+
+### ${label}: Detailed Execution Annex
+This annex defines a procurement-grade execution baseline for ${label.toLowerCase()} and is intended to remove ambiguity during vendor responses, negotiations, and implementation governance. Vendors are expected to provide explicit assumptions, objective evidence references, and traceable mappings between proposed solution components and contractual obligations. Narrative-only responses are not sufficient unless accompanied by measurable acceptance evidence and delivery controls.
+
+For this area, bidders should present an implementation narrative with role ownership, sequencing logic, quality controls, and escalation pathways. The response should identify how risks are detected, what controls are preventive versus detective, and how remediation decisions are approved across procurement, legal, business, and technical stakeholders. Proposals must include realistic dependencies, operating constraints, and fallback paths for high-impact milestones.
+
+All statements in this section must be verifiable against artifacts produced during delivery. At minimum, vendors should identify auditable checkpoints, objective pass/fail criteria, and reporting cadence. The submission should demonstrate how governance forums will consume the evidence, how corrective action will be tracked, and how disputes over interpretation will be resolved with documented decision authority and timeline commitments.
+
+#### Vendor Response Expectations
+- Provide a step-by-step execution approach linked to measurable milestones.
+- Define ownership for delivery, quality assurance, compliance, and acceptance sign-off.
+- Include assumptions, exclusions, and dependency declarations with risk ratings.
+- Specify evidence artifacts required at each milestone (logs, reports, test packs, sign-off records).
+- Include service-level or performance targets where applicable.
+- Define incident, issue, and change-control handling with escalation windows.
+- Describe communication cadence, reporting format, and governance participants.
+- Provide a transition and continuity plan covering handover, support, and knowledge transfer.
+
+[Visual: ${label} Assurance Matrix]
+| Control Domain | Required Evidence | Review Cadence |
+|----------------|-------------------|----------------|
+| Delivery Governance | Milestone log, decision register, dependency tracker | Weekly |
+| Quality Assurance | Test results, defect trends, acceptance checklist | Weekly |
+| Security & Compliance | Control validation, audit artifacts, incident records | Bi-weekly |
+| Commercial Controls | Change orders, burn-rate report, invoice traceability | Monthly |
+| Operational Readiness | Runbooks, training completion, support playbook | Pre-go-live |
+`;
+
+    enhanced[key] += annex;
   }
 
   return enhanced;
@@ -237,6 +375,7 @@ async function generateBatch(
   decompositionContext?: string,
   fastMode = false,
 ): Promise<Partial<Record<SectionKey, string>>> {
+  const sectionWordRange = fastMode ? "550-900" : "450-800";
   const contextLines: string[] = [];
   if (!fastMode) {
     for (const [k, v] of Object.entries(previousSections)) {
@@ -259,7 +398,7 @@ ORGANIZATION: ${metadata.organization_name}
 CATEGORY: ${metadata.category}
 ${decompositionContext ? `\n${decompositionContext}\n` : ""}${contextLines.length > 0 ? `\nCONTEXT FROM PREVIOUSLY GENERATED SECTIONS:\n${contextLines.join("\n")}\n` : ""}
 INSTRUCTIONS:
-- For each section, write 350-650 words of professional, detailed content
+- For each section, write ${sectionWordRange} words of professional, detailed content
 - Use ### sub-headings (2-4 per section) with 2-4 paragraphs each
 - Include specific metrics, standards (ISO 27001, SOC2, GDPR, etc.), and KPIs where relevant
 - NO placeholders like "[TBD]", "[Company Name]", or "INSERT" — use the real data provided
@@ -276,7 +415,7 @@ ${sectionPrompts}`;
 
   const result = await sendPrompt(PIPELINE_MODELS.rfpGeneration, prompt, system, {
     temperature: 0.35,
-    num_predict: fastMode ? 4096 : 8192,
+    num_predict: fastMode ? 6144 : 8192,
   });
 
   return parseDelimitedSections(result, batchKeys);

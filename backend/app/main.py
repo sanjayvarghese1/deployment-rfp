@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from .analysis_jobs import create_analysis_job, get_analysis_job, serialize_job as serialize_analysis_job
 from .proxy import proxy_to_frontend
 from .rfp_jobs import create_rfp_job, get_rfp_job, serialize_job
 from .settings import settings
@@ -40,6 +41,12 @@ class RfpBackgroundRequest(BaseModel):
     precomputedDecomposition: dict | None = None
 
 
+class AnalysisBackgroundRequest(BaseModel):
+    contract_id: str
+    contract: dict
+    vendors: list[dict]
+
+
 @app.post("/api/rfp/generate/background")
 async def start_rfp_background_job(body: RfpBackgroundRequest):
     job = create_rfp_job(body.model_dump(exclude_none=True), fast_mode=bool(body.fastMode))
@@ -52,6 +59,20 @@ async def get_rfp_background_job(job_id: str):
     if not job:
         return {"error": "Job not found"}
     return {"job": serialize_job(job)}
+
+
+@app.post("/api/ai/analyze-proposal/background")
+async def start_analysis_background_job(body: AnalysisBackgroundRequest, request: Request):
+    job = create_analysis_job(body.model_dump(exclude_none=True), str(request.base_url).rstrip("/"))
+    return {"job_id": job.id, "status": "queued"}
+
+
+@app.get("/api/ai/analysis-jobs/{job_id}")
+async def get_analysis_background_job(job_id: str):
+    job = get_analysis_job(job_id)
+    if not job:
+        return {"error": "Analysis job not found"}
+    return {"job": serialize_analysis_job(job)}
 
 
 @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])

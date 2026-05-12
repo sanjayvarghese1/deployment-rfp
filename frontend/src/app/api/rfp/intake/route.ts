@@ -184,7 +184,7 @@ Rules:
 - Do not invent facts.`;
 
       const extracted = await openRouterChatJSON<any>({
-        model: AGENT_MODEL.REQUIREMENT_EXTRACTION,
+        model: AGENT_MODEL.INTAKE_EXTRACTION,
         messages: [
           { role: "system", content: extractPrompt },
           { role: "user", content: `Current known answers: ${JSON.stringify(mergedBase)}\n\nLatest user message: ${message}` },

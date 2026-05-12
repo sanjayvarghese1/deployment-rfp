@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { openRouterChat, openRouterChatJSON, AGENT_MODEL } from "@/lib/openrouter";
 import { langfuse } from "@/config/langfuse";
+import { saveProposalAnalysisResult } from "@/services/aiService";
 import type { ProposalAnalysis, JudgeResult } from "@/services/aiService";
 
 export const maxDuration = 900; // 15 minutes for the full 3-agent pipeline with multiple vendors
@@ -609,7 +610,8 @@ export async function POST(req: NextRequest) {
     if (mode === "full_pipeline") {
       console.log(`[AI:POST] Entering full_pipeline path`);
       const { contract_title, contract_description, contract_budget, contract_deadline, contract_certifications,
-              vendors } = body;
+            vendors, contract_id } = body;
+      const fastMode = !!body.fastMode;
 
       console.log(`[AI:POST:full_pipeline] Starting. vendors=${Array.isArray(vendors) ? vendors.length : 0}`);
 
@@ -754,7 +756,7 @@ export async function POST(req: NextRequest) {
         }
       };
 
-      const batchSize = Math.min(2, Math.max(1, vendors.length));
+      const batchSize = fastMode ? Math.max(1, vendors.length) : Math.min(2, Math.max(1, vendors.length));
       for (let index = 0; index < vendors.length; index += batchSize) {
         const batch = vendors.slice(index, index + batchSize);
         const batchResults = await Promise.all(batch.map(analyzeVendor));
@@ -797,6 +799,26 @@ export async function POST(req: NextRequest) {
       });
 
       console.log(`[AI:POST:full_pipeline] Completed. Vendors scored: ${vendorScores.length}, Judge result: ${judgeResult ? 'yes' : 'no'}`);
+
+      if (contract_id) {
+        const analysesByProposalId: Record<string, ProposalAnalysis> = {};
+        for (let index = 0; index < vendors.length; index++) {
+          const vendor = vendors[index] as { proposal_id?: string } | undefined;
+          const score = vendorScores[index];
+          if (vendor?.proposal_id && score) {
+            analysesByProposalId[vendor.proposal_id] = score;
+          }
+        }
+
+        await saveProposalAnalysisResult(contract_id, {
+          cache_key: `analysis:${contract_id}:${Date.now()}`,
+          created_at: new Date().toISOString(),
+          analyses_by_proposal_id: analysesByProposalId,
+          judge_result: judgeResult ?? null,
+          vendor_count: vendorScores.length,
+        });
+      }
+
       return NextResponse.json({
         vendor_scores: vendorScores,
         judge: judgeResult,

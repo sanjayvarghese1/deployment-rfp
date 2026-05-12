@@ -133,8 +133,8 @@ export default function RfpEditorPage() {
   const previewBase64 = viewerMode === "original" ? draft?.sourcePdfBase64 || draft?.pdfBase64 : livePdfBase64 || draft?.pdfBase64;
   const previewUrl = usePdfObjectUrl(previewBase64);
   const gridTemplateColumns = pagesCollapsed
-    ? "56px minmax(0, 1fr) 680px"
-    : "260px minmax(0, 1fr) 680px";
+    ? "56px minmax(0, 1fr) 840px"
+    : "260px minmax(0, 1fr) 840px";
 
   const updateSection = (key: string, value: string) => {
     setDraft((current) => (current ? { ...current, sections: { ...current.sections, [key]: value } } : current));
@@ -239,11 +239,27 @@ export default function RfpEditorPage() {
       
       // Handle upload flow - clean up sessionStorage
       if (uploadMode) {
-        sessionStorage.removeItem("rfp-editor-draft");
-        sessionStorage.removeItem("rfp-upload-analysis");
-        sessionStorage.removeItem("uploaded-pdf-name");
-        // For upload flow, redirect to contracts page
-        setTimeout(() => router.push("/contracts"), 1000);
+        const destination = nextDraft.returnTo || (nextDraft as any).returnTo || "/rfp/upload-review";
+        try {
+          window.sessionStorage.setItem("rfp-editor-draft", JSON.stringify(nextDraft));
+        } catch {}
+        try {
+          window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+            metadata: nextDraft.metadata,
+            sections: nextDraft.sections,
+            sectionLabels: nextDraft.sectionLabels,
+            template: nextDraft.template,
+            decomposition: nextDraft.decomposition,
+            subsystemName: nextDraft.subsystemName,
+            updatedAt: nextDraft.updatedAt,
+            sourcePdfBase64: nextDraft.sourcePdfBase64,
+            uploadedFrom: nextDraft.uploadedFrom,
+            uploadedFileName: nextDraft.uploadedFileName,
+            suggestionsApplied: nextDraft.suggestionsApplied,
+            returnTo: destination,
+          }));
+        } catch {}
+        setTimeout(() => router.push(destination), 250);
       } else {
         try {
           const dest = nextDraft.returnTo || (nextDraft as any).returnTo;
@@ -311,7 +327,8 @@ export default function RfpEditorPage() {
             <div className="flex gap-2 flex-wrap justify-end">
             <button className="btn-outline" onClick={() => {
               try {
-                const raw = window.localStorage.getItem(STORAGE_KEY);
+                const sessionRaw = window.sessionStorage.getItem(STORAGE_KEY) || window.sessionStorage.getItem("rfp-editor-draft");
+                const raw = sessionRaw || window.localStorage.getItem(STORAGE_KEY);
                 if (raw) {
                   const parsed = JSON.parse(raw) as EditorDraft;
                   const dest = parsed.returnTo || parsed.returnTo === "" ? parsed.returnTo : null;
@@ -446,38 +463,6 @@ export default function RfpEditorPage() {
           </main>
 
           <aside className="space-y-6 self-start xl:sticky xl:top-0 h-full overflow-hidden flex flex-col w-full">
-            {/* Suggestions Panel - Show only if upload mode and suggestions available */}
-            {uploadMode && suggestions.length > 0 && showSuggestions && (
-              <div className="card p-5 flex flex-col border-emerald-200 bg-emerald-50">
-                <div className="flex items-start justify-between mb-3">
-                  <div className="text-sm uppercase tracking-[0.2em]" style={{ color: "#059669" }}>
-                    Applied Suggestions
-                  </div>
-                  <button
-                    onClick={() => setShowSuggestions(false)}
-                    className="text-emerald-600 hover:text-emerald-700 text-xs"
-                  >
-                    ✕
-                  </button>
-                </div>
-                <div className="space-y-2 text-sm" style={{ color: "#047857" }}>
-                  {suggestions.slice(0, 3).map((suggestion, idx) => (
-                    <div key={idx} className="flex items-start">
-                      <svg className="w-4 h-4 mr-2 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                      </svg>
-                      <span>{suggestion}</span>
-                    </div>
-                  ))}
-                  {suggestions.length > 3 && (
-                    <p className="text-xs italic" style={{ color: "#10b981" }}>
-                      +{suggestions.length - 3} more applied
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-
             <div className="card p-5 flex flex-col min-h-0 flex-[1_1_auto] h-full items-center text-center">
               <div className="text-sm uppercase tracking-[0.2em] mb-3 w-full" style={{ color: "#444444" }}>PDF Preview</div>
               <div className="flex gap-2 mb-4 justify-center flex-wrap w-full">
@@ -500,11 +485,11 @@ export default function RfpEditorPage() {
                 {previewBusy ? "Updating preview from your latest edits..." : "The preview pane shows the PDF that will be saved."}
               </p>
 
-              <div className="rounded-[22px] overflow-hidden border flex-1 min-h-0 w-full max-w-[620px] mx-auto" style={{ borderColor: "#D4D1C8", background: "#ffffff" }}>
+              <div className="rounded-[22px] overflow-hidden border flex-1 min-h-0 w-full max-w-[820px] mx-auto" style={{ borderColor: "#D4D1C8", background: "#ffffff" }}>
                 {previewUrl ? (
-                  <iframe title="RFP PDF preview" src={previewUrl} className="w-full h-full min-h-[68vh]" style={{ background: "#ffffff" }} />
+                  <iframe title="RFP PDF preview" src={previewUrl} className="w-full h-full min-h-[76vh]" style={{ background: "#ffffff" }} />
                 ) : (
-                  <div className="h-full min-h-[68vh] flex items-center justify-center p-6 text-center" style={{ color: "#444444" }}>
+                  <div className="h-full min-h-[76vh] flex items-center justify-center p-6 text-center" style={{ color: "#444444" }}>
                     Preview unavailable.
                   </div>
                 )}

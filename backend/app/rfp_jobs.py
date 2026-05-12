@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import httpx
 
+from .job_store import JobStore, StoredJob
 from .settings import settings
 
 
@@ -30,17 +31,53 @@ class RfpJobState:
 
 
 _jobs: dict[str, RfpJobState] = {}
+_job_store = JobStore(settings.job_store_path)
 
 
 def create_rfp_job(payload: dict[str, Any], fast_mode: bool = True) -> RfpJobState:
     job = RfpJobState(job_id=uuid4().hex)
     _jobs[job.job_id] = job
+    _job_store.upsert_job(
+        StoredJob(
+            job_id=job.job_id,
+            kind="rfp",
+            status=job.status,
+            progress=job.progress,
+            result=job.result,
+            pdf_base64=job.pdf_base64,
+            decomposition=job.decomposition,
+            error=job.error,
+            request=payload,
+            created_at=job.created_at,
+            updated_at=job.updated_at,
+        )
+    )
     asyncio.create_task(_run_rfp_job(job.job_id, payload, fast_mode))
     return job
 
 
 def get_rfp_job(job_id: str) -> RfpJobState | None:
-    return _jobs.get(job_id)
+    job = _jobs.get(job_id)
+    if job:
+        return job
+
+    stored = _job_store.get_job(job_id)
+    if not stored or stored.kind != "rfp":
+        return None
+
+    restored = RfpJobState(
+        job_id=stored.job_id,
+        status=stored.status,
+        progress=stored.progress,
+        result=stored.result,
+        pdf_base64=stored.pdf_base64,
+        decomposition=stored.decomposition,
+        error=stored.error,
+        created_at=stored.created_at,
+        updated_at=stored.updated_at,
+    )
+    _jobs[job_id] = restored
+    return restored
 
 
 def _update_job(job_id: str, **patch: Any) -> None:
@@ -48,6 +85,21 @@ def _update_job(job_id: str, **patch: Any) -> None:
     for key, value in patch.items():
         setattr(job, key, value)
     job.updated_at = _now()
+    _job_store.upsert_job(
+        StoredJob(
+            job_id=job.job_id,
+            kind="rfp",
+            status=job.status,
+            progress=job.progress,
+            result=job.result,
+            pdf_base64=job.pdf_base64,
+            decomposition=job.decomposition,
+            error=job.error,
+            request=None,
+            created_at=job.created_at,
+            updated_at=job.updated_at,
+        )
+    )
 
 
 async def _run_rfp_job(job_id: str, payload: dict[str, Any], fast_mode: bool) -> None:

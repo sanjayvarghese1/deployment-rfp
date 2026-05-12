@@ -63,6 +63,13 @@ export default function ContractDetailPage() {
   const [referrer, setReferrer] = useState("");
   const [backgroundJobId, setBackgroundJobId] = useState<string | null>(null);
   const savedAnalysis = contract?.last_analysis_result;
+  const liveAnalysis = backgroundJobId || analyzing || judgeResult || Object.keys(analyses).length > 0 ? {
+    analyses_by_proposal_id: analyses,
+    judge_result: judgeResult,
+    vendor_count: proposals.length,
+    created_at: "",
+    cache_key: "",
+  } : null;
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -206,6 +213,15 @@ export default function ContractDetailPage() {
           }
           setAnalyses(newAnalyses);
           setJudgeResult(job.result.judge ?? null);
+          const nextSavedAnalysis = {
+            cache_key: `analysis:${contractId}:${Date.now()}`,
+            created_at: new Date().toISOString(),
+            analyses_by_proposal_id: newAnalyses,
+            judge_result: job.result.judge ?? null,
+            vendor_count: proposals.length,
+          };
+          await saveProposalAnalysisResult(contractId, nextSavedAnalysis as any);
+          setContract((current: any) => current ? { ...current, last_analysis_result: nextSavedAnalysis } : current);
           setAnalyzing(false);
           setBackgroundJobId(null);
           window.localStorage.removeItem(`analysis-job:${contractId}`);
@@ -444,6 +460,8 @@ export default function ContractDetailPage() {
     return sB - sA;
   });
 
+  const activeAnalysis = liveAnalysis ?? savedAnalysis;
+
   const contractTextSource = [
     contract.description,
     contract.rfp_sections?.budget_framework,
@@ -681,26 +699,26 @@ export default function ContractDetailPage() {
                     </button>
                   </div>
 
-                  {savedAnalysis?.analyses_by_proposal_id && (
+                  {activeAnalysis?.analyses_by_proposal_id && (
                     <div className="rounded-xl border border-[var(--primary)]/20 bg-[var(--primary-light)] p-5 space-y-4">
                       <div className="flex items-center justify-between gap-3">
                         <div>
-                          <p className="text-sm font-semibold text-[var(--primary)]">Saved Analysis Report</p>
+                          <p className="text-sm font-semibold text-[var(--primary)]">{liveAnalysis ? "Latest Analysis Report" : "Saved Analysis Report"}</p>
                           <p className="text-xs text-[var(--muted)]">
-                            Saved {savedAnalysis.created_at || "recently"} · {savedAnalysis.vendor_count || proposals.length} vendor(s)
+                            {activeAnalysis.created_at ? `Saved ${activeAnalysis.created_at}` : "Latest analysis"} · {activeAnalysis.vendor_count || proposals.length} vendor(s)
                           </p>
                         </div>
                         <span className="text-xs font-medium text-[var(--primary)] bg-white/70 rounded-full px-3 py-1">
-                          {savedAnalysis.cache_key ? "Stored in Supabase" : "Restored locally"}
+                          {activeAnalysis.cache_key ? "Stored in Supabase" : "Current run"}
                         </span>
                       </div>
 
-                      {savedAnalysis.judge_result?.final_recommendation_view && (
+                      {activeAnalysis.judge_result?.final_recommendation_view && (
                         <div className="rounded-lg bg-white/80 border border-[var(--divider)] p-4 space-y-2">
                           <p className="text-xs uppercase tracking-wide font-semibold text-[var(--muted)]">Recommended Vendor</p>
-                          <p className="text-base font-semibold text-[var(--foreground)]">{savedAnalysis.judge_result.final_recommendation_view.recommended_vendor}</p>
-                          <p className="text-sm text-[var(--muted)]">{savedAnalysis.judge_result.final_recommendation_view.headline}</p>
-                          <p className="text-sm text-[var(--muted)]">{savedAnalysis.judge_result.final_recommendation_view.summary}</p>
+                          <p className="text-base font-semibold text-[var(--foreground)]">{activeAnalysis.judge_result.final_recommendation_view.recommended_vendor}</p>
+                          <p className="text-sm text-[var(--muted)]">{activeAnalysis.judge_result.final_recommendation_view.headline}</p>
+                          <p className="text-sm text-[var(--muted)]">{activeAnalysis.judge_result.final_recommendation_view.summary}</p>
                         </div>
                       )}
 
@@ -710,10 +728,10 @@ export default function ContractDetailPage() {
                         points={vendorScorePoints}
                       />
 
-                      {savedAnalysis.judge_result?.comparative_analysis?.selection_summary && (
+                      {activeAnalysis.judge_result?.comparative_analysis?.selection_summary && (
                         <div className="rounded-lg bg-white/70 border border-[var(--divider)] p-4">
                           <p className="text-xs uppercase tracking-wide font-semibold text-[var(--muted)] mb-1">Comparison Summary</p>
-                          <p className="text-sm text-[var(--muted)]">{savedAnalysis.judge_result.comparative_analysis.selection_summary}</p>
+                          <p className="text-sm text-[var(--muted)]">{activeAnalysis.judge_result.comparative_analysis.selection_summary}</p>
                         </div>
                       )}
 
