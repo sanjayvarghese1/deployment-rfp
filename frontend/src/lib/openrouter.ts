@@ -27,8 +27,8 @@ const OPENROUTER_FALLBACK_MODEL =
   "minimax/minimax-m2.5";
 
 /**
- * Example pricing per 1K tokens (USD)
- * Update later using OpenRouter pricing page.
+ * Pricing per 1K tokens (USD)
+ * Source: OpenRouter pricing page
  */
 const MODEL_PRICING = {
   "minimax/minimax-m2.7": {
@@ -38,6 +38,22 @@ const MODEL_PRICING = {
   "minimax/minimax-m2.5": {
     input: 0.0005,
     output: 0.0020,
+  },
+  "qwen/qwen3-max": {
+    input: 0.0006,
+    output: 0.0024,
+  },
+  "qwen/qwen-plus": {
+    input: 0.0001,
+    output: 0.0003,
+  },
+  "qwen/qwen-turbo": {
+    input: 0.00005,
+    output: 0.00015,
+  },
+  "qwen/qwen-plus-2025-01-25": {
+    input: 0.0001,
+    output: 0.0003,
   },
 };
 
