@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { apiUrl } from "@/lib/api";
 
 interface UploadProgress {
-  stage: "idle" | "uploading" | "done" | "error";
+  stage: "idle" | "uploading" | "analyzing" | "done" | "error";
   progress: number;
   error?: string;
 }
@@ -49,11 +49,31 @@ export default function RfpUploadIntake() {
         }
 
         const uploadResult = await response.json();
-        setUploadProgress({ stage: "done", progress: 100 });
 
+        sessionStorage.removeItem("rfp-editor-draft");
+        localStorage.removeItem("rfp-editor-draft");
         sessionStorage.setItem("rfp-uploaded-pdf-url", uploadResult.url);
         sessionStorage.setItem("rfp-uploaded-pdf-name", uploadResult.fileName || file.name);
         sessionStorage.removeItem("rfp-upload-analysis");
+
+        setUploadProgress({ stage: "analyzing", progress: 70 });
+
+        const analysisResponse = await fetch(apiUrl("/api/rfp/upload-analyze"), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ pdfUrl: uploadResult.url, fileName: uploadResult.fileName || file.name }),
+        });
+
+        if (!analysisResponse.ok) {
+          const errorData = await analysisResponse.json().catch(() => null);
+          throw new Error(errorData?.error || "Analysis failed");
+        }
+
+        const analysisResult = await analysisResponse.json();
+        sessionStorage.setItem("rfp-upload-analysis", JSON.stringify(analysisResult));
+        setUploadProgress({ stage: "done", progress: 100 });
         router.push("/rfp/upload-review");
       } catch (error) {
         setUploadProgress({
@@ -162,10 +182,10 @@ export default function RfpUploadIntake() {
                 <div className="rounded-xl border border-[var(--danger)] bg-[var(--danger-light)] p-4 text-sm text-[var(--danger)]">{uploadProgress.error}</div>
               )}
 
-              {uploadProgress.stage === "uploading" && (
+              {(uploadProgress.stage === "uploading" || uploadProgress.stage === "analyzing") && (
                 <div className="rounded-[14px] border border-[var(--card-border)] bg-[var(--surface)] p-4">
                   <div className="mb-2 flex items-center justify-between gap-3 text-sm">
-                    <strong>Uploading...</strong>
+                    <strong>{uploadProgress.stage === "uploading" ? "Uploading..." : "Analyzing..."}</strong>
                     <span className="text-[var(--muted)]">{uploadProgress.progress}%</span>
                   </div>
                   <div className="h-1.5 overflow-hidden rounded-full bg-[var(--surface-hover)]">
@@ -176,26 +196,9 @@ export default function RfpUploadIntake() {
 
               <div className="grid gap-2 text-sm text-[var(--muted)]">
                 <div>Upload the PDF as the intake step.</div>
-                <div>Press Next to move into the review screen, then click Run Analysis to start extraction and scoring.</div>
+                <div>After upload, analysis runs automatically and the review screen opens when it is ready.</div>
                 <div>The review screen also includes a save-without-changes action.</div>
               </div>
-
-          <div className="flex justify-end">
-            <button
-              className="btn-primary min-w-40 px-5 py-3"
-              onClick={() => {
-                const file = fileInputRef.current?.files?.[0];
-                if (!file) {
-                  setUploadProgress({ stage: "error", progress: 0, error: "Choose a PDF before continuing." });
-                  return;
-                }
-                void handleFileUpload(file);
-              }}
-              disabled={uploadProgress.stage === "uploading"}
-            >
-              Next
-            </button>
-          </div>
         </div>
       </div>
     </div>

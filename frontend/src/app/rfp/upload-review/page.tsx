@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiUrl } from "@/lib/api";
 import { createContract } from "@/services/supabase";
@@ -48,6 +48,7 @@ interface GeneratedDraft {
 export default function RfpUploadReviewPage() {
   const router = useRouter();
   const { user, profile } = useAuth();
+  const autoRunTriggeredRef = useRef(false);
   const [analysis, setAnalysis] = useState<RfpAnalysis | null>(null);
   const [pdfName, setPdfName] = useState("");
   const [loading, setLoading] = useState(true);
@@ -126,6 +127,12 @@ export default function RfpUploadReviewPage() {
       setAnalyzingPdf(false);
     }
   }, [analyzingPdf, pdfName, uploadedPdfUrl]);
+
+  useEffect(() => {
+    if (loading || analyzingPdf || analysis || !uploadedPdfUrl || autoRunTriggeredRef.current) return;
+    autoRunTriggeredRef.current = true;
+    void runPdfAnalysis();
+  }, [analysis, analyzingPdf, loading, runPdfAnalysis, uploadedPdfUrl]);
 
   useEffect(() => {
     const unsubscribe = subscribeBackgroundGeneration((snapshot) => {
