@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { v4 as uuidv4 } from "uuid";
 import { useAuth } from "@/contexts/AuthContext";
 import ProfileHeader from "@/components/ProfileHeader";
 import PostCard from "@/components/PostCard";
@@ -95,7 +96,7 @@ export default function CompanyProfilePage() {
     setSubmittingReview(true);
     try {
       const { error } = await supabase.from("reviews").insert({
-        id: crypto.randomUUID(),
+        id: uuidv4(),
         company_id: companyId,
         reviewer_id: user.id,
         reviewer_name: profile.company_name,

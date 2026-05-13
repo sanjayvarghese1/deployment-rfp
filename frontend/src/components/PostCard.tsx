@@ -503,3 +503,4 @@ export default function PostCard({ post, allCompanies, onFollow, referrer }: { p
     </>
   );
 }
+

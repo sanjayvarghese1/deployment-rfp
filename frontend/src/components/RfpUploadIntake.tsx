@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { apiUrl } from "@/lib/api";
 
 interface UploadProgress {
-  stage: "idle" | "uploading" | "analyzing" | "done" | "error";
+  stage: "idle" | "uploading" | "done" | "error";
   progress: number;
   error?: string;
 }
@@ -38,9 +38,7 @@ export default function RfpUploadIntake() {
         const formData = new FormData();
         formData.append("file", file);
 
-        setUploadProgress({ stage: "analyzing", progress: 65 });
-
-        const response = await fetch(apiUrl("/api/rfp/upload-analyze"), {
+        const response = await fetch(apiUrl("/api/rfp/upload"), {
           method: "POST",
           body: formData,
         });
@@ -50,11 +48,12 @@ export default function RfpUploadIntake() {
           throw new Error(errorData?.error || "Upload failed");
         }
 
-        const scoreResult = await response.json();
+        const uploadResult = await response.json();
         setUploadProgress({ stage: "done", progress: 100 });
 
-        sessionStorage.setItem("rfp-upload-analysis", JSON.stringify(scoreResult));
-        sessionStorage.setItem("uploaded-pdf-name", file.name);
+        sessionStorage.setItem("rfp-uploaded-pdf-url", uploadResult.url);
+        sessionStorage.setItem("rfp-uploaded-pdf-name", uploadResult.fileName || file.name);
+        sessionStorage.removeItem("rfp-upload-analysis");
         router.push("/rfp/upload-review");
       } catch (error) {
         setUploadProgress({
@@ -106,7 +105,6 @@ export default function RfpUploadIntake() {
           <div className="text-xs text-[var(--muted)]">
             {uploadProgress.stage === "idle" && "Intake in progress"}
             {uploadProgress.stage === "uploading" && "Uploading..."}
-            {uploadProgress.stage === "analyzing" && "Analyzing..."}
             {uploadProgress.stage === "done" && "Complete"}
             {uploadProgress.stage === "error" && "Upload failed"}
           </div>
@@ -164,10 +162,10 @@ export default function RfpUploadIntake() {
                 <div className="rounded-xl border border-[var(--danger)] bg-[var(--danger-light)] p-4 text-sm text-[var(--danger)]">{uploadProgress.error}</div>
               )}
 
-              {(uploadProgress.stage === "uploading" || uploadProgress.stage === "analyzing") && (
+              {uploadProgress.stage === "uploading" && (
                 <div className="rounded-[14px] border border-[var(--card-border)] bg-[var(--surface)] p-4">
                   <div className="mb-2 flex items-center justify-between gap-3 text-sm">
-                    <strong>{uploadProgress.stage === "uploading" ? "Uploading..." : "Analyzing PDF..."}</strong>
+                    <strong>Uploading...</strong>
                     <span className="text-[var(--muted)]">{uploadProgress.progress}%</span>
                   </div>
                   <div className="h-1.5 overflow-hidden rounded-full bg-[var(--surface-hover)]">
@@ -178,7 +176,7 @@ export default function RfpUploadIntake() {
 
               <div className="grid gap-2 text-sm text-[var(--muted)]">
                 <div>Upload the PDF as the intake step.</div>
-                <div>Press Next to move into the same QA analysis screen with score and suggestions.</div>
+                <div>Press Next to move into the review screen, then click Run Analysis to start extraction and scoring.</div>
                 <div>The review screen also includes a save-without-changes action.</div>
               </div>
 
@@ -193,7 +191,7 @@ export default function RfpUploadIntake() {
                 }
                 void handleFileUpload(file);
               }}
-              disabled={uploadProgress.stage === "uploading" || uploadProgress.stage === "analyzing"}
+              disabled={uploadProgress.stage === "uploading"}
             >
               Next
             </button>
@@ -203,3 +201,4 @@ export default function RfpUploadIntake() {
     </div>
   );
 }
+

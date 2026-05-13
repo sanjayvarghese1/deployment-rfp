@@ -81,3 +81,4 @@ export default function ContractCard({ contract }: { contract: Contract }) {
     </Link>
   );
 }
+

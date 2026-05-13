@@ -1,18 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { openRouterChatJSON, AGENT_MODEL } from "@/lib/openrouter";
-
-let pdfParse: (buffer: Buffer) => Promise<any>;
-
-// Handle pdf-parse import
-try {
-  const pdfModule = require("pdf-parse/lib/pdf-parse.js");
-  pdfParse = pdfModule.default || pdfModule;
-} catch {
-  // Fallback for ESM
-  import("pdf-parse").then((m: any) => {
-    pdfParse = m.default || m;
-  });
-}
+import { extractPdfTextWithOcrFallback } from "@/lib/pdfExtraction";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -50,18 +38,49 @@ interface RfpScoreResult {
   analysis: UploadedRfpAnalysis;
 }
 
+async function resolvePdfBuffer(request: NextRequest): Promise<{ buffer: Buffer; fileName: string }> {
+  const contentType = request.headers.get("content-type") || "";
+
+  if (contentType.includes("application/json")) {
+    const body = (await request.json()) as { pdfUrl?: string; fileName?: string };
+    const pdfUrl = typeof body.pdfUrl === "string" ? body.pdfUrl.trim() : "";
+
+    if (!pdfUrl) {
+      throw new Error("Missing pdfUrl");
+    }
+
+    const response = await fetch(pdfUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch PDF: ${response.status} ${response.statusText}`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    return {
+      buffer: Buffer.from(arrayBuffer),
+      fileName: body.fileName || pdfUrl.split("/").pop() || "uploaded-rfp.pdf",
+    };
+  }
+
+  const formData = await request.formData();
+  const file = formData.get("file");
+
+  if (!(file instanceof File)) {
+    throw new Error("No file provided");
+  }
+
+  return {
+    buffer: Buffer.from(await file.arrayBuffer()),
+    fileName: file.name || "uploaded-rfp.pdf",
+  };
+}
+
 /**
  * Extract and parse PDF content
  */
 async function extractPdfText(pdfBuffer: Buffer): Promise<UploadedRfpAnalysis> {
   try {
-    if (!pdfParse) {
-      throw new Error("PDF parser not initialized");
-    }
-    const pdfData = await pdfParse(pdfBuffer);
-
-    // Extract text from PDF
-    const extractedText = pdfData.text || "";
+    const extracted = await extractPdfTextWithOcrFallback(pdfBuffer, { minTextChars: 60, maxOcrPages: 20 });
+    const extractedText = extracted.text;
 
     // Simple section detection based on common RFP patterns
     const sections = detectSections(extractedText);
@@ -69,13 +88,13 @@ async function extractPdfText(pdfBuffer: Buffer): Promise<UploadedRfpAnalysis> {
     return {
       fileName: "uploaded-rfp.pdf",
       fileSize: pdfBuffer.length,
-      pageCount: pdfData.numpages || 0,
+      pageCount: extracted.pageCount || 0,
       extractedText,
       sections,
       metadata: {
-        title: pdfData.info?.Title || undefined,
-        author: pdfData.info?.Author || undefined,
-        creationDate: pdfData.info?.CreationDate || undefined,
+        title: undefined,
+        author: undefined,
+        creationDate: undefined,
       },
     };
   } catch (error) {
@@ -284,24 +303,9 @@ function scoreRfpFallback(analysis: UploadedRfpAnalysis): RfpScoreResult {
 
 export async function POST(req: NextRequest) {
   try {
-    const formData = await req.formData();
-    const file = formData.get("file");
-
-    if (!file || !(file instanceof File)) {
-      return NextResponse.json({ error: "No file provided" }, { status: 400 });
-    }
-
-    if (!file.type.includes("pdf")) {
-      return NextResponse.json({ error: "File must be a PDF" }, { status: 400 });
-    }
-
-    if (file.size > 50 * 1024 * 1024) {
-      // 50MB limit
-      return NextResponse.json({ error: "File too large (max 50MB)" }, { status: 400 });
-    }
-
-    const pdfBuffer = Buffer.from(await file.arrayBuffer());
+    const { buffer: pdfBuffer, fileName } = await resolvePdfBuffer(req);
     const analysis = await extractPdfText(pdfBuffer);
+    analysis.fileName = fileName;
     const scoreResult = await scoreRfpWithAi(analysis);
 
     return NextResponse.json(scoreResult);

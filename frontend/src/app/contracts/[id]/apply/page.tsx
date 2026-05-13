@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
+import { v4 as uuidv4 } from "uuid";
 import { useAuth } from "@/contexts/AuthContext";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -17,7 +18,6 @@ import {
   critiqueProposal,
   refineProposal,
   expandAllSections,
-  startBackgroundAnalysisJob,
   type RFPAnalysis,
   type ChatMessage,
   type ProposalSections,
@@ -26,7 +26,6 @@ import {
   type ExpandProgress,
   type ParsedUploadedProposal,
 } from "@/services/aiService";
-import AnalysisProgressModal from "@/components/AnalysisProgressModal";
 import { downloadProposalPDF, generateProposalPDF, TEMPLATE_OPTIONS, type TemplateName } from "@/services/pdfGenerator";
 
 /* ─── helpers ─────────────────────────────────────────────── */
@@ -201,12 +200,7 @@ export default function ApplyPage() {
   const [quickPdfFileName, setQuickPdfFileName] = useState("");
   const [quickPdfUrl, setQuickPdfUrl] = useState<string | null>(null);
   const [quickPdfExtracted, setQuickPdfExtracted] = useState("");
-
-  /* ─── Analysis Progress & Retry ─── */
-  const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
-  const [showAnalysisModal, setShowAnalysisModal] = useState(false);
-  const [analysisRetryCount, setAnalysisRetryCount] = useState(0);
-  const [analysisRetryData, setAnalysisRetryData] = useState<{ contractId: string; contractPayload: any; vendorsPayload: any } | null>(null);
+  const quickUploadLockRef = useRef(false);
 
   /* ─── Chat builder ─── */
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -323,59 +317,12 @@ export default function ApplyPage() {
   }, [contract, rfpAnalysis]);
 
   /* ═══ QUICK UPLOAD PDF HANDLER ═══ */
-  const startAnalysisJob = async (contractPayload: any, vendorsPayload: any) => {
-    try {
-      const result = await startBackgroundAnalysisJob({
-        contract_id: contractId,
-        contract: contractPayload,
-        vendors: vendorsPayload,
-      });
-      setAnalysisJobId(result.job_id);
-      setShowAnalysisModal(true);
-      return result.job_id;
-    } catch (err) {
-      console.error("Failed to start analysis job:", err);
-      const errMsg = err instanceof Error ? err.message : String(err);
-      alert(`Failed to start analysis: ${errMsg}`);
-      return null;
-    }
-  };
-
-  const handleAnalysisRetry = async () => {
-    if (!analysisRetryData) return;
-    setAnalysisRetryCount((prev) => prev + 1);
-    await startAnalysisJob(analysisRetryData.contractPayload, analysisRetryData.vendorsPayload);
-  };
-
-  const handleAnalysisComplete = async (result: any) => {
-    console.log("Analysis completed:", result);
-    setShowAnalysisModal(false);
-
-    if (contract?.posted_by) {
-      try {
-        await supabase.from("notifications").insert({
-          id: crypto.randomUUID(),
-          user_id: contract.posted_by as string,
-          type: "proposal_analyzed",
-          message: `Analysis complete for proposal from ${profile?.company_name}. ${result?.result?.vendor_scores?.length || 0} vendor(s) scored.`,
-          read: false,
-          timestamp: new Date().toISOString(),
-        });
-      } catch (err) {
-        console.warn("Failed to send analysis completion notification:", err);
-      }
-    }
-
-    alert("Analysis completed successfully! The proposal has been analyzed.");
-    router.push(`/contracts/${contractId}`);
-  };
-
   const handleQuickUploadPdf = async () => {
-    if (!quickPdfFile || !user) return;
+    if (!quickPdfFile || !user || quickUploadLockRef.current) return;
+    quickUploadLockRef.current = true;
     setQuickPdfUploading(true);
-    setAnalysisRetryCount(0);
+    setSubmitting(true);
     try {
-      // Upload PDF via backend API (no CORS issues)
       const formData = new FormData();
       formData.append("file", quickPdfFile);
       formData.append("contractId", contractId);
@@ -387,90 +334,78 @@ export default function ApplyPage() {
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Upload failed");
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.error || "Upload failed");
       }
 
       const data = await response.json();
 
-      // Save proposal record immediately
-      setSubmitting(true);
-      try {
-        const proposalId = crypto.randomUUID();
-        const { error: proposalError } = await supabase.from("proposals").insert({
-          id: proposalId,
-          contract_id: contractId,
-          vendor_id: user.id,
-          vendor_name: profile?.company_name || "Unknown",
-          price: "",
-          timeline: "",
-          experience: "",
-          proposal_data: "",
-          proposal_file: data.url,
-          proposal_file_name: data.fileName,
-          proposal_type: "uploaded_pdf",
-          ai_score: null,
-          risk_level: null,
-          created_at: new Date().toISOString(),
-        });
+      const { data: existingProposal, error: existingProposalError } = await supabase
+        .from("proposals")
+        .select("id")
+        .eq("contract_id", contractId)
+        .eq("vendor_id", user.id)
+        .eq("proposal_type", "uploaded_pdf")
+        .eq("proposal_file_name", quickPdfFile.name)
+        .maybeSingle();
 
-        if (proposalError) {
-          throw proposalError;
-        }
-
-        // Start background analysis with progress tracking
-        const contractPayload = {
-          title: contract?.title || "",
-          description: contract?.description || "",
-          budget: contract?.budget || "",
-          deadline: contract?.deadline || undefined,
-          certifications: (contract as any)?.certifications || undefined,
-        };
-
-        const vendorsPayload = [
-          {
-            proposal_id: proposalId,
-            vendor_name: profile?.company_name || "Unknown",
-            price: "",
-            timeline: "",
-            experience: "",
-            proposal_data: data.url,
-          },
-        ];
-
-        // Save retry data for potential retries
-        setAnalysisRetryData({ contractId, contractPayload, vendorsPayload });
-
-        const jobId = await startAnalysisJob(contractPayload, vendorsPayload);
-        if (!jobId) {
-          throw new Error("Failed to get analysis job ID");
-        }
-
-        // Send notification to contract poster
-        if (contract?.posted_by) {
-          try {
-            await supabase.from("notifications").insert({
-              id: crypto.randomUUID(),
-              user_id: contract.posted_by as string,
-              type: "new_proposal",
-              message: `${profile?.company_name} submitted a proposal for "${contract.title}"`,
-              read: false,
-              timestamp: new Date().toISOString(),
-            });
-          } catch (err) {
-            console.warn("Failed to send proposal notification:", err);
-          }
-        }
-      } finally {
-        setSubmitting(false);
+      if (existingProposalError) {
+        throw existingProposalError;
       }
+
+      if (existingProposal) {
+        router.push(`/contracts/${contractId}`);
+        return;
+      }
+
+      // Save proposal record immediately
+      const proposalId = uuidv4();
+      const { error: proposalError } = await supabase.from("proposals").insert({
+        id: proposalId,
+        contract_id: contractId,
+        vendor_id: user.id,
+        vendor_name: profile?.company_name || "Unknown",
+        price: "",
+        timeline: "",
+        experience: "",
+        proposal_data: "",
+        proposal_file: data.url,
+        proposal_file_name: data.fileName,
+        proposal_type: "uploaded_pdf",
+        ai_score: null,
+        risk_level: null,
+        created_at: new Date().toISOString(),
+      });
+
+      if (proposalError) {
+        throw proposalError;
+      }
+
+      // Send notification to contract poster
+      if (contract?.posted_by) {
+        try {
+          await supabase.from("notifications").insert({
+            id: uuidv4(),
+            user_id: contract.posted_by as string,
+            type: "new_proposal",
+            message: `${profile?.company_name} submitted a proposal for "${contract.title}"`,
+            read: false,
+            timestamp: new Date().toISOString(),
+          });
+        } catch (err) {
+          console.warn("Failed to send proposal notification:", err);
+        }
+      }
+
+      router.push(`/contracts/${contractId}`);
     } catch (err) {
       console.error("PDF upload/submission failed:", err);
       const errMsg = err instanceof Error ? err.message : "Unknown error";
       alert(`Failed: ${errMsg}`);
-      setShowAnalysisModal(false);
     } finally {
+      setSubmitting(false);
       setQuickPdfUploading(false);
+      quickUploadLockRef.current = false;
     }
   };
 
@@ -937,11 +872,11 @@ export default function ApplyPage() {
                   <svg className="w-7 h-7 text-[var(--primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 12l2 2 4-4" /></svg>
                 </div>
                 <h3 className="text-lg font-bold text-[var(--foreground)] mb-2">Quick Upload PDF</h3>
-                <p className="text-sm text-[var(--muted)] leading-relaxed mb-4">Upload your vendor proposal PDF directly. Your proposal will be extracted and sent to the company for analysis.</p>
+                <p className="text-sm text-[var(--muted)] leading-relaxed mb-4">Upload your vendor proposal PDF directly to Supabase. The company will review it from the vendor responses area.</p>
                 <div className="flex flex-wrap gap-2 mb-4">
                   <span className="bg-[var(--primary-light)] text-[var(--primary)] px-2.5 py-1 rounded-lg text-xs font-medium">PDF Upload</span>
                   <span className="bg-[var(--primary-light)] text-[var(--primary)] px-2.5 py-1 rounded-lg text-xs font-medium">Fast Submit</span>
-                  <span className="bg-[var(--primary-light)] text-[var(--primary)] px-2.5 py-1 rounded-lg text-xs font-medium">AI Ready</span>
+                  <span className="bg-[var(--primary-light)] text-[var(--primary)] px-2.5 py-1 rounded-lg text-xs font-medium">Supabase Storage</span>
                 </div>
                 <label className="block cursor-pointer">
                   <input
@@ -980,7 +915,7 @@ export default function ApplyPage() {
                 {quickPdfFile && (
                   <button
                     onClick={handleQuickUploadPdf}
-                    disabled={quickPdfUploading}
+                    disabled={quickPdfUploading || submitting}
                     className="w-full mt-3 bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[#EFECE3] px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50 transition-all"
                   >
                     {quickPdfUploading ? (
@@ -1584,14 +1519,6 @@ export default function ApplyPage() {
         )}
       </div>
 
-      {/* Analysis Progress Modal */}
-      <AnalysisProgressModal
-        jobId={analysisJobId}
-        isOpen={showAnalysisModal}
-        onClose={() => setShowAnalysisModal(false)}
-        onRetry={handleAnalysisRetry}
-        onComplete={handleAnalysisComplete}
-      />
     </div>
   );
 }

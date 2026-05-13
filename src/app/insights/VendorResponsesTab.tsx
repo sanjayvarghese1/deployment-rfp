@@ -194,57 +194,24 @@ export default function VendorResponsesTab() {
     })();
   }, [selectedContract]);
 
-  const extractPdfText = async (pdfUrl: string, vendorName: string): Promise<string> => {
-    try {
-      console.log(`[Extract] Starting extraction for ${vendorName} from ${pdfUrl}`);
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2 * 60 * 1000);
-      try {
-        const response = await fetch("/api/extract-pdf", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pdfUrl }),
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-        if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.error || "PDF extraction failed");
-        }
-        const data = await response.json();
-        return data.extracted_text || `[PDF uploaded for ${vendorName}]`;
-      } catch (fetchErr) {
-        clearTimeout(timeoutId);
-        throw fetchErr;
-      }
-    } catch (err) {
-      console.error(`[Extract] Error for ${vendorName}:`, err);
-      return `[PDF extraction failed: ${vendorName}]`;
-    }
-  };
+  const runAIAnalysis = async () => {
 
   const runAIAnalysis = async () => {
     const contract = myContracts.find((c) => c.contract_id === selectedContract);
     if (!contract || allProposals.length === 0) return;
     setAnalyzing(true);
-    setAnalysisProgress("Starting 3-agent pipeline (extracting PDFs if needed)...");
+    setAnalysisProgress("Starting 3-agent pipeline (server extracts PDFs if needed)...");
     try {
-      setAnalysisProgress(`Preparing proposals (extracting PDFs if needed)...`);
+      setAnalysisProgress(`Preparing proposals for server-side extraction...`);
       const vendorPromises = allProposals.map(async (p: Proposal) => {
-        let proposalData = p.proposal_data;
-        if (p.proposal_type === "uploaded_pdf" && (!proposalData || proposalData.trim() === "")) {
-          setAnalysisProgress(`Extracting PDF for "${p.vendor_name}"...`);
-          proposalData = await extractPdfText(p.proposal_file || "", p.vendor_name);
-          const { error: updateErr } = await (supabase.from("proposals").update({ extracted_text: proposalData }).eq("id", p.proposal_id) as any);
-          if (updateErr) console.warn(`Failed to save extracted text for ${p.vendor_name}:`, updateErr);
-        }
         return {
           proposal_id: p.proposal_id,
           vendor_name: p.vendor_name,
           price: p.price || "",
           timeline: p.timeline || "",
           experience: p.experience || "",
-          proposal_data: proposalData,
+          proposal_data: p.proposal_data || "",
+          proposal_file_url: p.proposal_file || "",
         };
       });
       const vendors = await Promise.all(vendorPromises);
@@ -256,6 +223,7 @@ export default function VendorResponsesTab() {
           budget: contract.budget || "",
           deadline: contract.deadline || "",
           certifications: contract.required_certifications || "",
+          rfp_text: "",
         },
         vendors,
       });
@@ -305,7 +273,7 @@ export default function VendorResponsesTab() {
         }
         {
           const { error } = await supabase.from("messages").insert({
-            id: crypto.randomUUID(),
+            id: uuidv4(),
             sender_id: user.id,
             receiver_id: p.vendor_id,
             text: `Thank you for your proposal for "${contract.title}". After careful review, we have decided to go with another vendor. We appreciate your effort and hope to collaborate in the future.`,
@@ -315,7 +283,7 @@ export default function VendorResponsesTab() {
         }
         {
           const { error } = await supabase.from("notifications").insert({
-            id: crypto.randomUUID(),
+            id: uuidv4(),
             user_id: p.vendor_id,
             type: "proposal_rejected",
             message: `Your proposal for "${contract.title}" was not selected.`,
@@ -333,7 +301,7 @@ export default function VendorResponsesTab() {
 
       {
         const { error } = await supabase.from("messages").insert({
-          id: crypto.randomUUID(),
+          id: uuidv4(),
           sender_id: user.id,
           receiver_id: acceptedProposal.vendor_id,
           text: `Congratulations! Your proposal for "${contract.title}" has been accepted by ${ownerName}. We look forward to working with you. Please reach out to discuss next steps.`,
@@ -343,7 +311,7 @@ export default function VendorResponsesTab() {
       }
       {
         const { error } = await supabase.from("notifications").insert({
-          id: crypto.randomUUID(),
+          id: uuidv4(),
           user_id: acceptedProposal.vendor_id,
           type: "proposal_accepted",
           message: `Your proposal for "${contract.title}" has been accepted!`,
@@ -666,3 +634,4 @@ export default function VendorResponsesTab() {
     </div>
   );
 }
+

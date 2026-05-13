@@ -20,22 +20,15 @@ const OPENROUTER_API_KEY =
 
 const OPENROUTER_PRIMARY_MODEL =
   process.env.OPENROUTER_PRIMARY_MODEL ||
-  "minimax/minimax-m2.7";
-
-const OPENROUTER_FALLBACK_MODEL =
-  process.env.OPENROUTER_FALLBACK_MODEL ||
-  "minimax/minimax-m2.5";
+  "minimax/minimax-m2.5:free";
 
 /**
- * Pricing per 1K tokens (USD)
+ * Example pricing per 1K tokens (USD)
+ * Update later using OpenRouter pricing page.
  * Source: OpenRouter pricing page
  */
 const MODEL_PRICING = {
   "minimax/minimax-m2.7": {
-    input: 0.0006,
-    output: 0.0024,
-  },
-  "minimax/minimax-m2.5": {
     input: 0.0005,
     output: 0.0020,
   },
@@ -59,12 +52,12 @@ const MODEL_PRICING = {
 
 export const MODEL = {
   PRIMARY: OPENROUTER_PRIMARY_MODEL,
-  FALLBACK: OPENROUTER_FALLBACK_MODEL,
 };
 
 export const AGENT_MODEL = {
   DOCUMENT_ANALYSIS: MODEL.PRIMARY,
   REQUIREMENT_EXTRACTION: MODEL.PRIMARY,
+  INTAKE_EXTRACTION: MODEL.PRIMARY,
   TEMPLATE_SELECTION: MODEL.PRIMARY,
   TEMPLATE_FORMATTING: MODEL.PRIMARY,
   RFP_WRITING: MODEL.PRIMARY,
@@ -216,12 +209,7 @@ export async function openRouterChat(
     );
   }
 
-  const primaryModel =
-    model ||
-    OPENROUTER_PRIMARY_MODEL;
-
-  const fallbackModel =
-    OPENROUTER_FALLBACK_MODEL;
+  const primaryModel = model || OPENROUTER_PRIMARY_MODEL;
 
   const normalizedMessages =
     messages.some(
@@ -250,79 +238,50 @@ export async function openRouterChat(
   const requestStartedAt =
     Date.now();
 
-  const trace =
-    langfuse.trace({
-      name: "OpenRouter Call",
-      metadata: {
-        modelRequested:
-          primaryModel,
-        fallbackModel,
-        messageSummary:
-          summarizeMessages(
-            normalizedMessages
-          ),
-      },
-    });
+  console.log(`[OpenRouter] openRouterChat request started for model ${primaryModel}`);
+
+  const trace = langfuse.trace({
+    name: "OpenRouter Call",
+    metadata: {
+      modelRequested: primaryModel,
+      messageSummary: summarizeMessages(normalizedMessages),
+    },
+  });
 
   const requestPayload =
     (selectedModel: string) => ({
-      model:
-        selectedModel,
-      messages:
-        normalizedMessages,
-      temperature,
-      max_tokens,
-      ...(response_format ? { response_format } : {}),
-    });
+      try {
+        const result = await runAttempt(primaryModel, "Primary Model Attempt");
 
-  const runAttempt =
-    async (
-      selectedModel: string,
-      attemptName: string
-    ) => {
-      const attemptStartedAt =
-        Date.now();
-
-      const generation =
-        trace.generation({
-          name:
-            attemptName,
-          model:
-            selectedModel,
-          input:
-            summarizeMessages(
-              normalizedMessages
-            ),
+        trace.update({
+          metadata: {
+            modelUsed: primaryModel,
+            tokenUsage: result.usage,
+            promptTokens: result.usage?.promptTokens || 0,
+            completionTokens: result.usage?.completionTokens || 0,
+            totalTokens: result.usage?.totalTokens || 0,
+            estimatedCostUsd: result.cost,
+            latencyMs: Date.now() - requestStartedAt,
+          },
         });
 
-      let finalized =
-        false;
+        console.log(`[OpenRouter] primary result tokens=${JSON.stringify(result.usage)} cost=${String(result.cost)}`);
 
-      const finalize = (
-        body: any
-      ) => {
-        if (finalized)
-          return;
+        console.log(`[OpenRouter] Flushing trace to Langfuse...`);
+        await langfuse.flushAsync();
+        console.log(`[OpenRouter] Trace flushed successfully to Langfuse`);
 
-        finalized = true;
-        generation.end(
-          body
-        );
-      };
-
-      try {
-        const response =
-          await callOpenRouter(
-            requestPayload(
-              selectedModel
-            ),
-            timeoutMs
-          );
-
-        if (
-          !response.ok
-        ) {
-          const raw =
+        return result.content;
+      } catch (err) {
+        trace.update({
+          metadata: {
+            error: sanitizeError(err),
+            latencyMs: Date.now() - requestStartedAt,
+          },
+        });
+        await langfuse.flushAsync();
+        throw err;
+      }
             await response.text();
 
           throw new Error(
@@ -373,6 +332,12 @@ export async function openRouterChat(
             data.usage
           );
 
+        const tokenUsage = {
+          promptTokens,
+          completionTokens,
+          totalTokens,
+        };
+
         finalize({
           output: {
             contentChars:
@@ -389,14 +354,7 @@ export async function openRouterChat(
               estimatedCost,
           },
 
-          usage: {
-            promptTokens:
-              promptTokens,
-            completionTokens:
-              completionTokens,
-            totalTokens:
-              totalTokens,
-          },
+          usage: tokenUsage,
 
           costDetails: {
             total:
@@ -406,10 +364,7 @@ export async function openRouterChat(
 
         return {
           content,
-          usage:
-            summarizeUsage(
-              data.usage
-            ),
+          usage: tokenUsage,
           cost:
             estimatedCost,
         };
@@ -444,17 +399,22 @@ export async function openRouterChat(
       metadata: {
         modelUsed:
           primaryModel,
-        tokenUsage:
-          result.usage,
-        estimatedCostUsd:
-          result.cost,
+        tokenUsage: result.usage,
+        promptTokens: result.usage?.promptTokens || 0,
+        completionTokens: result.usage?.completionTokens || 0,
+        totalTokens: result.usage?.totalTokens || 0,
+        estimatedCostUsd: result.cost,
         latencyMs:
           Date.now() -
           requestStartedAt,
       },
     });
 
+    console.log(`[OpenRouter] primary result tokens=${JSON.stringify(result.usage)} cost=${String(result.cost)}`);
+
+    console.log(`[OpenRouter] Flushing trace to Langfuse...`);
     await langfuse.flushAsync();
+    console.log(`[OpenRouter] Trace flushed successfully to Langfuse`);
 
     return result.content;
   } catch {
@@ -468,17 +428,22 @@ export async function openRouterChat(
       metadata: {
         modelUsed:
           fallbackModel,
-        tokenUsage:
-          result.usage,
-        estimatedCostUsd:
-          result.cost,
+        tokenUsage: result.usage,
+        promptTokens: result.usage?.promptTokens || 0,
+        completionTokens: result.usage?.completionTokens || 0,
+        totalTokens: result.usage?.totalTokens || 0,
+        estimatedCostUsd: result.cost,
         latencyMs:
           Date.now() -
           requestStartedAt,
       },
     });
 
+    console.log(`[OpenRouter] fallback result tokens=${JSON.stringify(result.usage)} cost=${String(result.cost)}`);
+
+    console.log(`[OpenRouter] Flushing fallback trace to Langfuse...`);
     await langfuse.flushAsync();
+    console.log(`[OpenRouter] Fallback trace flushed successfully to Langfuse`);
 
     return result.content;
   }
@@ -575,6 +540,33 @@ export async function openRouterChatJSON<T = any>(
 
   if (parsed !== null)
     return parsed;
+
+  const repairRaw =
+    await openRouterChat({
+      ...opts,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a JSON repair tool. Return only valid JSON with no markdown, no prose, and no code fences.",
+        },
+        {
+          role: "user",
+          content:
+            `Convert the following model output into valid JSON only, preserving the original meaning exactly when possible. Output only the JSON object or array.\n\nRAW OUTPUT:\n${raw}`,
+        },
+      ],
+      temperature: 0,
+      max_tokens: Math.max(512, opts?.max_tokens || 2048),
+    });
+
+  const repairedParsed =
+    repairAndParseJSON(
+      repairRaw
+    );
+
+  if (repairedParsed !== null)
+    return repairedParsed;
 
   throw new Error(
     `Failed to parse JSON response: ${raw.substring(

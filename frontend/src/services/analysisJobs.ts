@@ -1,4 +1,5 @@
 import type { FullPipelineResult } from "@/services/aiService";
+import { v4 as uuidv4 } from "uuid";
 import { supabase } from "@/services/supabase";
 import { createClient } from "@supabase/supabase-js";
 
@@ -57,7 +58,7 @@ export async function createAnalysisJob(input: {
 }): Promise<AnalysisJobRecord> {
   const now = new Date().toISOString();
   const job: AnalysisJobRecord = {
-    id: crypto.randomUUID(),
+    id: uuidv4(),
     contract_id: input.contract_id,
     status: "queued",
     progress: "Queued for analysis",

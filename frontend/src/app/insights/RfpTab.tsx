@@ -9,3 +9,4 @@ interface RfpTabProps {
 export default function RfpTab({ onSaved }: RfpTabProps) {
   return <RfpChatbot onSaved={onSaved || (() => {})} />;
 }
+

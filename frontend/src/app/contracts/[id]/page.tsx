@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { v4 as uuidv4 } from "uuid";
 import { useAuth } from "@/contexts/AuthContext";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -27,6 +28,28 @@ function shortValue(raw: string | undefined, fallback: string): string {
   return s.slice(0, 20) + "…";
 }
 
+function buildRfpText(contract: any): string {
+  const parts: string[] = [];
+  const rfpDocument = contract?.rfp_document;
+  if (typeof rfpDocument === "string" && rfpDocument.trim() && !rfpDocument.startsWith("data:")) {
+    parts.push(rfpDocument.trim());
+  }
+
+  if (contract?.rfp_sections && typeof contract.rfp_sections === "object") {
+    parts.push(JSON.stringify(contract.rfp_sections, null, 2));
+  }
+
+  if (contract?.rfp_pdf_base64 && typeof contract.rfp_pdf_base64 === "string") {
+    parts.push(contract.rfp_pdf_base64);
+  }
+
+  if (parts.length === 0) {
+    parts.push(contract?.description || "");
+  }
+
+  return parts.filter(Boolean).join("\n\n");
+}
+
 function downloadPdfFromBase64(base64: string, filename: string) {
   const byteChars = atob(base64);
   const bytes = new Uint8Array(byteChars.length);
@@ -38,6 +61,30 @@ function downloadPdfFromBase64(base64: string, filename: string) {
   a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
+function formatAnalysisPrice(analysis: ProposalAnalysis | undefined, proposal: any): string {
+  if (analysis?.price !== null && analysis?.price !== undefined && Number.isFinite(analysis.price)) {
+    return formatCurrency(analysis.price, "en-US", analysis.price_currency || "USD");
+  }
+
+  const extractedPrice = extractCurrencyLikeText(proposal?.extracted_text ?? proposal?.proposal_data ?? proposal?.price);
+  const priceValue = parseNumber(extractedPrice);
+  return priceValue > 0 ? formatCurrency(priceValue) : "Not provided";
+}
+
+function formatAnalysisTimeline(analysis: ProposalAnalysis | undefined, proposal: any): string {
+  if (analysis?.timeline) {
+    const { start, end, duration_weeks: durationWeeks } = analysis.timeline;
+    if (start || end || durationWeeks !== null) {
+      if (start && end) return `${start} → ${end}${durationWeeks ? ` (${durationWeeks} weeks)` : ""}`;
+      if (durationWeeks !== null) return `${durationWeeks} weeks`;
+      return start || end || "Not provided";
+    }
+  }
+
+  const extractedTimeline = extractTimelineLikeText(proposal?.extracted_text ?? proposal?.proposal_data ?? proposal?.timeline);
+  return extractedTimeline && extractedTimeline.length < 80 ? extractedTimeline : "Not provided";
 }
 
 export default function ContractDetailPage() {
@@ -247,71 +294,23 @@ export default function ContractDetailPage() {
     };
   }, [backgroundJobId, proposals, contractId, savedAnalysis]);
 
-  const extractPdfText = async (pdfUrl: string, vendorName: string): Promise<string> => {
-    try {
-      console.log(`[Extract] Starting extraction for ${vendorName} from ${pdfUrl}`);
-      
-      // Set a 2-minute timeout for PDF extraction
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2 * 60 * 1000);
-
-      try {
-        const response = await fetch(apiUrl("/api/extract-pdf"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pdfUrl }),
-          signal: controller.signal,
-        });
-
-        clearTimeout(timeoutId);
-        console.log(`[Extract] Response status: ${response.status}`);
-
-        if (!response.ok) {
-          const error = await response.json();
-          console.error(`[Extract] API error: ${error.error}`);
-          throw new Error(error.error || "PDF extraction failed");
-        }
-
-        const data = await response.json();
-        console.log(`[Extract] Success: ${data.text_length || data.extracted_text?.length || 0} chars extracted`);
-        return data.extracted_text || `[PDF uploaded for ${vendorName}]`;
-      } catch (fetchErr) {
-        clearTimeout(timeoutId);
-        throw fetchErr;
-      }
-    } catch (err) {
-      console.error(`[Extract] Error for ${vendorName}:`, err);
-      const errMsg = err instanceof Error ? err.message : String(err);
-      setAnalysisProgress(`Error extracting PDF for ${vendorName}: ${errMsg}`);
-      return `[PDF extraction failed: ${vendorName}]`;
-    }
-  };
-
   const runAIAnalysis = async () => {
     if (!contract || proposals.length === 0) return;
     setAnalyzing(true);
-    setAnalysisProgress("Starting 3-agent pipeline (extracting PDFs if needed)...");
+    setAnalyzing(true);
+    setAnalysisProgress("Starting 3-agent pipeline (server extracts PDFs if needed)...");
     try {
-      setAnalysisProgress(`Preparing proposals (extracting PDFs if needed)...`);
+      setAnalysisProgress(`Preparing proposals for server-side extraction...`);
 
       const vendorPromises = proposals.map(async (p: any) => {
-        let proposalData = p.proposal_data;
-        if (p.proposal_type === "uploaded_pdf" && (!proposalData || proposalData.trim() === "")) {
-          setAnalysisProgress(`Extracting PDF for "${p.vendor_name}"...`);
-          proposalData = await extractPdfText(p.proposal_file, p.vendor_name);
-          const { error: updateErr } = await (supabase.from("proposals").update({ proposal_data: proposalData }).eq("id", p.proposal_id) as any);
-          if (updateErr) {
-            console.warn(`[Analysis] Failed to save extracted text for ${p.vendor_name}:`, updateErr);
-          }
-        }
-
         return {
           proposal_id: p.proposal_id,
           vendor_name: p.vendor_name,
           price: p.price,
           timeline: p.timeline,
           experience: p.experience,
-          proposal_data: proposalData,
+          proposal_data: p.proposal_data || "",
+          proposal_file_url: p.proposal_file || "",
         };
       });
 
@@ -324,6 +323,7 @@ export default function ContractDetailPage() {
           budget: contract.budget,
           deadline: contract.deadline,
           certifications: contract.required_certifications,
+          rfp_text: buildRfpText(contract),
         },
         vendors,
       });
@@ -376,7 +376,7 @@ export default function ContractDetailPage() {
         }
         {
           const { error } = await supabase.from("messages").insert({
-            id: crypto.randomUUID(),
+            id: uuidv4(),
             sender_id: user.id, receiver_id: p.vendor_id,
           text: `Thank you for your proposal for "${contract.title}". After careful review, we have decided to go with another vendor. We appreciate your effort and hope to collaborate in the future.`,
           timestamp: new Date().toISOString(),
@@ -386,7 +386,7 @@ export default function ContractDetailPage() {
         }
         {
           const { error } = await supabase.from("notifications").insert({
-            id: crypto.randomUUID(),
+            id: uuidv4(),
           user_id: p.vendor_id, type: "proposal_rejected",
           message: `Your proposal for "${contract.title}" was not selected.`,
           read: false, timestamp: new Date().toISOString(),
@@ -404,7 +404,7 @@ export default function ContractDetailPage() {
       // 4. Send acceptance message + notification to winner
       {
         const { error } = await supabase.from("messages").insert({
-          id: crypto.randomUUID(),
+          id: uuidv4(),
         sender_id: user.id, receiver_id: acceptedProposal.vendor_id,
         text: `Congratulations! Your proposal for "${contract.title}" has been accepted by ${ownerName}. We look forward to working with you. Please reach out to discuss next steps.`,
         timestamp: new Date().toISOString(),
@@ -414,7 +414,7 @@ export default function ContractDetailPage() {
       }
       {
         const { error } = await supabase.from("notifications").insert({
-          id: crypto.randomUUID(),
+          id: uuidv4(),
         user_id: acceptedProposal.vendor_id, type: "proposal_accepted",
         message: `Your proposal for "${contract.title}" has been accepted!`,
         read: false, timestamp: new Date().toISOString(),
@@ -874,14 +874,14 @@ export default function ContractDetailPage() {
                             <p className="text-xs text-[var(--muted)]">{p.proposal_type === "generated" ? "Generated proposal" : "Uploaded proposal"} · {p.created_at}</p>
                           </div>
                           <div className="flex items-center gap-2">
-                            {analysis?.independent_recommendation && (
+                              {(analysis?.recommendation || analysis?.independent_recommendation) && (
                               <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                                analysis.independent_recommendation === "Strongly Recommended" ? "bg-[var(--success-light)] text-[var(--success)]" :
-                                analysis.independent_recommendation === "Recommended" ? "bg-[var(--primary-light)] text-[var(--primary)]" :
-                                analysis.independent_recommendation === "Consider" ? "bg-[var(--warning-light)] text-[var(--warning)]" :
-                                analysis.independent_recommendation === "Risky" ? "bg-[var(--danger-light)] text-[var(--danger)]" :
+                                  (analysis.recommendation || analysis.independent_recommendation) === "Strongly Recommended" ? "bg-[var(--success-light)] text-[var(--success)]" :
+                                  (analysis.recommendation || analysis.independent_recommendation) === "Recommended" ? "bg-[var(--primary-light)] text-[var(--primary)]" :
+                                  (analysis.recommendation || analysis.independent_recommendation) === "Consider" ? "bg-[var(--warning-light)] text-[var(--warning)]" :
+                                  (analysis.recommendation || analysis.independent_recommendation) === "Risky" ? "bg-[var(--danger-light)] text-[var(--danger)]" :
                                 "bg-[var(--surface)] text-[var(--muted)]"
-                              }`}>{analysis.independent_recommendation}</span>
+                                }`}>{analysis.recommendation || analysis.independent_recommendation}</span>
                             )}
                             <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${risk === "Low" ? "bg-[var(--success-light)] text-[var(--success)]" : risk === "High" ? "bg-[var(--danger-light)] text-[var(--danger)]" : "bg-[var(--surface)] text-[var(--muted)]"}`}>{risk}</span>
                             {score != null && (
@@ -889,17 +889,29 @@ export default function ContractDetailPage() {
                             )}
                           </div>
                         </div>
-                        <div className="flex gap-4 text-sm text-[var(--muted)] mb-2">
-                          <span>Price: <span className="font-medium text-[var(--foreground)]">{(() => {
-                            const extractedPrice = extractCurrencyLikeText(p.extracted_text ?? p.proposal_data);
-                            const priceValue = parseNumber(extractedPrice);
-                            return priceValue > 0 ? formatCurrency(priceValue) : "N/A";
-                          })()}</span></span>
-                          <span>Timeline: <span className="font-medium text-[var(--foreground)]">{(() => {
-                            const extractedTimeline = extractTimelineLikeText(p.extracted_text ?? p.proposal_data);
-                            return extractedTimeline && extractedTimeline.length < 80 ? extractedTimeline : "N/A";
-                          })()}</span></span>
+                        <div className="grid gap-3 sm:grid-cols-2 text-sm text-[var(--muted)] mb-2">
+                          <div className="rounded-lg border border-[var(--divider)] bg-white/70 p-3">
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <span>Price</span>
+                              <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-[var(--surface)] text-[var(--muted)]">{analysis?.price_confidence || "unknown"}</span>
+                            </div>
+                            <p className="font-medium text-[var(--foreground)]">{formatAnalysisPrice(analysis, p)}</p>
+                            {analysis?.price_estimation_reasoning && analysis.price_confidence !== "exact" && (
+                              <p className="text-xs text-[var(--muted)] mt-1">{analysis.price_estimation_reasoning}</p>
+                            )}
+                          </div>
+                          <div className="rounded-lg border border-[var(--divider)] bg-white/70 p-3">
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <span>Timeline</span>
+                              <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-[var(--surface)] text-[var(--muted)]">{analysis?.timeline_confidence || "unknown"}</span>
+                            </div>
+                            <p className="font-medium text-[var(--foreground)]">{formatAnalysisTimeline(analysis, p)}</p>
+                            {analysis?.timeline_estimation_reasoning && analysis.timeline_confidence !== "explicit" && (
+                              <p className="text-xs text-[var(--muted)] mt-1">{analysis.timeline_estimation_reasoning}</p>
+                            )}
+                          </div>
                         </div>
+                        {analysis?.risk_summary && <p className="text-xs text-[var(--muted)] mb-2">Risk summary: {analysis.risk_summary}</p>}
                         {p.experience && <p className="text-sm text-[var(--muted)] leading-relaxed mb-3">{p.experience}</p>}
 
                         {p.proposal_data && !(p.proposal_file && typeof p.proposal_file === "string" && p.proposal_file.startsWith("http")) && (

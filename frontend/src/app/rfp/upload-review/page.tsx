@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { apiUrl } from "@/lib/api";
 import { createContract } from "@/services/supabase";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -62,15 +63,20 @@ export default function RfpUploadReviewPage() {
   const [qaSuggestionStates, setQaSuggestionStates] = useState<Record<number, SuggestionState>>({});
   const [qaSuggestionsResolved, setQaSuggestionsResolved] = useState(false);
   const [generatedDraft, setGeneratedDraft] = useState<GeneratedDraft | null>(null);
+  const [analyzingPdf, setAnalyzingPdf] = useState(false);
+  const [analysisError, setAnalysisError] = useState("");
+  const [uploadedPdfUrl, setUploadedPdfUrl] = useState("");
 
   useEffect(() => {
     try {
       const storedAnalysis = sessionStorage.getItem("rfp-upload-analysis");
-      const storedPdfName = sessionStorage.getItem("uploaded-pdf-name");
+      const storedPdfName = sessionStorage.getItem("rfp-uploaded-pdf-name") || sessionStorage.getItem("uploaded-pdf-name");
+      const storedPdfUrl = sessionStorage.getItem("rfp-uploaded-pdf-url") || "";
       const storedDraftRaw = sessionStorage.getItem("rfp-editor-draft") || localStorage.getItem("rfp-editor-draft");
 
       if (storedAnalysis) setAnalysis(JSON.parse(storedAnalysis));
       if (storedPdfName) setPdfName(storedPdfName);
+      if (storedPdfUrl) setUploadedPdfUrl(storedPdfUrl);
       if (storedDraftRaw) {
         const storedDraft = JSON.parse(storedDraftRaw) as GeneratedDraft;
         if (storedDraft?.uploadedFrom === "pdf" && storedDraft.pdfBase64) {
@@ -88,6 +94,38 @@ export default function RfpUploadReviewPage() {
       router.push("/rfp");
     }
   }, [router]);
+
+  const runPdfAnalysis = useCallback(async () => {
+    if (!uploadedPdfUrl || analyzingPdf) return;
+
+    try {
+      setAnalyzingPdf(true);
+      setAnalysisError("");
+      setFlowState("review");
+      setWizardStep(2);
+
+      const response = await fetch(apiUrl("/api/rfp/upload-analyze"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ pdfUrl: uploadedPdfUrl, fileName: pdfName || "uploaded-rfp.pdf" }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.error || "Analysis failed");
+      }
+
+      const scoreResult = await response.json();
+      setAnalysis(scoreResult);
+      sessionStorage.setItem("rfp-upload-analysis", JSON.stringify(scoreResult));
+    } catch (error) {
+      setAnalysisError(error instanceof Error ? error.message : "Analysis failed");
+    } finally {
+      setAnalyzingPdf(false);
+    }
+  }, [analyzingPdf, pdfName, uploadedPdfUrl]);
 
   useEffect(() => {
     const unsubscribe = subscribeBackgroundGeneration((snapshot) => {
@@ -375,10 +413,22 @@ export default function RfpUploadReviewPage() {
 
   if (!analysis) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#EFECE3]">
-        <button className="btn-primary" onClick={() => router.push("/rfp")}>
-          Go Back
-        </button>
+      <div className="flex min-h-screen items-center justify-center bg-[#EFECE3] px-4">
+        <div className="card w-full max-w-[780px] p-6">
+          <div className="text-lg font-bold text-[var(--foreground)]">RFP uploaded</div>
+          <div className="mt-2 text-sm text-[var(--muted)]">
+            {pdfName || "Your PDF"} is ready. Extraction and analysis will start only when you click Run Analysis.
+          </div>
+          {analysisError && <div className="mt-4 rounded-xl border border-[var(--danger)] bg-[var(--danger-light)] p-3 text-sm text-[var(--danger)]">{analysisError}</div>}
+          <div className="mt-5 flex flex-wrap gap-3">
+            <button className="btn-primary" onClick={runPdfAnalysis} disabled={analyzingPdf || !uploadedPdfUrl}>
+              {analyzingPdf ? "Analyzing..." : "Run Analysis"}
+            </button>
+            <button className="btn-outline" onClick={() => router.push("/rfp") }>
+              Go Back
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -595,3 +645,4 @@ export default function RfpUploadReviewPage() {
     </div>
   );
 }
+

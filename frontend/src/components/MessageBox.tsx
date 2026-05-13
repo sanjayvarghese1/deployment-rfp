@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { v4 as uuidv4 } from "uuid";
 import { useAuth } from "@/contexts/AuthContext";
 import { format, isToday, isYesterday } from "date-fns";
 import { supabase } from "@/services/supabase";
@@ -72,7 +73,7 @@ export default function MessageBox({
     setSending(true);
     try {
       const { error } = await supabase.from("messages").insert({
-        id: crypto.randomUUID(),
+        id: uuidv4(),
         sender_id: user.id,
         receiver_id: otherUserId,
         text: text.trim(),
@@ -200,3 +201,4 @@ export default function MessageBox({
     </div>
   );
 }
+

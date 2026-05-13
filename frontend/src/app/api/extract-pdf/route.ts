@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createRequire } from "module";
-
-const require = createRequire(import.meta.url);
+import { extractPdfTextWithOcrFallback } from "@/lib/pdfExtraction";
 
 export const runtime = "nodejs";
 
@@ -71,46 +69,25 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Import pdf-parse for server-side extraction
-    let pdfParse: any;
+    let extraction;
     try {
-      // pdf-parse v1 is CommonJS, so load it via require.
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      pdfParse = require("pdf-parse");
-      console.log("[API] pdf-parse loaded successfully");
-    } catch (importErr) {
-      console.error("[API] Failed to import pdf-parse:", importErr);
-      return NextResponse.json(
-        { error: "PDF parser not available" },
-        { status: 500 }
-      );
-    }
-
-    // Parse PDF and extract text
-    let extractedText = "";
-    let pageCount = 0;
-    try {
-      const parsed = await pdfParse(buffer);
-      extractedText = (parsed?.text || "").trim();
-      pageCount = Number(parsed?.numpages || 0);
-
-      console.log(`[API] PDF parsed successfully: ${pageCount} pages, ${extractedText.length} chars`);
+      extraction = await extractPdfTextWithOcrFallback(buffer, { minTextChars: 60, maxOcrPages: 20 });
+      console.log(`[API] PDF extracted using ${extraction.method} with ${extraction.text.length} chars across ${extraction.pageCount} pages`);
     } catch (parseErr) {
-      console.error("[API] PDF parsing error:", parseErr);
+      console.error("[API] PDF extraction error:", parseErr);
       return NextResponse.json(
-        { error: `PDF parsing failed: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}` },
+        { error: `PDF extraction failed: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}` },
         { status: 500 }
       );
     }
+
+    const extractedText = extraction.text;
+    const pageCount = extraction.pageCount;
 
     // Extract clean text from all pages
     const fileName = pdfUrl.split("/").pop() || "proposal.pdf";
 
     // If text is too short, log warning
-    if (!extractedText || extractedText.length < 50) {
-      console.warn(`[API] Warning: Extracted text very short (${extractedText.length} chars)`);
-    }
-
     // Ensure we have some extracted text
     if (!extractedText || extractedText.length === 0) {
       console.warn("[API] PDF extraction resulted in empty text");
@@ -130,6 +107,7 @@ export async function POST(request: NextRequest) {
         page_count: pageCount,
         file_name: fileName,
         text_length: extractedText.length,
+        extraction_method: extraction.method,
       },
       { status: 200 }
     );

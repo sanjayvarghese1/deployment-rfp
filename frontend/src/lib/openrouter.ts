@@ -20,22 +20,15 @@ const OPENROUTER_API_KEY =
 
 const OPENROUTER_PRIMARY_MODEL =
   process.env.OPENROUTER_PRIMARY_MODEL ||
-  "minimax/minimax-m2.7";
-
-const OPENROUTER_FALLBACK_MODEL =
-  process.env.OPENROUTER_FALLBACK_MODEL ||
-  "minimax/minimax-m2.5";
+  "minimax/minimax-m2.5:free";
 
 /**
- * Pricing per 1K tokens (USD)
+ * Example pricing per 1K tokens (USD)
+ * Update later using OpenRouter pricing page.
  * Source: OpenRouter pricing page
  */
 const MODEL_PRICING = {
   "minimax/minimax-m2.7": {
-    input: 0.0006,
-    output: 0.0024,
-  },
-  "minimax/minimax-m2.5": {
     input: 0.0005,
     output: 0.0020,
   },
@@ -59,17 +52,16 @@ const MODEL_PRICING = {
 
 export const MODEL = {
   PRIMARY: OPENROUTER_PRIMARY_MODEL,
-  FALLBACK: OPENROUTER_FALLBACK_MODEL,
 };
 
 export const AGENT_MODEL = {
-  DOCUMENT_ANALYSIS: "qwen/qwen3-max",
+  DOCUMENT_ANALYSIS: MODEL.PRIMARY,
   REQUIREMENT_EXTRACTION: MODEL.PRIMARY,
-  INTAKE_EXTRACTION: "qwen/qwen-turbo",
+  INTAKE_EXTRACTION: MODEL.PRIMARY,
   TEMPLATE_SELECTION: MODEL.PRIMARY,
   TEMPLATE_FORMATTING: MODEL.PRIMARY,
-  RFP_WRITING: "qwen/qwen3-max",
-  QUALITY_ASSURANCE: "qwen/qwen3-max",
+  RFP_WRITING: MODEL.PRIMARY,
+  QUALITY_ASSURANCE: MODEL.PRIMARY,
 };
 
 /* ===================================================
@@ -217,12 +209,7 @@ export async function openRouterChat(
     );
   }
 
-  const primaryModel =
-    model ||
-    OPENROUTER_PRIMARY_MODEL;
-
-  const fallbackModel =
-    OPENROUTER_FALLBACK_MODEL;
+  const primaryModel = model || OPENROUTER_PRIMARY_MODEL;
 
   const normalizedMessages =
     messages.some(
@@ -253,19 +240,13 @@ export async function openRouterChat(
 
   console.log(`[OpenRouter] openRouterChat request started for model ${primaryModel}`);
 
-  const trace =
-    langfuse.trace({
-      name: "OpenRouter Call",
-      metadata: {
-        modelRequested:
-          primaryModel,
-        fallbackModel,
-        messageSummary:
-          summarizeMessages(
-            normalizedMessages
-          ),
-      },
-    });
+  const trace = langfuse.trace({
+    name: "OpenRouter Call",
+    metadata: {
+      modelRequested: primaryModel,
+      messageSummary: summarizeMessages(normalizedMessages),
+    },
+  });
 
   const requestPayload =
     (selectedModel: string) => ({
@@ -435,24 +416,17 @@ export async function openRouterChat(
     };
 
   try {
-    const result =
-      await runAttempt(
-        primaryModel,
-        "Primary Model Attempt"
-      );
+    const result = await runAttempt(primaryModel, "Primary Model Attempt");
 
     trace.update({
       metadata: {
-        modelUsed:
-          primaryModel,
+        modelUsed: primaryModel,
         tokenUsage: result.usage,
         promptTokens: result.usage?.promptTokens || 0,
         completionTokens: result.usage?.completionTokens || 0,
         totalTokens: result.usage?.totalTokens || 0,
         estimatedCostUsd: result.cost,
-        latencyMs:
-          Date.now() -
-          requestStartedAt,
+        latencyMs: Date.now() - requestStartedAt,
       },
     });
 
@@ -463,35 +437,15 @@ export async function openRouterChat(
     console.log(`[OpenRouter] Trace flushed successfully to Langfuse`);
 
     return result.content;
-  } catch {
-    const result =
-      await runAttempt(
-        fallbackModel,
-        "Fallback Model Attempt"
-      );
-
+  } catch (err) {
     trace.update({
       metadata: {
-        modelUsed:
-          fallbackModel,
-        tokenUsage: result.usage,
-        promptTokens: result.usage?.promptTokens || 0,
-        completionTokens: result.usage?.completionTokens || 0,
-        totalTokens: result.usage?.totalTokens || 0,
-        estimatedCostUsd: result.cost,
-        latencyMs:
-          Date.now() -
-          requestStartedAt,
+        error: sanitizeError(err),
+        latencyMs: Date.now() - requestStartedAt,
       },
     });
-
-    console.log(`[OpenRouter] fallback result tokens=${JSON.stringify(result.usage)} cost=${String(result.cost)}`);
-
-    console.log(`[OpenRouter] Flushing fallback trace to Langfuse...`);
     await langfuse.flushAsync();
-    console.log(`[OpenRouter] Fallback trace flushed successfully to Langfuse`);
-
-    return result.content;
+    throw err;
   }
 }
 

@@ -11,6 +11,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@napi-rs/canvas": "^1.0.0",
     "@supabase/supabase-js": "^2.105.3",
     "date-fns": "^4.1.0",
     "jspdf": "^4.2.0",
@@ -23,6 +24,7 @@
     "puppeteer": "^24.38.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "tesseract.js": "^7.0.0",
     "uuid": "^14.0.0"
   },
   "devDependencies": {

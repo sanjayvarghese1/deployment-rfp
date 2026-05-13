@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { v4 as uuidv4 } from "uuid";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
@@ -44,7 +45,7 @@ export default function NewContractPage() {
     setPublishing(true);
     try {
       const { error } = await supabase.from("contracts").insert({
-        id: crypto.randomUUID(),
+        id: uuidv4(),
         title: form.project_title,
         description: form.description,
         budget: form.budget,
@@ -151,3 +152,4 @@ export default function NewContractPage() {
     </div>
   );
 }
+

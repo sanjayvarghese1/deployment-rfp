@@ -75,3 +75,4 @@ export default function SubNavBar({ currentTab = "generate" }: SubNavBarProps) {
     </div>
   );
 }
+

@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/services/supabase";
 import type { ProposalAnalysis, SavedProposalAnalysisResult } from "@/services/aiService";
+import formatCurrency, { extractCurrencyLikeText, extractTimelineLikeText, parseNumber } from "@/lib/formatters/number";
 
 function normalizeDoc(data: any): any {
   return data;
@@ -21,6 +22,30 @@ function recommendationClass(label: string): string {
   if (label === "Recommended") return "bg-[var(--primary-light)] text-[var(--primary)]";
   if (label === "Consider") return "bg-[var(--warning-light)] text-[var(--warning)]";
   return "bg-[var(--danger-light)] text-[var(--danger)]";
+}
+
+function formatAnalysisPrice(analysis: ProposalAnalysis | null, proposal: any): string {
+  if (analysis?.price !== null && analysis?.price !== undefined && Number.isFinite(analysis.price)) {
+    return formatCurrency(analysis.price, "en-US", analysis.price_currency || "USD");
+  }
+
+  const extractedPrice = extractCurrencyLikeText(proposal?.extracted_text ?? proposal?.proposal_data ?? proposal?.price);
+  const priceValue = parseNumber(extractedPrice);
+  return priceValue > 0 ? formatCurrency(priceValue) : "Not provided";
+}
+
+function formatAnalysisTimeline(analysis: ProposalAnalysis | null, proposal: any): string {
+  if (analysis?.timeline) {
+    const { start, end, duration_weeks: durationWeeks } = analysis.timeline;
+    if (start || end || durationWeeks !== null) {
+      if (start && end) return `${start} → ${end}${durationWeeks ? ` (${durationWeeks} weeks)` : ""}`;
+      if (durationWeeks !== null) return `${durationWeeks} weeks`;
+      return start || end || "Not provided";
+    }
+  }
+
+  const extractedTimeline = extractTimelineLikeText(proposal?.extracted_text ?? proposal?.proposal_data ?? proposal?.timeline);
+  return extractedTimeline && extractedTimeline.length < 80 ? extractedTimeline : "Not provided";
 }
 
 export default function VendorReportPage() {
@@ -84,6 +109,10 @@ export default function VendorReportPage() {
     }));
   }, [analysis]);
 
+  const recommendation = analysis?.recommendation || analysis?.independent_recommendation;
+  const priceConfidence = analysis?.price_confidence || "unknown";
+  const timelineConfidence = analysis?.timeline_confidence || "unknown";
+
   if (loading) {
     return <div className="min-h-screen p-8 text-sm text-[var(--muted)]">Loading vendor report...</div>;
   }
@@ -126,6 +155,12 @@ export default function VendorReportPage() {
 
             <p className="text-sm text-[var(--muted)]">{analysis.analysis_summary}</p>
 
+            {analysis.risk_summary && (
+              <div className="rounded-lg border border-[var(--divider)] bg-[var(--surface)] p-3 text-sm text-[var(--muted)]">
+                <span className="font-medium text-[var(--foreground)]">Risk summary:</span> {analysis.risk_summary}
+              </div>
+            )}
+
             <div className="grid gap-3 sm:grid-cols-2">
               {criterionRows.map((row) => (
                 <div key={row.key} className="rounded-lg border border-[var(--divider)] p-3">
@@ -146,9 +181,11 @@ export default function VendorReportPage() {
             <div>
               <p className="text-sm font-semibold text-[var(--foreground)] mb-2">Snapshot</p>
               <div className="space-y-2 text-sm">
-                <p><span className="text-[var(--muted)]">Recommendation:</span> {analysis.independent_recommendation}</p>
-                <p><span className="text-[var(--muted)]">Price:</span> {proposal.price || "Not provided"}</p>
-                <p><span className="text-[var(--muted)]">Timeline:</span> {proposal.timeline || "Not provided"}</p>
+                <p><span className="text-[var(--muted)]">Recommendation:</span> {recommendation || "Not provided"}</p>
+                <p><span className="text-[var(--muted)]">Price:</span> {formatAnalysisPrice(analysis, proposal)} <span className="text-[var(--muted)]">({priceConfidence})</span></p>
+                {analysis?.price_estimation_reasoning && priceConfidence !== "exact" && <p className="text-xs text-[var(--muted)]">{analysis.price_estimation_reasoning}</p>}
+                <p><span className="text-[var(--muted)]">Timeline:</span> {formatAnalysisTimeline(analysis, proposal)} <span className="text-[var(--muted)]">({timelineConfidence})</span></p>
+                {analysis?.timeline_estimation_reasoning && timelineConfidence !== "explicit" && <p className="text-xs text-[var(--muted)]">{analysis.timeline_estimation_reasoning}</p>}
                 <p><span className="text-[var(--muted)]">Risk:</span> {analysis.risk_flags?.length ? "Has risk flags" : "No major risk flags"}</p>
               </div>
             </div>
