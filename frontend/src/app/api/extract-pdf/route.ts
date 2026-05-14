@@ -9,7 +9,6 @@ export const runtime = "nodejs";
  */
 export async function POST(request: NextRequest) {
   try {
-    console.log("[API] /api/extract-pdf called");
     
     let body: { pdfUrl?: string };
     try {
@@ -72,7 +71,7 @@ export async function POST(request: NextRequest) {
     let extraction;
     try {
       extraction = await extractPdfTextWithOcrFallback(buffer, { minTextChars: 60, maxOcrPages: 20 });
-      console.log(`[API] PDF extracted using ${extraction.method} with ${extraction.text.length} chars across ${extraction.pageCount} pages`);
+      console.log(`[API] PDF extracted: ${extraction.text.length} chars across ${extraction.pageCount} pages`);
     } catch (parseErr) {
       console.error("[API] PDF extraction error:", parseErr);
       return NextResponse.json(
@@ -107,7 +106,6 @@ export async function POST(request: NextRequest) {
         page_count: pageCount,
         file_name: fileName,
         text_length: extractedText.length,
-        extraction_method: extraction.method,
       },
       { status: 200 }
     );

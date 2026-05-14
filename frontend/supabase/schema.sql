@@ -158,6 +158,7 @@ create table if not exists public.proposals (
   timeline text,
   experience text,
   proposal_data text,
+  extracted_text text,
   proposal_file text,
   proposal_file_name text,
   proposal_type text,

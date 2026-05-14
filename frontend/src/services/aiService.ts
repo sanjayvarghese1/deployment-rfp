@@ -33,7 +33,6 @@ export interface ProposalInput {
   vendor_timeline: string;
   vendor_experience: string;
   proposal_data?: string;
-  proposal_file_url?: string;
 }
 
 export async function generateRFP(input: RFPInput): Promise<string> {
@@ -54,27 +53,10 @@ export interface CriterionScore {
   reason: string;
 }
 
-export type PriceConfidence = "exact" | "estimated" | "unknown";
-export type TimelineConfidence = "explicit" | "inferred" | "unknown";
-
-export interface AnalysisTimeline {
-  start: string | null;
-  end: string | null;
-  duration_weeks: number | null;
-}
-
 export interface ProposalAnalysis {
-  recommendation?: string;
   vendor_name: string;
   overall_score: number;
   independent_recommendation: string;
-  price: number | null;
-  price_currency: string | null;
-  price_confidence: PriceConfidence;
-  price_estimation_reasoning: string;
-  timeline: AnalysisTimeline;
-  timeline_confidence: TimelineConfidence;
-  timeline_estimation_reasoning: string;
   criterion_scores: {
     technical_fit: CriterionScore;
     cost_efficiency: CriterionScore;
@@ -85,7 +67,6 @@ export interface ProposalAnalysis {
   strengths: string[];
   weaknesses: string[];
   risk_flags: string[];
-  risk_summary: string;
   analysis_summary: string;
 }
 
@@ -154,7 +135,7 @@ export interface SavedProposalAnalysisResult {
   vendor_count: number;
 }
 
-type PipelineContract = { title: string; description: string; budget: string; deadline?: string; certifications?: string; rfp_text?: string };
+type PipelineContract = { title: string; description: string; budget: string; deadline?: string; certifications?: string };
 
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -180,7 +161,6 @@ export function buildPipelineCacheKey(contract: PipelineContract, vendors: Vendo
       budget: contract.budget || "",
       deadline: contract.deadline || "",
       certifications: contract.certifications || "",
-      rfp_text: contract.rfp_text || "",
     },
     vendors: vendors.map((vendor) => ({
       vendor_name: vendor.vendor_name || "",
@@ -188,7 +168,6 @@ export function buildPipelineCacheKey(contract: PipelineContract, vendors: Vendo
       timeline: vendor.timeline || "",
       experience: vendor.experience || "",
       proposal_data: vendor.proposal_data || "",
-      proposal_file_url: vendor.proposal_file_url || "",
     })),
   };
 
@@ -235,7 +214,6 @@ export interface VendorInput {
   timeline: string;
   experience: string;
   proposal_data?: string;
-  proposal_file_url?: string;
 }
 
 export async function runFullPipeline(

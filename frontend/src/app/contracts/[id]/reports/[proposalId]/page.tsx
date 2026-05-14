@@ -25,18 +25,21 @@ function recommendationClass(label: string): string {
 }
 
 function formatAnalysisPrice(analysis: ProposalAnalysis | null, proposal: any): string {
-  if (analysis?.price !== null && analysis?.price !== undefined && Number.isFinite(analysis.price)) {
-    return formatCurrency(analysis.price, "en-US", analysis.price_currency || "USD");
+  const a: any = analysis;
+  if (a?.price !== null && a?.price !== undefined && Number.isFinite(a.price)) {
+    return formatCurrency(a.price, "en-US", a.price_currency || "USD");
   }
 
+  if (proposal?.price) return proposal.price;
   const extractedPrice = extractCurrencyLikeText(proposal?.extracted_text ?? proposal?.proposal_data ?? proposal?.price);
   const priceValue = parseNumber(extractedPrice);
   return priceValue > 0 ? formatCurrency(priceValue) : "Not provided";
 }
 
 function formatAnalysisTimeline(analysis: ProposalAnalysis | null, proposal: any): string {
-  if (analysis?.timeline) {
-    const { start, end, duration_weeks: durationWeeks } = analysis.timeline;
+  const a: any = analysis;
+  if (a?.timeline) {
+    const { start, end, duration_weeks: durationWeeks } = a.timeline;
     if (start || end || durationWeeks !== null) {
       if (start && end) return `${start} → ${end}${durationWeeks ? ` (${durationWeeks} weeks)` : ""}`;
       if (durationWeeks !== null) return `${durationWeeks} weeks`;
@@ -44,6 +47,7 @@ function formatAnalysisTimeline(analysis: ProposalAnalysis | null, proposal: any
     }
   }
 
+  if (proposal?.timeline) return proposal.timeline;
   const extractedTimeline = extractTimelineLikeText(proposal?.extracted_text ?? proposal?.proposal_data ?? proposal?.timeline);
   return extractedTimeline && extractedTimeline.length < 80 ? extractedTimeline : "Not provided";
 }
@@ -59,6 +63,8 @@ export default function VendorReportPage() {
   const [proposal, setProposal] = useState<any>(null);
   const [analysis, setAnalysis] = useState<ProposalAnalysis | null>(null);
   const [savedAnalysis, setSavedAnalysis] = useState<SavedProposalAnalysisResult | null>(null);
+
+  const a: any = analysis;
 
   useEffect(() => {
     const load = async () => {
@@ -109,9 +115,9 @@ export default function VendorReportPage() {
     }));
   }, [analysis]);
 
-  const recommendation = analysis?.recommendation || analysis?.independent_recommendation;
-  const priceConfidence = analysis?.price_confidence || "unknown";
-  const timelineConfidence = analysis?.timeline_confidence || "unknown";
+  const recommendation = a?.recommendation || a?.independent_recommendation;
+  const priceConfidence = a?.price_confidence || "unknown";
+  const timelineConfidence = a?.timeline_confidence || "unknown";
 
   if (loading) {
     return <div className="min-h-screen p-8 text-sm text-[var(--muted)]">Loading vendor report...</div>;
@@ -155,9 +161,9 @@ export default function VendorReportPage() {
 
             <p className="text-sm text-[var(--muted)]">{analysis.analysis_summary}</p>
 
-            {analysis.risk_summary && (
+            {a.risk_summary && (
               <div className="rounded-lg border border-[var(--divider)] bg-[var(--surface)] p-3 text-sm text-[var(--muted)]">
-                <span className="font-medium text-[var(--foreground)]">Risk summary:</span> {analysis.risk_summary}
+                <span className="font-medium text-[var(--foreground)]">Risk summary:</span> {a.risk_summary}
               </div>
             )}
 
@@ -183,9 +189,9 @@ export default function VendorReportPage() {
               <div className="space-y-2 text-sm">
                 <p><span className="text-[var(--muted)]">Recommendation:</span> {recommendation || "Not provided"}</p>
                 <p><span className="text-[var(--muted)]">Price:</span> {formatAnalysisPrice(analysis, proposal)} <span className="text-[var(--muted)]">({priceConfidence})</span></p>
-                {analysis?.price_estimation_reasoning && priceConfidence !== "exact" && <p className="text-xs text-[var(--muted)]">{analysis.price_estimation_reasoning}</p>}
+                {a?.price_estimation_reasoning && priceConfidence !== "exact" && <p className="text-xs text-[var(--muted)]">{a.price_estimation_reasoning}</p>}
                 <p><span className="text-[var(--muted)]">Timeline:</span> {formatAnalysisTimeline(analysis, proposal)} <span className="text-[var(--muted)]">({timelineConfidence})</span></p>
-                {analysis?.timeline_estimation_reasoning && timelineConfidence !== "explicit" && <p className="text-xs text-[var(--muted)]">{analysis.timeline_estimation_reasoning}</p>}
+                {a?.timeline_estimation_reasoning && timelineConfidence !== "explicit" && <p className="text-xs text-[var(--muted)]">{a.timeline_estimation_reasoning}</p>}
                 <p><span className="text-[var(--muted)]">Risk:</span> {analysis.risk_flags?.length ? "Has risk flags" : "No major risk flags"}</p>
               </div>
             </div>

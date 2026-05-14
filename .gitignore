@@ -7,3 +7,10 @@ __pycache__/
 .env.*
 dist/
 build/
+backend/app/procurelink_jobs.sqlite3
+frontend/tmp/
+frontend/scripts/apply-migration.js
+frontend/scripts/create_test_proposal.js
+frontend/scripts/test-extraction.js
+frontend/src/app/contracts/[[]id[]]/apply/page.tsx.disabled
+test-openrouter.js

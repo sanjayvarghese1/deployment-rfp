@@ -289,6 +289,14 @@ function synthesizeSeed(
   if (qaRevisionNotes && qaRevisionNotes.trim().length > 0) {
     parts.push(`[QA Revision Notes]: ${qaRevisionNotes}`);
   }
+  
+  // DEBUG: Log when seeds have actual user input vs fallback
+  if (parts.length === 0 && sources) {
+    console.debug(`⚠️ [SEED] ${key}: No user input found from sources [${sources.join(", ")}]`);
+  } else if (parts.length > 0) {
+    console.debug(`✅ [SEED] ${key}: Using user input (${parts.length} parts, ${parts.join("\n").length} chars)`);
+  }
+  
   return parts.join("\n");
 }
 
@@ -391,6 +399,13 @@ async function generateBatch(
     })
     .join("\n\n");
 
+  // DEBUG: Show what seeds are being sent to LLM for this batch
+  const batchDebug = batchKeys.map((key) => {
+    const seed = seeds[key] || "(Generate based on project context)";
+    return { key, seed_length: seed.length, has_content: seed.length > 50, preview: seed.slice(0, 80) };
+  });
+  console.debug(`📦 [BATCH] Generating sections: ${batchKeys.join(", ")}`, batchDebug);
+
   const prompt = `Write the following sections for a professional Request for Proposal (RFP) document.
 
 PROJECT: ${metadata.project_title}
@@ -398,6 +413,8 @@ ORGANIZATION: ${metadata.organization_name}
 CATEGORY: ${metadata.category}
 ${decompositionContext ? `\n${decompositionContext}\n` : ""}${contextLines.length > 0 ? `\nCONTEXT FROM PREVIOUSLY GENERATED SECTIONS:\n${contextLines.join("\n")}\n` : ""}
 INSTRUCTIONS:
+- CRITICAL: Each section MUST incorporate and expand upon the "User Input" provided. This is the customer's primary requirement for that section.
+- For sections with User Input, weave the customer's specific details, requirements, and context throughout the content.
 - For each section, write ${sectionWordRange} words of professional, detailed content
 - Use ### sub-headings (2-4 per section) with 2-4 paragraphs each
 - Include specific metrics, standards (ISO 27001, SOC2, GDPR, etc.), and KPIs where relevant
@@ -411,7 +428,7 @@ INSTRUCTIONS:
 ${sectionPrompts}`;
 
   const system =
-    "You are an expert procurement consultant writing a professional RFP document. Write detailed, actionable content with specific standards, metrics, and requirements. Use professional business language. Always use the [SECTION: key] delimiters provided.";
+    "You are an expert procurement consultant writing a professional RFP document. Your PRIMARY task is to incorporate the customer's specific 'User Input' into each section. Write detailed, actionable content that directly addresses and expands upon what the customer provided. Use professional business language, specific standards, metrics, and requirements. Always use the [SECTION: key] delimiters provided. The User Input is the foundation - expand it with professional detail and procurement best practices.";
 
   const result = await sendPrompt(PIPELINE_MODELS.rfpGeneration, prompt, system, {
     temperature: 0.35,
@@ -823,6 +840,17 @@ export async function runGeneratePipeline(
       input.qaRevisionNotes,
     );
   }
+
+  // DEBUG: Log seed generation to verify user inputs are used
+  console.log("📋 [SEED GENERATION] Synthesized seeds for all RFP sections:", {
+    sections_count: Object.keys(input.sections).length,
+    sections_with_values: Object.entries(input.sections).filter(([, v]) => v && v.toLowerCase() !== "auto").length,
+    has_detailed_description: !!input.detailed_project_description && input.detailed_project_description.toLowerCase() !== "auto",
+    has_additional_details: !!input.additional_details && input.additional_details.toLowerCase() !== "auto",
+    seeds_generated: Object.entries(seeds)
+      .map(([key, seed]) => ({ key, length: seed.length, preview: seed.slice(0, 100) }))
+      .sort((a, b) => b.length - a.length),
+  });
 
   const metadata = {
     organization_name: input.organization_name,

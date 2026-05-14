@@ -538,13 +538,15 @@ export default function VendorResponsesTab() {
                         )}
                       </div>
                     </div>
-                    <div className="flex gap-4 text-sm text-[var(--muted)] mb-2">
+                      <div className="flex gap-4 text-sm text-[var(--muted)] mb-2">
                       <span>Price: <span className="font-medium text-[var(--foreground)]">{(() => {
+                        if (p.price) return p.price;
                         const extractedPrice = extractCurrencyLikeText(p.extracted_text ?? p.proposal_data);
                         const priceValue = parseNumber(extractedPrice);
                         return priceValue > 0 ? formatCurrency(priceValue) : "N/A";
                       })()}</span></span>
                       <span>Timeline: <span className="font-medium text-[var(--foreground)]">{(() => {
+                        if (p.timeline) return p.timeline;
                         const extractedTimeline = extractTimelineLikeText(p.extracted_text ?? p.proposal_data);
                         return extractedTimeline && extractedTimeline.length < 80 ? extractedTimeline : "N/A";
                       })()}</span></span>

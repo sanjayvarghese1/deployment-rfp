@@ -1,210 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { openRouterChat, openRouterChatJSON, AGENT_MODEL } from "@/lib/openrouter";
 import { langfuse } from "@/config/langfuse";
-import { extractPdfTextWithOcrFallback } from "@/lib/pdfExtraction";
 import { saveProposalAnalysisResult } from "@/services/aiService";
 import type { ProposalAnalysis, JudgeResult } from "@/services/aiService";
-import { extractCurrencyLikeText, extractTimelineLikeText, parseNumber } from "@/lib/formatters/number";
 
 export const maxDuration = 900; // 15 minutes for the full 3-agent pipeline with multiple vendors
-
-const MAX_EXTRACT_INPUT_CHARS = 24000;
-
-function clampExtractorInput(text: string): string {
-  const normalized = String(text || "");
-  if (normalized.length <= MAX_EXTRACT_INPUT_CHARS) return normalized;
-  return `${normalized.slice(0, MAX_EXTRACT_INPUT_CHARS)}\n\n[TRUNCATED: input exceeded ${MAX_EXTRACT_INPUT_CHARS} chars]`;
-}
-
-type PriceConfidence = "exact" | "estimated" | "unknown";
-type TimelineConfidence = "explicit" | "inferred" | "unknown";
-
-type AnalysisTimeline = {
-  start: string | null;
-  end: string | null;
-  duration_weeks: number | null;
-};
-
-type NormalizedPrice = {
-  price: number | null;
-  price_currency: string | null;
-  price_confidence: PriceConfidence;
-  price_estimation_reasoning: string;
-};
-
-type NormalizedTimeline = {
-  timeline: AnalysisTimeline;
-  timeline_confidence: TimelineConfidence;
-  timeline_estimation_reasoning: string;
-};
-
-function toText(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "string") return value.trim();
-  return String(value).trim();
-}
-
-function toStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.map((item) => toText(item)).filter(Boolean);
-}
-
-function normalizeNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  const text = toText(value);
-  if (!text) return null;
-  if (!/\d/.test(text)) return null;
-  const parsed = parseNumber(text);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function detectCurrencyCode(text: string): string | null {
-  const upper = text.toUpperCase();
-  const codeMatch = upper.match(/\b(USD|EUR|GBP|AUD|CAD|INR|JPY|CNY|NZD|SGD|CHF|AED|SAR|ZAR)\b/);
-  if (codeMatch?.[1]) return codeMatch[1];
-  if (text.includes("€")) return "EUR";
-  if (text.includes("£")) return "GBP";
-  if (text.includes("₹")) return "INR";
-  if (text.includes("¥")) return "JPY";
-  if (text.includes("$")) return "USD";
-  return null;
-}
-
-function sanitizeAnalysisTimeline(value: unknown): AnalysisTimeline | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const candidate = value as Record<string, unknown>;
-  const start = toText(candidate.start) || null;
-  const end = toText(candidate.end) || null;
-  const durationWeeks = normalizeNumber(candidate.duration_weeks);
-  if (!start && !end && durationWeeks === null) return null;
-  return {
-    start,
-    end,
-    duration_weeks: durationWeeks,
-  };
-}
-
-function inferPriceFromText(sourceText: string): NormalizedPrice {
-  const extracted = extractCurrencyLikeText(sourceText);
-  const numeric = normalizeNumber(extracted);
-  const sourceCurrency = detectCurrencyCode(extracted) || detectCurrencyCode(sourceText);
-
-  if (numeric !== null) {
-    const explicit = /(?:\b(?:price|budget|total|fee|cost|quote|proposal)\b|[$€£₹¥]|\b(?:USD|EUR|GBP|AUD|CAD|INR|JPY|CNY|NZD|SGD|CHF|AED|SAR)\b)/i.test(extracted) || /[$€£₹¥]|\b(?:USD|EUR|GBP|AUD|CAD|INR|JPY|CNY|NZD|SGD|CHF|AED|SAR)\b/i.test(sourceText);
-    return {
-      price: numeric,
-      price_currency: sourceCurrency || "USD",
-      price_confidence: explicit ? "exact" : "estimated",
-      price_estimation_reasoning: explicit ? "Explicit price detected in proposal text." : `Estimated from proposal text: ${extracted}`,
-    };
-  }
-
-  return {
-    price: null,
-    price_currency: null,
-    price_confidence: "unknown",
-    price_estimation_reasoning: "Price not found in the proposal text.",
-  };
-}
-
-function inferTimelineFromText(sourceText: string): NormalizedTimeline {
-  const extracted = extractTimelineLikeText(sourceText);
-  const durationMatch = extracted.match(/\b(\d+(?:\.\d+)?)\s*(days?|weeks?|months?|years?)\b/i) || sourceText.match(/\b(\d+(?:\.\d+)?)\s*(days?|weeks?|months?|years?)\b/i);
-  if (durationMatch) {
-    const amount = Number(durationMatch[1]);
-    const unit = durationMatch[2].toLowerCase();
-    const durationWeeks = unit.startsWith("day") ? Math.max(1, Math.round(amount / 7)) : unit.startsWith("month") ? Math.max(1, Math.round(amount * 4.345)) : unit.startsWith("year") ? Math.max(1, Math.round(amount * 52)) : Math.max(1, Math.round(amount));
-    return {
-      timeline: { start: null, end: null, duration_weeks: durationWeeks },
-      timeline_confidence: /\b(?:weeks?|months?|years?|days?)\b/i.test(extracted) ? "explicit" : "inferred",
-      timeline_estimation_reasoning: `Duration detected in proposal text: ${durationMatch[0]}.`,
-    };
-  }
-
-  const isoDates = Array.from(new Set((sourceText.match(/\b\d{4}-\d{2}-\d{2}\b/g) || []).map((date) => date.trim())));
-  if (isoDates.length >= 2) {
-    return {
-      timeline: { start: isoDates[0], end: isoDates[1], duration_weeks: null },
-      timeline_confidence: "explicit",
-      timeline_estimation_reasoning: `Explicit dates detected: ${isoDates[0]} to ${isoDates[1]}.`,
-    };
-  }
-
-  if (isoDates.length === 1) {
-    return {
-      timeline: { start: null, end: isoDates[0], duration_weeks: null },
-      timeline_confidence: "explicit",
-      timeline_estimation_reasoning: `Explicit date detected: ${isoDates[0]}.`,
-    };
-  }
-
-  return {
-    timeline: { start: null, end: null, duration_weeks: null },
-    timeline_confidence: "unknown",
-    timeline_estimation_reasoning: "Timeline not found in the proposal text.",
-  };
-}
-
-function normalizeProposalAnalysis(raw: unknown, vendorMarkdown: string, vendorName: string): ProposalAnalysis {
-  const source = (vendorMarkdown || "").toString();
-  const data = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  const recommendation = toText(data.recommendation) || toText(data.independent_recommendation) || "Not Recommended";
-  const priceCandidate = normalizeNumber(data.price);
-  const priceCurrencyCandidate = toText(data.price_currency) || null;
-  const priceConfidence = toText(data.price_confidence) as PriceConfidence;
-  const priceReason = toText(data.price_estimation_reasoning);
-  const timelineCandidate = sanitizeAnalysisTimeline(data.timeline);
-  const timelineConfidence = toText(data.timeline_confidence) as TimelineConfidence;
-  const timelineReason = toText(data.timeline_estimation_reasoning);
-
-  const inferredPrice = inferPriceFromText(source);
-  const inferredTimeline = inferTimelineFromText(source);
-
-  const price = priceCandidate !== null ? priceCandidate : inferredPrice.price;
-  const priceCurrency = priceCurrencyCandidate || inferredPrice.price_currency;
-  const normalizedPriceConfidence: PriceConfidence = priceCandidate !== null
-    ? (priceConfidence === "exact" || priceConfidence === "estimated" || priceConfidence === "unknown" ? priceConfidence : inferredPrice.price_confidence)
-    : inferredPrice.price_confidence;
-
-  const timeline = timelineCandidate || inferredTimeline.timeline;
-  const normalizedTimelineConfidence: TimelineConfidence = timelineCandidate
-    ? (timelineConfidence === "explicit" || timelineConfidence === "inferred" || timelineConfidence === "unknown" ? timelineConfidence : inferredTimeline.timeline_confidence)
-    : inferredTimeline.timeline_confidence;
-
-  const criterionScores = data.criterion_scores && typeof data.criterion_scores === "object" ? data.criterion_scores as ProposalAnalysis["criterion_scores"] : {
-    technical_fit: { score: 0, reason: "Scoring unavailable" },
-    cost_efficiency: { score: 0, reason: "Scoring unavailable" },
-    relevant_experience: { score: 0, reason: "Scoring unavailable" },
-    timeline_fit: { score: 0, reason: "Scoring unavailable" },
-    compliance_completeness: { score: 0, reason: "Scoring unavailable" },
-  };
-
-  const strengths = toStringArray(data.strengths);
-  const weaknesses = toStringArray(data.weaknesses);
-  const riskFlags = toStringArray(data.risk_flags);
-  const analysisSummary = toText(data.analysis_summary) || `Automated analysis generated for ${vendorName}.`;
-  const riskSummary = toText(data.risk_summary) || (riskFlags.length > 0 ? riskFlags.join("; ") : "No major risk flags detected.");
-
-  return {
-    vendor_name: toText(data.vendor_name) || vendorName || "Unknown",
-    recommendation,
-    overall_score: normalizeNumber(data.overall_score) ?? 0,
-    independent_recommendation: recommendation,
-    price,
-    price_currency: priceCurrency,
-    price_confidence: normalizedPriceConfidence,
-    price_estimation_reasoning: priceReason || inferredPrice.price_estimation_reasoning,
-    timeline,
-    timeline_confidence: normalizedTimelineConfidence,
-    timeline_estimation_reasoning: timelineReason || inferredTimeline.timeline_estimation_reasoning,
-    criterion_scores: criterionScores,
-    strengths,
-    weaknesses,
-    risk_flags: riskFlags,
-    risk_summary: riskSummary,
-    analysis_summary: analysisSummary,
-  };
-}
 
 /* ═══════════════════════════════════════════════════════════════════
    Agent 1 — Extractor
@@ -212,7 +12,6 @@ function normalizeProposalAnalysis(raw: unknown, vendorMarkdown: string, vendorN
    focused only on evaluation-relevant content.
    ═══════════════════════════════════════════════════════════════════ */
 async function runExtractor(docType: "RFP" | "Vendor Proposal", text: string): Promise<string> {
-  const safeText = clampExtractorInput(text);
   const prompt = `You are Agent 1: The Extractor.
 Your job is to read a messy procurement document and convert it into a clean structured Markdown extraction focused only on evaluation-relevant content.
 
@@ -280,7 +79,7 @@ RULES:
 
 ---
 DOCUMENT TO EXTRACT:
-${safeText}`;
+${text}`;
 
   const response = await openRouterChat({
     model: AGENT_MODEL.DOCUMENT_ANALYSIS,
@@ -366,30 +165,11 @@ AUDIT REQUIREMENT
 You may reason internally in detail, but the final output must be strict JSON only.
 Keep each "reason" field to 1 sentence (under 30 words). Keep strengths/weaknesses/risk_flags to short phrases.
 
-PRICE AND TIMELINE EXTRACTION REQUIREMENT
-Before scoring, inspect the vendor proposal for explicit price and timeline details.
-- Return the best numeric price you can find in 'price'.
-- Set 'price_currency' to the detected ISO currency code when possible.
-- Use 'price_confidence' = "exact" when the price is explicit, "estimated" when inferred, and "unknown" if missing.
-- Return 'timeline' as { "start": string | null, "end": string | null, "duration_weeks": number | null }.
-- Use 'timeline_confidence' = "explicit" when the dates or duration are explicit, "inferred" when estimated, and "unknown" if missing.
-- Add short reasoning in 'price_estimation_reasoning' and 'timeline_estimation_reasoning' when values are estimated or inferred.
-- Include a short 'risk_summary' in addition to 'risk_flags'.
-- Keep 'recommendation' and 'independent_recommendation' in sync.
-
 RETURN STRICT JSON:
 {
   "vendor_name": "${vendorName}",
-  "recommendation": "<Strongly Recommended|Recommended|Consider|Risky|Not Recommended>",
   "overall_score": <number>,
   "independent_recommendation": "<Strongly Recommended|Recommended|Consider|Risky|Not Recommended>",
-  "price": <number|null>,
-  "price_currency": <string|null>,
-  "price_confidence": "<exact|estimated|unknown>",
-  "price_estimation_reasoning": "<string>",
-  "timeline": { "start": <string|null>, "end": <string|null>, "duration_weeks": <number|null> },
-  "timeline_confidence": "<explicit|inferred|unknown>",
-  "timeline_estimation_reasoning": "<string>",
   "criterion_scores": {
     "technical_fit": { "score": <number>, "reason": "<string>" },
     "cost_efficiency": { "score": <number>, "reason": "<string>" },
@@ -400,12 +180,11 @@ RETURN STRICT JSON:
   "strengths": ["<string>"],
   "weaknesses": ["<string>"],
   "risk_flags": ["<string>"],
-  "risk_summary": "<string>",
   "analysis_summary": "<string>"
 }`;
 
   try {
-    return normalizeProposalAnalysis(await openRouterChatJSON({
+    return await openRouterChatJSON({
       model: AGENT_MODEL.REQUIREMENT_EXTRACTION,
       messages: [
         { role: "system", content: "You are a JSON-only API. You MUST respond with raw valid JSON only. No explanations, no markdown, no text before or after the JSON object. Keep all string values concise (under 30 words each)." },
@@ -413,7 +192,7 @@ RETURN STRICT JSON:
       ],
       max_tokens: 6000,
       temperature: 0,
-    }), vendorMarkdown, vendorName);
+    });
   } catch (err) {
     // If the model returned non-JSON, attempt a JSON-fix pass: ask the model to convert its previous output into the required JSON.
     const rawErrMsg = err instanceof Error ? err.message : String(err);
@@ -432,9 +211,9 @@ RETURN STRICT JSON:
       });
 
       // Re-prompt a JSON fixer: convert the raw analysis into strict JSON matching the schema.
-      const fixerPrompt = `You are a JSON fixer. Convert the following analysis output into strict JSON matching this schema:\n${JSON.stringify({ vendor_name: "", recommendation: "", overall_score: 0, independent_recommendation: "", price: null, price_currency: null, price_confidence: "unknown", price_estimation_reasoning: "", timeline: { start: null, end: null, duration_weeks: null }, timeline_confidence: "unknown", timeline_estimation_reasoning: "", criterion_scores: { technical_fit: { score: 0, reason: "" }, cost_efficiency: { score: 0, reason: "" }, relevant_experience: { score: 0, reason: "" }, timeline_fit: { score: 0, reason: "" }, compliance_completeness: { score: 0, reason: "" } }, strengths: [], weaknesses: [], risk_flags: [], risk_summary: "", analysis_summary: "" }, null, 2)}\n\nHere is the raw analysis:\n\n${raw}`;
+      const fixerPrompt = `You are a JSON fixer. Convert the following analysis output into strict JSON matching this schema:\n${JSON.stringify({ vendor_name: "", overall_score: 0, independent_recommendation: "", criterion_scores: { technical_fit: { score: 0, reason: "" }, cost_efficiency: { score: 0, reason: "" }, relevant_experience: { score: 0, reason: "" }, timeline_fit: { score: 0, reason: "" }, compliance_completeness: { score: 0, reason: "" } }, strengths: [], weaknesses: [], risk_flags: [], analysis_summary: "" }, null, 2)}\n\nHere is the raw analysis:\n\n${raw}`;
 
-      return normalizeProposalAnalysis(await openRouterChatJSON({
+      return await openRouterChatJSON({
         model: AGENT_MODEL.REQUIREMENT_EXTRACTION,
         messages: [
           { role: "system", content: "You are a JSON-only API. Extract valid JSON only, no surrounding text." },
@@ -442,7 +221,7 @@ RETURN STRICT JSON:
         ],
         max_tokens: 6000,
         temperature: 0,
-      }), vendorMarkdown, vendorName);
+      });
     } catch (fixErr) {
       console.error(`Scorer JSON fixer failed for ${vendorName}:`, fixErr instanceof Error ? fixErr.message : String(fixErr));
       // rethrow original error to be handled by caller
@@ -653,52 +432,6 @@ function buildVendorText(input: {
   }
 }
 
-async function resolveVendorText(input: {
-  vendorName?: string;
-  price?: string;
-  timeline?: string;
-  experience?: string;
-  proposalData?: unknown;
-  proposalFileUrl?: string;
-}): Promise<string> {
-  const directText = buildVendorText({
-    vendorName: input.vendorName,
-    price: input.price,
-    timeline: input.timeline,
-    experience: input.experience,
-    proposalData: input.proposalData,
-  });
-
-  if (input.proposalData) {
-    return directText;
-  }
-
-  const pdfUrl = typeof input.proposalFileUrl === "string" ? input.proposalFileUrl.trim() : "";
-  if (!pdfUrl) {
-    return directText;
-  }
-
-  try {
-    const response = await fetch(pdfUrl);
-    if (!response.ok) {
-      return `${directText}\n\n## PDF Extraction\nFailed to fetch proposal PDF from URL.`;
-    }
-
-    const buffer = Buffer.from(await response.arrayBuffer());
-    const extraction = await extractPdfTextWithOcrFallback(buffer, { minTextChars: 60, maxOcrPages: 20 });
-    return buildVendorText({
-      vendorName: input.vendorName,
-      price: input.price,
-      timeline: input.timeline,
-      experience: input.experience,
-      proposalData: extraction.text,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return `${directText}\n\n## PDF Extraction\nFailed to extract vendor PDF: ${message}`;
-  }
-}
-
 /* ═══════════════════════════════════════════════════════════════════
    API Route — Orchestrates the 3-agent pipeline
    ═══════════════════════════════════════════════════════════════════
@@ -722,11 +455,11 @@ export async function POST(req: NextRequest) {
     // Runs Agent 1 (Extractor) + Agent 2 (Scorer) for a single vendor
     if (mode === "score_single") {
       console.log(`[AI:POST] Entering score_single path`);
-            const { contract_title, contract_description, contract_budget, contract_deadline, contract_certifications, rfp_text,
-              vendor_name, vendor_price, vendor_timeline, vendor_experience, proposal_data, proposal_file_url } = body;
+      const { contract_title, contract_description, contract_budget, contract_deadline, contract_certifications,
+              vendor_name, vendor_price, vendor_timeline, vendor_experience, proposal_data } = body;
 
-      // Build RFP text from the stored RFP content when available, otherwise fall back to metadata.
-      const rfpText = String(rfp_text || "").trim() || [
+      // Build RFP text from contract fields
+      const rfpText = [
         `Contract Title: ${contract_title || "N/A"}`,
         `Description: ${contract_description || "N/A"}`,
         `Budget: $${contract_budget || "N/A"}`,
@@ -734,20 +467,19 @@ export async function POST(req: NextRequest) {
         contract_certifications ? `Required Certifications: ${contract_certifications}` : "",
       ].filter(Boolean).join("\n");
 
-      const vendorText = await resolveVendorText({
+      const vendorText = buildVendorText({
         vendorName: vendor_name,
         price: vendor_price,
         timeline: vendor_timeline,
         experience: vendor_experience,
         proposalData: proposal_data,
-        proposalFileUrl: proposal_file_url,
       });
 
       trace = langfuse.trace({
         name: `Vendor Analysis - ${vendor_name || "Unknown"}`,
         metadata: {
           vendorName: vendor_name || "Unknown",
-          fileNames: proposal_data ? ["proposal_data_json"] : proposal_file_url ? ["proposal_file_url"] : [],
+          fileNames: proposal_data ? ["proposal_data_json"] : [],
           modelUsed: AGENT_MODEL.DOCUMENT_ANALYSIS,
           tokenUsage: null,
           latency: null,
@@ -770,28 +502,15 @@ export async function POST(req: NextRequest) {
         input: {
           vendorName: vendor_name || "Unknown",
           proposalDataProvided: Boolean(proposal_data),
-          proposalFileUrlProvided: Boolean(proposal_file_url),
           vendorTextChars: vendorText.length,
         },
       });
 
-      let rfpMarkdown = "";
-      try {
-        rfpMarkdown = await runExtractor("RFP", rfpText);
-      } catch (extractErr) {
-        const msg = extractErr instanceof Error ? extractErr.message : String(extractErr);
-        console.warn(`[AI:POST:score_single] RFP extractor failed, using fallback text: ${msg}`);
-        rfpMarkdown = `# Document Type\nRFP\n\n# Core Summary\nFallback extraction generated from contract fields.\n\n# Evaluation-Relevant Fields\n${clampExtractorInput(rfpText)}`;
-      }
-
-      let vendorMarkdown = "";
-      try {
-        vendorMarkdown = await runExtractor("Vendor Proposal", vendorText);
-      } catch (extractErr) {
-        const msg = extractErr instanceof Error ? extractErr.message : String(extractErr);
-        console.warn(`[AI:POST:score_single] Vendor extractor failed for ${vendor_name || "Unknown"}, using fallback text: ${msg}`);
-        vendorMarkdown = `# Document Type\nVendor Proposal\n\n# Core Summary\nFallback extraction generated from vendor text.\n\n# Evaluation-Relevant Fields\n${clampExtractorInput(vendorText)}`;
-      }
+      // Agent 1: Extract both documents
+      const [rfpMarkdown, vendorMarkdown] = await Promise.all([
+        runExtractor("RFP", rfpText),
+        runExtractor("Vendor Proposal", vendorText),
+      ]);
 
       readRfpSpan.end({
         output: {
@@ -839,18 +558,16 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      const normalizedAnalysis = normalizeProposalAnalysis(scorerResult, vendorMarkdown, vendor_name || "Unknown");
-
       trace.update({
         metadata: {
           vendorName: vendor_name || "Unknown",
-          finalScore: normalizedAnalysis.overall_score,
+          finalScore: scorerResult.overall_score,
           latency: Date.now() - requestStartedAt,
         },
       });
 
       return NextResponse.json({
-        analysis: normalizedAnalysis,
+        analysis: scorerResult,
         rfp_extract: rfpMarkdown,
         vendor_extract: vendorMarkdown,
       });
@@ -893,13 +610,13 @@ export async function POST(req: NextRequest) {
     if (mode === "full_pipeline") {
       console.log(`[AI:POST] Entering full_pipeline path`);
       const { contract_title, contract_description, contract_budget, contract_deadline, contract_certifications,
-        vendors, contract_id, rfp_text } = body;
+            vendors, contract_id } = body;
       const fastMode = !!body.fastMode;
 
       console.log(`[AI:POST:full_pipeline] Starting. vendors=${Array.isArray(vendors) ? vendors.length : 0}`);
 
-      // Build RFP text from the stored RFP content when available, otherwise fall back to metadata.
-      const rfpText = String(rfp_text || "").trim() || [
+      // Build RFP text
+      const rfpText = [
         `Contract Title: ${contract_title || "N/A"}`,
         `Description: ${contract_description || "N/A"}`,
         `Budget: $${contract_budget || "N/A"}`,
@@ -909,14 +626,7 @@ export async function POST(req: NextRequest) {
 
       // Agent 1: Extract RFP once
       console.log(`[AI:POST:full_pipeline] Calling runExtractor for RFP`);
-      let rfpMarkdown = "";
-      try {
-        rfpMarkdown = await runExtractor("RFP", rfpText);
-      } catch (extractErr) {
-        const msg = extractErr instanceof Error ? extractErr.message : String(extractErr);
-        console.warn(`[AI:POST:full_pipeline] RFP extractor failed, using fallback text: ${msg}`);
-        rfpMarkdown = `# Document Type\nRFP\n\n# Core Summary\nFallback extraction generated from contract fields.\n\n# Evaluation-Relevant Fields\n${clampExtractorInput(rfpText)}`;
-      }
+      const rfpMarkdown = await runExtractor("RFP", rfpText);
       console.log(`[AI:POST:full_pipeline] runExtractor completed. rfpMarkdown length=${rfpMarkdown.length}`);
 
       trace = langfuse.trace({
@@ -951,7 +661,7 @@ export async function POST(req: NextRequest) {
           name: `Vendor Analysis - ${v.vendor_name || "Unknown"}`,
           metadata: {
             vendorName: v.vendor_name || "Unknown",
-            fileNames: v.proposal_data ? ["proposal_data_json"] : v.proposal_file_url ? ["proposal_file_url"] : [],
+            fileNames: v.proposal_data ? ["proposal_data_json"] : [],
             modelUsed: AGENT_MODEL.DOCUMENT_ANALYSIS,
             tokenUsage: null,
             latency: null,
@@ -959,13 +669,12 @@ export async function POST(req: NextRequest) {
           },
         });
 
-        const vendorText = await resolveVendorText({
+        const vendorText = buildVendorText({
           vendorName: v.vendor_name,
           price: v.price,
           timeline: v.timeline,
           experience: v.experience,
           proposalData: v.proposal_data,
-          proposalFileUrl: v.proposal_file_url,
         });
 
         const readVendorSpan = vendorTrace.span({
@@ -1029,16 +738,8 @@ export async function POST(req: NextRequest) {
             vendorMarkdown: "",
             scoreResult: {
               vendor_name: v.vendor_name || "Unknown",
-              recommendation: "Not Recommended",
               overall_score: 0,
               independent_recommendation: "Not Recommended",
-              price: null,
-              price_currency: null,
-              price_confidence: "unknown",
-              price_estimation_reasoning: "Scoring failed before price extraction completed.",
-              timeline: { start: null, end: null, duration_weeks: null },
-              timeline_confidence: "unknown",
-              timeline_estimation_reasoning: "Scoring failed before timeline extraction completed.",
               criterion_scores: {
                 technical_fit: { score: 0, reason: "Scoring failed" },
                 cost_efficiency: { score: 0, reason: "Scoring failed" },
@@ -1049,7 +750,6 @@ export async function POST(req: NextRequest) {
               strengths: [],
               weaknesses: ["AI scoring failed for this vendor"],
               risk_flags: ["Scoring error — manual review required"],
-              risk_summary: `Automated scoring failed: ${msg.slice(0, 100)}`,
               analysis_summary: `Automated scoring failed: ${msg.slice(0, 100)}`,
             },
           };
@@ -1110,18 +810,13 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        try {
-          await saveProposalAnalysisResult(contract_id, {
-            cache_key: `analysis:${contract_id}:${Date.now()}`,
-            created_at: new Date().toISOString(),
-            analyses_by_proposal_id: analysesByProposalId,
-            judge_result: judgeResult ?? null,
-            vendor_count: vendorScores.length,
-          });
-        } catch (cacheErr) {
-          const msg = cacheErr instanceof Error ? cacheErr.message : String(cacheErr);
-          console.warn(`[AI:POST:full_pipeline] Failed to save analysis cache, continuing without cache: ${msg}`);
-        }
+        await saveProposalAnalysisResult(contract_id, {
+          cache_key: `analysis:${contract_id}:${Date.now()}`,
+          created_at: new Date().toISOString(),
+          analyses_by_proposal_id: analysesByProposalId,
+          judge_result: judgeResult ?? null,
+          vendor_count: vendorScores.length,
+        });
       }
 
       return NextResponse.json({

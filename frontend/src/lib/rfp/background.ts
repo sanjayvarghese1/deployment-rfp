@@ -163,6 +163,172 @@ function mapJobStatus(status: string): GenerationStatus {
   return "running";
 }
 
+function ensureDecomposition(value: unknown): DecompositionData {
+  const raw = (value && typeof value === "object") ? (value as Partial<DecompositionData>) : {};
+  return {
+    subsystems: raw.subsystems && typeof raw.subsystems === "object" ? raw.subsystems as Record<string, string> : {},
+    inferredRequirements: Array.isArray(raw.inferredRequirements) ? raw.inferredRequirements : [],
+    needsDecomposition: Boolean(raw.needsDecomposition),
+    subsystemPdfs: Array.isArray(raw.subsystemPdfs) ? raw.subsystemPdfs : [],
+    subsystemDrafts: Array.isArray(raw.subsystemDrafts) ? raw.subsystemDrafts : [],
+  };
+}
+
+async function runLegacySseGeneration(
+  input: RfpInput,
+  userId: string,
+  callbacks: {
+    onProgress?: (progress: PipelineProgress) => void;
+    onResult?: (result: Omit<PipelineResult, "pdfBase64">, pdfBase64: string, decomposition: DecompositionData) => void;
+    onError?: (error: string) => void;
+    onComplete?: () => void;
+  },
+  runningSnapshot: BackgroundGenerationSnapshot,
+): Promise<void> {
+  const res = await fetch(apiUrl("/api/rfp/generate"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...input, fastMode: true }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "Unknown generation error");
+    throw new Error(errText);
+  }
+
+  if (!res.body) {
+    throw new Error("Generation stream is unavailable.");
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let emittedResult = false;
+
+  let latestResult: Omit<PipelineResult, "pdfBase64"> | null = null;
+  let latestPdfBase64: string | null = null;
+  let latestDecomposition: DecompositionData | null = null;
+  const subsystemPdfMap = new Map<string, string>();
+
+  const maybeEmitResult = async () => {
+    if (emittedResult || !latestResult || !latestPdfBase64) return;
+
+    const base = ensureDecomposition(latestDecomposition || (latestResult as { decomposition?: unknown }).decomposition);
+    const mergedPdfs = Array.from(subsystemPdfMap.entries()).map(([name, pdfBase64]) => ({ name, pdfBase64 }));
+    const mergedDecomposition: DecompositionData = {
+      ...base,
+      subsystemPdfs: mergedPdfs.length > 0 ? mergedPdfs : base.subsystemPdfs,
+      subsystemDrafts: (base.subsystemDrafts || []).map((draft) => {
+        const matchedPdf = subsystemPdfMap.get(draft.name);
+        return matchedPdf ? { ...draft, pdfBase64: matchedPdf } : draft;
+      }),
+    };
+
+    const finalSnapshot: BackgroundGenerationSnapshot = {
+      ...runningSnapshot,
+      status: "complete",
+      progress: null,
+      result: latestResult,
+      pdfBase64: latestPdfBase64,
+      decomposition: mergedDecomposition,
+      error: null,
+    };
+
+    persistSnapshot(finalSnapshot);
+    publish(finalSnapshot);
+    callbacks.onResult?.(latestResult, latestPdfBase64, mergedDecomposition);
+    await notifyCompletion(input, finalSnapshot, userId);
+    callbacks.onComplete?.();
+    emittedResult = true;
+  };
+
+  const handleEvent = async (eventName: string, dataText: string) => {
+    const parsed: unknown = (() => {
+      try {
+        return JSON.parse(dataText);
+      } catch {
+        return dataText;
+      }
+    })();
+
+    if (eventName === "progress" && parsed && typeof parsed === "object") {
+      const progress = parsed as PipelineProgress;
+      callbacks.onProgress?.(progress);
+      publish({ ...runningSnapshot, progress, status: "running" });
+      return;
+    }
+
+    if (eventName === "result" && parsed && typeof parsed === "object") {
+      latestResult = parsed as Omit<PipelineResult, "pdfBase64">;
+      latestDecomposition = ensureDecomposition((parsed as { decomposition?: unknown }).decomposition);
+      await maybeEmitResult();
+      return;
+    }
+
+    if (eventName === "pdf" && parsed && typeof parsed === "object") {
+      const candidate = (parsed as { pdfBase64?: unknown }).pdfBase64;
+      if (typeof candidate === "string" && candidate.length > 0) {
+        latestPdfBase64 = candidate;
+        await maybeEmitResult();
+      }
+      return;
+    }
+
+    if (eventName === "subsystem_pdf" && parsed && typeof parsed === "object") {
+      const name = (parsed as { name?: unknown }).name;
+      const pdf = (parsed as { pdfBase64?: unknown }).pdfBase64;
+      if (typeof name === "string" && typeof pdf === "string") {
+        subsystemPdfMap.set(name, pdf);
+      }
+      return;
+    }
+
+    if (eventName === "error") {
+      const message = typeof parsed === "object" && parsed !== null && typeof (parsed as { message?: unknown }).message === "string"
+        ? (parsed as { message: string }).message
+        : (typeof parsed === "string" ? parsed : "Generation failed");
+      throw new Error(message);
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    while (true) {
+      const splitIndex = buffer.indexOf("\n\n");
+      if (splitIndex === -1) break;
+
+      const rawEvent = buffer.slice(0, splitIndex);
+      buffer = buffer.slice(splitIndex + 2);
+
+      const lines = rawEvent.split("\n");
+      let eventName = "message";
+      const dataLines: string[] = [];
+
+      for (const line of lines) {
+        const clean = line.endsWith("\r") ? line.slice(0, -1) : line;
+        if (clean.startsWith("event:")) {
+          eventName = clean.slice(6).trim() || "message";
+        } else if (clean.startsWith("data:")) {
+          dataLines.push(clean.slice(5).trim());
+        }
+      }
+
+      if (dataLines.length > 0) {
+        await handleEvent(eventName, dataLines.join("\n"));
+      }
+    }
+  }
+
+  await maybeEmitResult();
+  if (!emittedResult) {
+    throw new Error("Generation stream closed without a result.");
+  }
+}
+
 export function getBackgroundGenerationSnapshot(): BackgroundGenerationSnapshot {
   const store = getStore();
   if (store) {
@@ -257,6 +423,12 @@ export async function startBackgroundRfpGeneration(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...input, fastMode: true }),
       });
+
+      const responseType = (res.headers.get("content-type") || "").toLowerCase();
+      if (res.status === 404 || responseType.includes("text/html")) {
+        await runLegacySseGeneration(input, userId, callbacks, runningSnapshot);
+        return;
+      }
 
       if (!res.ok) {
         const errText = await res.text().catch(() => "Unknown error");

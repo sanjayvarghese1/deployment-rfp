@@ -212,8 +212,8 @@ Return JSON with this exact shape:
 
     return {
       overallScore: Math.max(0, Math.min(100, Math.round(aiScore.overallScore))),
-      suggestions: aiScore.improvements.slice(0, 6),
-      strengths: aiScore.strengths.slice(0, 3),
+       suggestions: (Array.isArray(aiScore.improvements) ? aiScore.improvements : []).slice(0, 6),
+       strengths: (Array.isArray(aiScore.strengths) ? aiScore.strengths : []).slice(0, 3),
       analysis,
     };
   } catch (error) {

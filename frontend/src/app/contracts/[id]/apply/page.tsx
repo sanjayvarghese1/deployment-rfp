@@ -1,5 +1,4 @@
 "use client";
-
 import { useEffect, useState, useRef, useCallback } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { useAuth } from "@/contexts/AuthContext";
@@ -7,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/services/supabase";
 import { apiUrl } from "@/lib/api";
+import { randomUUID } from '@/lib/uuid';
 
 import {
   parseRFP,
@@ -187,7 +187,7 @@ export default function ApplyPage() {
   /* ─── core state ─── */
   const [contract, setContract] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
-  const [step, setStep] = useState<Step>("rfp_analysis");
+  const [step, setStep] = useState<Step>("upload_edit");
   const [submitting, setSubmitting] = useState(false);
 
   /* ─── RFP analysis ─── */
@@ -200,7 +200,7 @@ export default function ApplyPage() {
   const [quickPdfFileName, setQuickPdfFileName] = useState("");
   const [quickPdfUrl, setQuickPdfUrl] = useState<string | null>(null);
   const [quickPdfExtracted, setQuickPdfExtracted] = useState("");
-  const quickUploadLockRef = useRef(false);
+  const [quickUploadSaved, setQuickUploadSaved] = useState(false);
 
   /* ─── Chat builder ─── */
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
@@ -318,11 +318,10 @@ export default function ApplyPage() {
 
   /* ═══ QUICK UPLOAD PDF HANDLER ═══ */
   const handleQuickUploadPdf = async () => {
-    if (!quickPdfFile || !user || quickUploadLockRef.current) return;
-    quickUploadLockRef.current = true;
+    if (!quickPdfFile || !user) return;
     setQuickPdfUploading(true);
-    setSubmitting(true);
     try {
+      // Upload PDF via backend API (no CORS issues)
       const formData = new FormData();
       formData.append("file", quickPdfFile);
       formData.append("contractId", contractId);
@@ -334,32 +333,15 @@ export default function ApplyPage() {
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => null);
-        throw new Error(errorData?.error || "Upload failed");
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Upload failed");
       }
 
       const data = await response.json();
 
-      const { data: existingProposal, error: existingProposalError } = await supabase
-        .from("proposals")
-        .select("id")
-        .eq("contract_id", contractId)
-        .eq("vendor_id", user.id)
-        .eq("proposal_type", "uploaded_pdf")
-        .eq("proposal_file_name", quickPdfFile.name)
-        .maybeSingle();
-
-      if (existingProposalError) {
-        throw existingProposalError;
-      }
-
-      if (existingProposal) {
-        router.push(`/contracts/${contractId}`);
-        return;
-      }
-
-      // Save proposal record immediately
-      const proposalId = uuidv4();
+      // Immediately persist the uploaded proposal in Supabase so it appears
+      // in vendor responses and can be analyzed.
+      const proposalId = randomUUID();
       const { error: proposalError } = await supabase.from("proposals").insert({
         id: proposalId,
         contract_id: contractId,
@@ -368,9 +350,9 @@ export default function ApplyPage() {
         price: "",
         timeline: "",
         experience: "",
-        proposal_data: "",
+        proposal_data: JSON.stringify({ source: "uploaded_pdf", storagePath: data.storagePath ?? null }),
         proposal_file: data.url,
-        proposal_file_name: data.fileName,
+        proposal_file_name: data.fileName || quickPdfFile.name,
         proposal_type: "uploaded_pdf",
         ai_score: null,
         risk_level: null,
@@ -378,34 +360,34 @@ export default function ApplyPage() {
       });
 
       if (proposalError) {
+        console.error("Failed to insert uploaded proposal:", proposalError);
         throw proposalError;
       }
 
-      // Send notification to contract poster
+      // Notify contract owner if available
       if (contract?.posted_by) {
-        try {
-          await supabase.from("notifications").insert({
-            id: uuidv4(),
-            user_id: contract.posted_by as string,
-            type: "new_proposal",
-            message: `${profile?.company_name} submitted a proposal for "${contract.title}"`,
-            read: false,
-            timestamp: new Date().toISOString(),
-          });
-        } catch (err) {
-          console.warn("Failed to send proposal notification:", err);
-        }
+        const { error: notificationError } = await supabase.from("notifications").insert({
+          id: crypto.randomUUID(),
+          user_id: contract.posted_by as string,
+          type: "new_proposal",
+          message: `${profile?.company_name} submitted a proposal for "${contract.title}"`,
+          read: false,
+          timestamp: new Date().toISOString(),
+        });
+        if (notificationError) console.warn("Notification insert failed:", notificationError);
       }
 
-      router.push(`/contracts/${contractId}`);
+      // Update local state and navigate to the vendor response / report page
+      setQuickPdfUrl(data.url);
+      setQuickPdfFileName(data.fileName || quickPdfFile.name);
+      setQuickUploadSaved(true);
+      setQuickPdfFile(null);
     } catch (err) {
-      console.error("PDF upload/submission failed:", err);
+      console.error("PDF upload failed:", err);
       const errMsg = err instanceof Error ? err.message : "Unknown error";
-      alert(`Failed: ${errMsg}`);
+      alert(`Upload failed: ${errMsg}`);
     } finally {
-      setSubmitting(false);
       setQuickPdfUploading(false);
-      quickUploadLockRef.current = false;
     }
   };
 
@@ -620,6 +602,48 @@ export default function ApplyPage() {
     }
     setSubmitting(true);
     try {
+      // If a quick-uploaded PDF exists, save it as an uploaded proposal record.
+      if (quickPdfUrl) {
+        const proposalId = randomUUID();
+        const { error: proposalError } = await supabase.from("proposals").insert({
+          id: proposalId,
+          contract_id: contractId,
+          vendor_id: user.id,
+          vendor_name: profile?.company_name || "Unknown",
+          price: totalPrice || "",
+          timeline: timelineSummary || "",
+          experience: sections.past_experience ? sections.past_experience.slice(0, 500) : "",
+          proposal_data: JSON.stringify({ source: "uploaded_pdf" }),
+          proposal_file: quickPdfUrl,
+          proposal_file_name: quickPdfFileName || "uploaded.pdf",
+          proposal_type: "uploaded_pdf",
+          ai_score: null,
+          risk_level: null,
+          created_at: new Date().toISOString(),
+        });
+
+        if (proposalError) throw proposalError;
+
+        if (contract?.posted_by) {
+          const { error: notificationError } = await supabase.from("notifications").insert({
+            id: randomUUID(),
+            user_id: contract.posted_by as string,
+            type: "new_proposal",
+            message: `${profile?.company_name} submitted a proposal for "${contract.title}"`,
+            read: false,
+            timestamp: new Date().toISOString(),
+          });
+          if (notificationError) console.warn("Notification insert failed:", notificationError);
+        }
+
+        // Clear quick-upload state after successful save
+        setQuickPdfUrl(null);
+        setQuickPdfFileName("");
+        setQuickPdfFile(null);
+
+        router.push(`/contracts/${contractId}`);
+        return;
+      }
       const safeName = (proposalTitle || "proposal").replace(/[^a-zA-Z0-9]/g, "_");
 
       // Store proposal data for PDF regeneration on the receiver side
@@ -637,7 +661,7 @@ export default function ApplyPage() {
       };
 
       const { error: proposalError } = await supabase.from("proposals").insert({
-        id: crypto.randomUUID(),
+        id: randomUUID(),
         contract_id: contractId,
         vendor_id: user.id,
         vendor_name: profile?.company_name || "Unknown",
@@ -872,11 +896,11 @@ export default function ApplyPage() {
                   <svg className="w-7 h-7 text-[var(--primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 12l2 2 4-4" /></svg>
                 </div>
                 <h3 className="text-lg font-bold text-[var(--foreground)] mb-2">Quick Upload PDF</h3>
-                <p className="text-sm text-[var(--muted)] leading-relaxed mb-4">Upload your vendor proposal PDF directly to Supabase. The company will review it from the vendor responses area.</p>
+                <p className="text-sm text-[var(--muted)] leading-relaxed mb-4">Upload your vendor proposal PDF directly. Your proposal will be extracted and sent to the company for analysis.</p>
                 <div className="flex flex-wrap gap-2 mb-4">
                   <span className="bg-[var(--primary-light)] text-[var(--primary)] px-2.5 py-1 rounded-lg text-xs font-medium">PDF Upload</span>
                   <span className="bg-[var(--primary-light)] text-[var(--primary)] px-2.5 py-1 rounded-lg text-xs font-medium">Fast Submit</span>
-                  <span className="bg-[var(--primary-light)] text-[var(--primary)] px-2.5 py-1 rounded-lg text-xs font-medium">Supabase Storage</span>
+                  <span className="bg-[var(--primary-light)] text-[var(--primary)] px-2.5 py-1 rounded-lg text-xs font-medium">AI Ready</span>
                 </div>
                 <label className="block cursor-pointer">
                   <input
@@ -915,7 +939,7 @@ export default function ApplyPage() {
                 {quickPdfFile && (
                   <button
                     onClick={handleQuickUploadPdf}
-                    disabled={quickPdfUploading || submitting}
+                    disabled={quickPdfUploading}
                     className="w-full mt-3 bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[#EFECE3] px-4 py-2 rounded-lg text-xs font-semibold disabled:opacity-50 transition-all"
                   >
                     {quickPdfUploading ? (
@@ -1152,52 +1176,65 @@ export default function ApplyPage() {
         {step === "upload_edit" && (
           <div className="space-y-6">
             <div>
-              <h2 className="text-lg font-bold text-[var(--foreground)]">Upload Your Existing Proposal</h2>
-              <p className="text-xs text-[var(--muted)] mt-1">Upload a text-based proposal document. Our AI will parse it into editable sections.</p>
+              <h2 className="text-lg font-bold text-[var(--foreground)]">Upload Your Vendor Proposal</h2>
+              <p className="text-xs text-[var(--muted)] mt-1">Upload a PDF only. It will be saved to Supabase and sent for analysis.</p>
             </div>
 
             <div className="card !p-8">
+              {quickUploadSaved ? (
+                <div className="flex flex-col items-center justify-center w-full h-48 border-2 border-dashed border-emerald-300 bg-emerald-50 rounded-xl text-center px-6">
+                  <svg className="w-10 h-10 text-emerald-600 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                  <p className="text-sm font-semibold text-emerald-800">Vendor proposal uploaded</p>
+                  <p className="text-xs text-emerald-700 mt-1">It has been saved to Supabase and is ready for vendor response analysis.</p>
+                </div>
+              ) : (
               <label className="group flex flex-col items-center justify-center w-full h-48 border-2 border-dashed border-[var(--divider)] hover:border-[var(--primary)] hover:bg-[var(--primary-light)]/30 rounded-xl cursor-pointer transition-all">
-                <input type="file" accept=".txt,.doc,.docx,.pdf" onChange={(e) => {
+                <input type="file" accept=".pdf" onChange={(e) => {
                   const f = e.target.files?.[0];
                   if (f) {
                     if (f.size > 700_000) { alert("File must be under 700 KB."); return; }
-                    setUploadFile(f);
-                    setUploadFileName(f.name);
+                    if (f.type !== "application/pdf") { alert("Please select a PDF file."); return; }
+                    setQuickPdfFile(f);
+                    setQuickPdfFileName(f.name);
+                    setQuickUploadSaved(false);
                   }
                 }} className="hidden" />
-                {uploadFileName ? (
+                {quickPdfFileName ? (
                   <div className="text-center">
                     <div className="w-12 h-12 bg-[var(--primary-light)] rounded-xl flex items-center justify-center mx-auto mb-3">
                       <svg className="w-6 h-6 text-[var(--primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
                     </div>
-                    <p className="text-sm font-semibold text-[var(--foreground)]">{uploadFileName}</p>
+                    <p className="text-sm font-semibold text-[var(--foreground)]">{quickPdfFileName}</p>
                     <p className="text-xs text-[var(--muted)] mt-1">Click to replace</p>
                   </div>
                 ) : (
                   <div className="text-center">
                     <svg className="w-10 h-10 text-[var(--muted)] mx-auto mb-3 group-hover:text-[var(--primary)] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-                    <p className="text-sm font-medium text-[var(--foreground)]">Click to upload proposal document</p>
-                    <p className="text-xs text-[var(--muted)] mt-1">TXT files recommended &middot; Up to 700 KB</p>
+                    <p className="text-sm font-medium text-[var(--foreground)]">Click to upload vendor proposal PDF</p>
+                    <p className="text-xs text-[var(--muted)] mt-1">PDF only &middot; Up to 700 KB</p>
                   </div>
                 )}
               </label>
+              )}
 
-              {uploadFile && (
-                <button onClick={handleParseUpload} disabled={parsingUpload} className="mt-5 w-full btn-primary flex items-center justify-center gap-2 !py-3.5">
-                  {parsingUpload ? (
-                    <><div className="w-4 h-4 border-2 border-[#EFECE3]/30 border-t-[#EFECE3] rounded-full animate-spin" />Parsing with AI...</>
+              {quickUploadSaved && quickPdfFileName && (
+                <p className="mt-4 text-center text-xs text-[var(--muted)]">Saved file: {quickPdfFileName}</p>
+              )}
+
+              {!quickUploadSaved && quickPdfFile && (
+                <button
+                  onClick={handleQuickUploadPdf}
+                  disabled={quickPdfUploading}
+                  className="mt-5 w-full btn-primary flex items-center justify-center gap-2 !py-3.5"
+                >
+                  {quickPdfUploading ? (
+                    <><div className="w-4 h-4 border-2 border-[#EFECE3]/30 border-t-[#EFECE3] rounded-full animate-spin" />Uploading...</>
                   ) : (
-                    <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>Parse &amp; Load into Editor</>
+                    <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>Upload Proposal</>
                   )}
                 </button>
               )}
             </div>
-
-            <button onClick={() => setStep("choice")} className="flex items-center gap-1.5 text-sm text-[var(--muted)] hover:text-[var(--foreground)] transition-colors">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-              Back
-            </button>
           </div>
         )}
 
@@ -1518,7 +1555,6 @@ export default function ApplyPage() {
           </div>
         )}
       </div>
-
     </div>
   );
 }

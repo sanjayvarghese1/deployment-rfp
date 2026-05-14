@@ -5,6 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/services/supabase";
+import { randomUUID } from '@/lib/uuid';
 
 import {
   parseRFP,
@@ -341,7 +342,7 @@ export default function ApplyPage() {
       setSubmitting(true);
       try {
         const { error: proposalError } = await supabase.from("proposals").insert({
-          id: crypto.randomUUID(),
+          id: randomUUID(),
           contract_id: contractId,
           vendor_id: user.id,
           vendor_name: profile?.company_name || "Unknown",
@@ -363,7 +364,7 @@ export default function ApplyPage() {
 
         if (contract?.posted_by) {
           const { error: notificationError } = await supabase.from("notifications").insert({
-            id: crypto.randomUUID(),
+            id: randomUUID(),
             user_id: contract.posted_by as string,
             type: "new_proposal",
             message: `${profile?.company_name} submitted a proposal for "${contract.title}"`,
@@ -617,7 +618,7 @@ export default function ApplyPage() {
       };
 
       const { error: proposalError } = await supabase.from("proposals").insert({
-        id: crypto.randomUUID(),
+        id: randomUUID(),
         contract_id: contractId,
         vendor_id: user.id,
         vendor_name: profile?.company_name || "Unknown",
@@ -637,7 +638,7 @@ export default function ApplyPage() {
       }
       if (contract?.posted_by) {
         const { error: notificationError } = await supabase.from("notifications").insert({
-          id: crypto.randomUUID(),
+          id: randomUUID(),
           user_id: contract.posted_by as string,
           type: "new_proposal",
           message: `${profile?.company_name} submitted a proposal for "${contract.title}"`,

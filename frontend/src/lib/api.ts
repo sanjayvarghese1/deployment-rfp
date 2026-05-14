@@ -9,6 +9,11 @@ export function apiUrl(path: string): string {
     return path;
   }
 
+  // If this looks like a Next app API route, prefer same-origin relative URL
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  if (normalizedPath.startsWith("/api/")) {
+    return normalizedPath;
+  }
+
   return new URL(normalizedPath, getBackendBaseUrl()).toString();
 }

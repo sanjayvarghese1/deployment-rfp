@@ -34,36 +34,19 @@ export default function RfpUploadIntake() {
       try {
         setSelectedFileName(file.name);
         setUploadProgress({ stage: "uploading", progress: 30 });
-
-        const formData = new FormData();
-        formData.append("file", file);
-
-        const response = await fetch(apiUrl("/api/rfp/upload"), {
-          method: "POST",
-          body: formData,
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => null);
-          throw new Error(errorData?.error || "Upload failed");
-        }
-
-        const uploadResult = await response.json();
-
         sessionStorage.removeItem("rfp-editor-draft");
         localStorage.removeItem("rfp-editor-draft");
-        sessionStorage.setItem("rfp-uploaded-pdf-url", uploadResult.url);
-        sessionStorage.setItem("rfp-uploaded-pdf-name", uploadResult.fileName || file.name);
+        sessionStorage.setItem("rfp-uploaded-pdf-name", file.name);
         sessionStorage.removeItem("rfp-upload-analysis");
 
         setUploadProgress({ stage: "analyzing", progress: 70 });
 
+        const formData = new FormData();
+        formData.append("file", file);
+
         const analysisResponse = await fetch(apiUrl("/api/rfp/upload-analyze"), {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ pdfUrl: uploadResult.url, fileName: uploadResult.fileName || file.name }),
+          body: formData,
         });
 
         if (!analysisResponse.ok) {

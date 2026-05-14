@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { v4 as uuidv4 } from "uuid";
 import { useAuth } from "@/contexts/AuthContext";
 import Link from "next/link";
 import { saveProposalAnalysisResult, ProposalAnalysis, JudgeResult, startBackgroundAnalysisJob, getBackgroundAnalysisJob } from "@/services/aiService";
@@ -10,64 +9,11 @@ import VendorComparisonChart from "@/components/VendorComparisonChart";
 import ProposalMetricsComparison from "@/components/ProposalMetricsComparison";
 import { supabase } from "@/services/supabase";
 import formatCurrency, { extractCurrencyLikeText, extractTimelineLikeText, parseNumber } from "@/lib/formatters/number";
+import { randomUUID } from '@/lib/uuid';
 import { apiUrl } from "@/lib/api";
 
 function normalizeDoc(data: any): any {
   return data;
-}
-
-function buildRfpText(contract: any): string {
-  const parts: string[] = [];
-  const rfpDocument = contract?.rfp_document;
-  if (typeof rfpDocument === "string" && rfpDocument.trim() && !rfpDocument.startsWith("data:")) {
-    parts.push(rfpDocument.trim());
-  }
-
-  if (contract?.rfp_sections && typeof contract.rfp_sections === "object") {
-    parts.push(JSON.stringify(contract.rfp_sections, null, 2));
-  }
-
-  if (contract?.rfp_pdf_base64 && typeof contract.rfp_pdf_base64 === "string") {
-    parts.push(contract.rfp_pdf_base64);
-  }
-
-  if (parts.length === 0) {
-    parts.push(contract?.description || "");
-  }
-
-  return parts.filter(Boolean).join("\n\n");
-}
-
-function formatAnalysisPrice(analysis: ProposalAnalysis | undefined, proposal: Proposal): string {
-  if (analysis?.price !== null && analysis?.price !== undefined && Number.isFinite(analysis.price)) {
-    return formatCurrency(analysis.price, "en-US", analysis.price_currency || "USD");
-  }
-
-  const extractedPrice = extractCurrencyLikeText(proposal.extracted_text ?? proposal.proposal_data);
-  const priceValue = parseNumber(extractedPrice);
-  return priceValue > 0 ? formatCurrency(priceValue) : "Not provided";
-}
-
-function formatAnalysisTimeline(analysis: ProposalAnalysis | undefined, proposal: Proposal): string {
-  if (analysis?.timeline) {
-    const { start, end, duration_weeks: durationWeeks } = analysis.timeline;
-    if (start || end || durationWeeks !== null) {
-      if (start && end) return `${start} → ${end}${durationWeeks ? ` (${durationWeeks} weeks)` : ""}`;
-      if (durationWeeks !== null) return `${durationWeeks} weeks`;
-      return start || end || "Not provided";
-    }
-  }
-
-  const extractedTimeline = extractTimelineLikeText(proposal.extracted_text ?? proposal.proposal_data);
-  return extractedTimeline && extractedTimeline.length < 80 ? extractedTimeline : "Not provided";
-}
-
-function confidenceBadgeClass(value: string | undefined, kind: "price" | "timeline"): string {
-  if (kind === "price") {
-    return value === "exact" ? "bg-[var(--success-light)] text-[var(--success)]" : value === "estimated" ? "bg-[var(--warning-light)] text-[var(--warning)]" : "bg-[var(--surface)] text-[var(--muted)]";
-  }
-
-  return value === "explicit" ? "bg-[var(--success-light)] text-[var(--success)]" : value === "inferred" ? "bg-[var(--warning-light)] text-[var(--warning)]" : "bg-[var(--surface)] text-[var(--muted)]";
 }
 
 interface Contract {
@@ -262,42 +208,61 @@ export default function VendorResponsesTab() {
         setAllProposals([]);
         return;
       }
-      const rows = (data || []).map((row) => ({ proposal_id: row.id, ...normalizeDoc(row) }));
-      const uniqueRows = Array.from(
-        new Map(
-          [...rows]
-            .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")))
-            .map((row) => {
-              const dedupeKey = [
-                row.vendor_id || "",
-                row.proposal_type || "",
-                row.proposal_file_name || "",
-                row.proposal_file || "",
-              ].join("|");
-              return [dedupeKey, row] as const;
-            })
-        ).values()
-      );
-      setAllProposals(uniqueRows);
+      setAllProposals((data || []).map((row) => ({ proposal_id: row.id, ...normalizeDoc(row) })));
     })();
   }, [selectedContract]);
+
+  const extractPdfText = async (pdfUrl: string, vendorName: string): Promise<string> => {
+    try {
+      console.log(`[Extract] Starting extraction for ${vendorName} from ${pdfUrl}`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2 * 60 * 1000);
+      try {
+        const response = await fetch(apiUrl("/api/extract-pdf"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pdfUrl }),
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || "PDF extraction failed");
+        }
+        const data = await response.json();
+        return data.extracted_text || `[PDF uploaded for ${vendorName}]`;
+      } catch (fetchErr) {
+        clearTimeout(timeoutId);
+        throw fetchErr;
+      }
+    } catch (err) {
+      console.error(`[Extract] Error for ${vendorName}:`, err);
+      return `[PDF extraction failed: ${vendorName}]`;
+    }
+  };
 
   const runAIAnalysis = async () => {
     const contract = myContracts.find((c) => c.contract_id === selectedContract);
     if (!contract || allProposals.length === 0) return;
     setAnalyzing(true);
-    setAnalysisProgress("Starting 3-agent pipeline (server extracts PDFs if needed)...");
+    setAnalysisProgress("Starting 3-agent pipeline (extracting PDFs if needed)...");
     try {
-      setAnalysisProgress(`Preparing proposals for server-side extraction...`);
+      setAnalysisProgress(`Preparing proposals (extracting PDFs if needed)...`);
       const vendorPromises = allProposals.map(async (p: Proposal) => {
+        let proposalData = p.proposal_data;
+        if (p.proposal_type === "uploaded_pdf" && (!proposalData || proposalData.trim() === "")) {
+          setAnalysisProgress(`Extracting PDF for "${p.vendor_name}"...`);
+          proposalData = await extractPdfText(p.proposal_file || "", p.vendor_name);
+          const { error: updateErr } = await (supabase.from("proposals").update({ extracted_text: proposalData }).eq("id", p.proposal_id) as any);
+          if (updateErr) console.warn(`Failed to save extracted text for ${p.vendor_name}:`, updateErr);
+        }
         return {
           proposal_id: p.proposal_id,
           vendor_name: p.vendor_name,
           price: p.price || "",
           timeline: p.timeline || "",
           experience: p.experience || "",
-          proposal_data: p.proposal_data || "",
-          proposal_file_url: p.proposal_file || "",
+          proposal_data: proposalData,
         };
       });
       const vendors = await Promise.all(vendorPromises);
@@ -309,7 +274,6 @@ export default function VendorResponsesTab() {
           budget: contract.budget || "",
           deadline: contract.deadline || "",
           certifications: contract.required_certifications || "",
-          rfp_text: buildRfpText(contract),
         },
         vendors,
       });
@@ -359,7 +323,7 @@ export default function VendorResponsesTab() {
         }
         {
           const { error } = await supabase.from("messages").insert({
-            id: uuidv4(),
+            id: randomUUID(),
             sender_id: user.id,
             receiver_id: p.vendor_id,
             text: `Thank you for your proposal for "${contract.title}". After careful review, we have decided to go with another vendor. We appreciate your effort and hope to collaborate in the future.`,
@@ -369,7 +333,7 @@ export default function VendorResponsesTab() {
         }
         {
           const { error } = await supabase.from("notifications").insert({
-            id: uuidv4(),
+            id: randomUUID(),
             user_id: p.vendor_id,
             type: "proposal_rejected",
             message: `Your proposal for "${contract.title}" was not selected.`,
@@ -387,7 +351,7 @@ export default function VendorResponsesTab() {
 
       {
         const { error } = await supabase.from("messages").insert({
-          id: uuidv4(),
+          id: randomUUID(),
           sender_id: user.id,
           receiver_id: acceptedProposal.vendor_id,
           text: `Congratulations! Your proposal for "${contract.title}" has been accepted by ${ownerName}. We look forward to working with you. Please reach out to discuss next steps.`,
@@ -397,7 +361,7 @@ export default function VendorResponsesTab() {
       }
       {
         const { error } = await supabase.from("notifications").insert({
-          id: uuidv4(),
+          id: randomUUID(),
           user_id: acceptedProposal.vendor_id,
           type: "proposal_accepted",
           message: `Your proposal for "${contract.title}" has been accepted!`,
@@ -579,7 +543,6 @@ export default function VendorResponsesTab() {
                 const analysis = analyses[p.proposal_id];
                 const score = analysis?.overall_score ?? p.ai_score;
                 const risk = analysis?.risk_flags?.length ? "High" : p.risk_level || "Pending";
-                const recommendation = analysis?.recommendation || analysis?.independent_recommendation;
                 const isAccepted = p.status === "accepted";
                 const isRejected = p.status === "rejected";
                 const hasDecision = allProposals.some((pr) => pr.status === "accepted" || pr.status === "rejected");
@@ -610,14 +573,14 @@ export default function VendorResponsesTab() {
                         <p className="text-xs text-[var(--muted)]">{p.proposal_type === "generated" ? "Generated proposal" : "Uploaded proposal"} · {p.created_at}</p>
                       </div>
                       <div className="flex items-center gap-2">
-                        {recommendation && (
+                        {analysis?.independent_recommendation && (
                           <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                            recommendation === "Strongly Recommended" ? "bg-[var(--success-light)] text-[var(--success)]" :
-                            recommendation === "Recommended" ? "bg-[var(--primary-light)] text-[var(--primary)]" :
-                            recommendation === "Consider" ? "bg-[var(--warning-light)] text-[var(--warning)]" :
-                            recommendation === "Risky" ? "bg-[var(--danger-light)] text-[var(--danger)]" :
+                            analysis.independent_recommendation === "Strongly Recommended" ? "bg-[var(--success-light)] text-[var(--success)]" :
+                            analysis.independent_recommendation === "Recommended" ? "bg-[var(--primary-light)] text-[var(--primary)]" :
+                            analysis.independent_recommendation === "Consider" ? "bg-[var(--warning-light)] text-[var(--warning)]" :
+                            analysis.independent_recommendation === "Risky" ? "bg-[var(--danger-light)] text-[var(--danger)]" :
                             "bg-[var(--surface)] text-[var(--muted)]"
-                          }`}>{recommendation}</span>
+                          }`}>{analysis.independent_recommendation}</span>
                         )}
                         <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${risk === "Low" ? "badge-open" : risk === "High" ? "badge-closed" : "bg-[var(--surface)] text-[var(--muted)]"}`}>{risk}</span>
                         {score != null && (
@@ -625,29 +588,19 @@ export default function VendorResponsesTab() {
                         )}
                       </div>
                     </div>
-                    <div className="grid gap-3 sm:grid-cols-2 text-sm text-[var(--muted)] mb-2">
-                      <div className="rounded-lg border border-[var(--divider)] bg-white/70 p-3">
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <span>Price</span>
-                          <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${confidenceBadgeClass(analysis?.price_confidence, "price")}`}>{analysis?.price_confidence || "unknown"}</span>
-                        </div>
-                        <p className="font-medium text-[var(--foreground)]">{formatAnalysisPrice(analysis, p)}</p>
-                        {analysis?.price_estimation_reasoning && analysis.price_confidence !== "exact" && (
-                          <p className="text-xs text-[var(--muted)] mt-1">{analysis.price_estimation_reasoning}</p>
-                        )}
-                      </div>
-                      <div className="rounded-lg border border-[var(--divider)] bg-white/70 p-3">
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <span>Timeline</span>
-                          <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${confidenceBadgeClass(analysis?.timeline_confidence, "timeline")}`}>{analysis?.timeline_confidence || "unknown"}</span>
-                        </div>
-                        <p className="font-medium text-[var(--foreground)]">{formatAnalysisTimeline(analysis, p)}</p>
-                        {analysis?.timeline_estimation_reasoning && analysis.timeline_confidence !== "explicit" && (
-                          <p className="text-xs text-[var(--muted)] mt-1">{analysis.timeline_estimation_reasoning}</p>
-                        )}
-                      </div>
+                      <div className="flex gap-4 text-sm text-[var(--muted)] mb-2">
+                      <span>Price: <span className="font-medium text-[var(--foreground)]">{(() => {
+                        if (p.price) return p.price;
+                        const extractedPrice = extractCurrencyLikeText(p.extracted_text ?? p.proposal_data);
+                        const priceValue = parseNumber(extractedPrice);
+                        return priceValue > 0 ? formatCurrency(priceValue) : "N/A";
+                      })()}</span></span>
+                      <span>Timeline: <span className="font-medium text-[var(--foreground)]">{(() => {
+                        if (p.timeline) return p.timeline;
+                        const extractedTimeline = extractTimelineLikeText(p.extracted_text ?? p.proposal_data);
+                        return extractedTimeline && extractedTimeline.length < 80 ? extractedTimeline : "N/A";
+                      })()}</span></span>
                     </div>
-                    {analysis?.risk_summary && <p className="text-xs text-[var(--muted)] mb-2">Risk summary: {analysis.risk_summary}</p>}
                     {p.experience && <p className="text-sm text-[var(--muted)] leading-relaxed mb-3">{p.experience}</p>}
 
                     {p.proposal_data && (() => {
@@ -733,4 +686,3 @@ export default function VendorResponsesTab() {
     </div>
   );
 }
-

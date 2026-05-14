@@ -1,5 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/services/supabase';
+import { extractCurrencyLikeText, extractTimelineLikeText, formatCurrency } from '@/lib/formatters/number';
+import { createClient } from '@supabase/supabase-js';
+
+function normalizeCurrencyWithSuffix(text: string){
+  if(!text) return '';
+  // remove currency labels
+  const cleaned = String(text).replace(/(?:USD|usd)\s*/i, '').trim();
+  // match number and optional suffix (k,m,b,million,billion,thousand)
+  const m = cleaned.match(/([\d,.]+)\s*(k|m|b|thousand|million|billion)?/i);
+  if(!m) return cleaned;
+  const numStr = m[1].replace(/,/g,'');
+  const val = parseFloat(numStr);
+  if(!Number.isFinite(val)) return cleaned;
+  const suffix = (m[2] || '').toLowerCase();
+  let multiplier = 1;
+  if(suffix === 'k' || suffix === 'thousand') multiplier = 1e3;
+  if(suffix === 'm' || suffix === 'million') multiplier = 1e6;
+  if(suffix === 'b' || suffix === 'billion') multiplier = 1e9;
+  const scaled = val * multiplier;
+  return formatCurrency(scaled);
+}
 
 // Use the same parser used in scripts
 let pdfParse: any;
@@ -46,9 +67,27 @@ export async function POST(req: NextRequest){
       fileUrl = `${base.replace(/\/+$/,'')}/storage/v1/object/public/${bucket}/${name}`;
     }
 
-    // Find proposal(s) that reference this file
-    const { data: proposals, error } = await supabase.from('proposals').select('id').or(`proposal_file.eq.${fileUrl},proposal_file.ilike.%${name}%`);
+    // Build server-side Supabase client (service role) to bypass RLS for background operations
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if(!supabaseUrl || !supabaseServiceRoleKey) return NextResponse.json({ error: 'Missing Supabase service credentials' }, { status: 500 });
+    const svc = createClient(supabaseUrl, supabaseServiceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } });
+
+    // Find proposal(s) that reference this file using service client
+    let { data: proposals, error } = await svc.from('proposals').select('id').or(`proposal_file.eq.'${fileUrl}',proposal_file.ilike.'%${name}%'`);
     if(error) console.warn('proposal lookup error', error);
+
+    // Fallbacks if no match found: try exact eq, then name match
+    if((!proposals || proposals.length === 0)){
+      const r1 = await svc.from('proposals').select('id').eq('proposal_file', fileUrl);
+      if(r1.error) console.warn('proposal exact lookup error', r1.error);
+      if(r1.data && r1.data.length) proposals = r1.data;
+    }
+    if((!proposals || proposals.length === 0)){
+      const r2 = await svc.from('proposals').select('id').eq('proposal_file_name', name);
+      if(r2.error) console.warn('proposal name lookup error', r2.error);
+      if(r2.data && r2.data.length) proposals = r2.data;
+    }
 
     // Fetch file
     const res = await fetch(fileUrl);
@@ -69,51 +108,88 @@ export async function POST(req: NextRequest){
     if(proposals && proposals.length){
       const results = [];
       for(const p of proposals){
-        await supabase.from('proposals').update({ proposal_data: safe }).eq('id', p.id);
-        // Fetch proposal + contract info to trigger analysis
-        const { data: proposal } = await supabase.from('proposals').select('id,contract_id,vendor_name,price,timeline,experience').eq('id', p.id).single();
-        const { data: contract } = await supabase.from('contracts').select('id,title,description,budget,deadline,required_certifications').eq('id', proposal?.contract_id).single();
-        
-        if(proposal && contract){
-          // Call analyze-proposal API to score this proposal
-          try{
-            const analysisUrl = buildAbsoluteUrl(req.nextUrl.origin, '/api/ai/analyze-proposal');
-            const payload = {
-              mode: 'score_single',
-              contract_title: contract.title || '',
-              contract_description: contract.description || '',
-              contract_budget: contract.budget || '',
-              contract_deadline: contract.deadline || '',
-              contract_certifications: contract.required_certifications || '',
-              vendor_name: proposal.vendor_name,
-              vendor_price: proposal.price || '',
-              vendor_timeline: proposal.timeline || '',
-              vendor_experience: proposal.experience || '',
-              proposal_data: safe,
-            };
-            const analysisRes = await fetch(analysisUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload),
-            });
-            if(analysisRes.ok){
-              const analysis = await analysisRes.json();
-              const score = analysis?.analysis?.overall_score ?? null;
-              if(score !== null){
-                await supabase.from('proposals').update({ ai_score: score }).eq('id', p.id);
-                results.push({ id: p.id, extraction: true, analysis: true, score });
-              } else {
-                results.push({ id: p.id, extraction: true, analysis: false, error: 'no score returned' });
-              }
-            } else {
-              results.push({ id: p.id, extraction: true, analysis: false, error: `API ${analysisRes.status}` });
-            }
-          }catch(err){
-            results.push({ id: p.id, extraction: true, analysis: false, error: String(err) });
-          }
+        // Fetch existing proposal to decide whether to write structured fields
+        const { data: proposal } = await svc.from('proposals').select('id,contract_id,vendor_name,price,timeline,experience').eq('id', p.id).single();
+
+        // Extract price/timeline from parsed text
+        const extractedPrice = extractCurrencyLikeText(safe);
+        const extractedTimeline = extractTimelineLikeText(safe);
+
+        // Normalize price (convert 4.8 M -> $4,800,000.00)
+        const normalizedPrice = extractedPrice ? normalizeCurrencyWithSuffix(extractedPrice) : '';
+
+        // Prepare update payload: always save extracted text/proposal_data; only set price/timeline if missing
+        const updateObj: any = { proposal_data: safe };
+        if (!proposal?.price && extractedPrice) updateObj.price = normalizedPrice || extractedPrice;
+        if (!proposal?.timeline && extractedTimeline) updateObj.timeline = extractedTimeline;
+
+        const { data: updateData, error: updateError } = await svc.from('proposals').update(updateObj).eq('id', p.id).select();
+        if(updateError){
+          console.error(`[webhook] Update error for ${p.id}:`, updateError);
+        } else {
+          console.log(`[webhook] Updated proposal ${p.id}:`, updateObj, 'result:', updateData?.length || 0, 'rows');
         }
+
+        results.push({ id: p.id, extraction: true, updates: updateObj });
       }
-      return NextResponse.json({ updated: proposals.length, results });
+      
+      // Return response immediately without waiting for analysis (fire-and-forget)
+      const responseJson = { updated: proposals.length, results, message: 'Extraction complete; analysis running asynchronously' };
+      
+      // Trigger analysis in background (do not await)
+      (async ()=>{
+        try{
+          for(const p of proposals){
+            const { data: proposal } = await svc.from('proposals').select('id,contract_id,vendor_name,price,timeline,experience').eq('id', p.id).single();
+            const { data: contract } = await svc.from('contracts').select('id,title,description,budget,deadline,required_certifications').eq('id', proposal?.contract_id).single();
+            
+            if(proposal && contract){
+              const analysisUrl = buildAbsoluteUrl(req.nextUrl.origin, '/api/ai/analyze-proposal');
+              const extractedPrice = extractCurrencyLikeText(safe);
+              const extractedTimeline = extractTimelineLikeText(safe);
+              const normalizedPrice = extractedPrice ? normalizeCurrencyWithSuffix(extractedPrice) : '';
+              
+              const payload = {
+                mode: 'score_single',
+                contract_title: contract.title || '',
+                contract_description: contract.description || '',
+                contract_budget: contract.budget || '',
+                contract_deadline: contract.deadline || '',
+                contract_certifications: contract.required_certifications || '',
+                vendor_name: proposal.vendor_name,
+                vendor_price: proposal.price || normalizedPrice || extractedPrice || '',
+                vendor_timeline: proposal.timeline || extractedTimeline || '',
+                vendor_experience: proposal.experience || '',
+                proposal_data: safe,
+              };
+              
+              console.log(`[webhook-bg] Starting analysis for proposal ${p.id}`);
+              const analysisRes = await fetch(analysisUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+              });
+              
+              if(analysisRes.ok){
+                const analysis = await analysisRes.json();
+                const score = analysis?.analysis?.overall_score ?? null;
+                if(score !== null){
+                  await svc.from('proposals').update({ ai_score: score }).eq('id', p.id);
+                  console.log(`[webhook-bg] Analysis complete for ${p.id}: score=${score}`);
+                } else {
+                  console.warn(`[webhook-bg] Analysis returned no score for ${p.id}`);
+                }
+              } else {
+                console.warn(`[webhook-bg] Analysis API error for ${p.id}: ${analysisRes.status}`);
+              }
+            }
+          }
+        }catch(err){
+          console.error('[webhook-bg] Analysis background error:', err);
+        }
+      })();
+      
+      return NextResponse.json(responseJson);
     }
 
     return NextResponse.json({ message: 'No matching proposal row found', preview: safe.slice(0,200) });

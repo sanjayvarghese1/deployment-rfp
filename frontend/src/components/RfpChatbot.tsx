@@ -681,6 +681,11 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated }: RfpC
       subsystemCount: input.selectedSubsystems?.length,
       hasPrecomputedDecomposition: !!input.precomputedDecomposition,
       precomputedSubsystems: input.precomputedDecomposition?.subsystems ? Object.keys(input.precomputedDecomposition.subsystems) : "N/A",
+      // DEBUG: Show all sections being sent
+      sections_keys: Object.keys(input.sections),
+      sections: input.sections,
+      detailed_project_description_length: input.detailed_project_description?.length || 0,
+      additional_details_length: input.additional_details?.length || 0,
     });
 
     try {
