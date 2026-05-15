@@ -6,7 +6,7 @@ import { NextRequest } from "next/server";
 import { runGeneratePipeline } from "@/lib/rfp/generate";
 import type { RfpInput } from "@/lib/rfp/config";
 
-export const maxDuration = 1800; // 30 minutes — subsystem LLM calls can add 30-60s each
+export const maxDuration = 300; // Vercel Hobby plan max: 300 seconds. Pro plan allows 900.
 
 export async function POST(req: NextRequest) {
   const body: RfpInput = await req.json();

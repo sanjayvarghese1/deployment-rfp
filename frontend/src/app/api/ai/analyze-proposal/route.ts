@@ -4,7 +4,7 @@ import { langfuse } from "@/config/langfuse";
 import { saveProposalAnalysisResult } from "@/services/aiService";
 import type { ProposalAnalysis, JudgeResult } from "@/services/aiService";
 
-export const maxDuration = 900; // 15 minutes for the full 3-agent pipeline with multiple vendors
+export const maxDuration = 300; // Vercel Hobby plan max: 300 seconds. Pro plan allows 900.
 
 /* ═══════════════════════════════════════════════════════════════════
    Agent 1 — Extractor
