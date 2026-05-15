@@ -159,6 +159,7 @@ export interface RfpInput {
   qaRevisionNotes?: string;
   skipDecomposition?: boolean;
   fastMode?: boolean;
+  mandatoryCriteria?: MandatoryCriteriaPayload;
   precomputedDecomposition?: {
     subsystems: Record<string, string>;
     inferredRequirements: string[];
@@ -211,6 +212,28 @@ export interface DecompositionData {
   needsDecomposition: boolean;
   subsystemPdfs: SubsystemPdf[];
   subsystemDrafts: SubsystemDraft[];
+}
+
+export interface MandatoryCriterion {
+  id: string;
+  label: string;
+  value: number;
+  recommendedValue: number;
+  source?: "ai" | "user";
+  notes?: string;
+}
+
+export interface MandatoryCriteriaPayload {
+  fullRfp?: MandatoryCriterion[];
+  subsystems: Record<string, MandatoryCriterion[]>;
+  selectedSubsystems?: string[];
+  activeSubsystemIndex?: number;
+  completedSubsystems?: string[];
+}
+
+export interface MandatoryCriteriaRecommendation {
+  fullRfp?: Array<Pick<MandatoryCriterion, "label" | "value" | "recommendedValue" | "notes">>;
+  subsystems: Record<string, Array<Pick<MandatoryCriterion, "label" | "value" | "recommendedValue" | "notes">>>;
 }
 
 export interface PipelineResult {

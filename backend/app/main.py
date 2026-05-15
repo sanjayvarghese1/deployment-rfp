@@ -50,6 +50,7 @@ class AnalysisBackgroundRequest(BaseModel):
     contract_id: str
     contract: dict
     vendors: list[dict]
+    mandatoryCriteria: dict | None = None
 
 
 @app.post("/api/rfp/generate/background")

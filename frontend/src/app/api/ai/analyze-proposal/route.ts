@@ -456,7 +456,7 @@ export async function POST(req: NextRequest) {
     if (mode === "score_single") {
       console.log(`[AI:POST] Entering score_single path`);
       const { contract_title, contract_description, contract_budget, contract_deadline, contract_certifications,
-              vendor_name, vendor_price, vendor_timeline, vendor_experience, proposal_data } = body;
+              vendor_name, vendor_price, vendor_timeline, vendor_experience, proposal_data, mandatoryCriteria } = body;
 
       // Build RFP text from contract fields
       const rfpText = [
@@ -480,6 +480,7 @@ export async function POST(req: NextRequest) {
         metadata: {
           vendorName: vendor_name || "Unknown",
           fileNames: proposal_data ? ["proposal_data_json"] : [],
+          mandatoryCriteriaPresent: Boolean(mandatoryCriteria),
           modelUsed: AGENT_MODEL.DOCUMENT_ANALYSIS,
           tokenUsage: null,
           latency: null,
@@ -610,7 +611,7 @@ export async function POST(req: NextRequest) {
     if (mode === "full_pipeline") {
       console.log(`[AI:POST] Entering full_pipeline path`);
       const { contract_title, contract_description, contract_budget, contract_deadline, contract_certifications,
-            vendors, contract_id } = body;
+        vendors, contract_id, mandatoryCriteria } = body;
       const fastMode = !!body.fastMode;
 
       console.log(`[AI:POST:full_pipeline] Starting. vendors=${Array.isArray(vendors) ? vendors.length : 0}`);
@@ -634,6 +635,7 @@ export async function POST(req: NextRequest) {
         metadata: {
           contractTitle: contract_title || "Unknown",
           vendorCount: Array.isArray(vendors) ? vendors.length : 0,
+          mandatoryCriteriaPresent: Boolean(mandatoryCriteria),
           finalScore: null,
         },
       });

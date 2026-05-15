@@ -1,0 +1,260 @@
+.root {
+  background: var(--surface);
+  border-radius: 18px;
+  padding: 18px;
+  border: 1px solid var(--card-border);
+}
+
+.topRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.metaTitle {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.metaSubtitle {
+  font-size: 14px;
+  color: var(--muted);
+  line-height: 1.7;
+  max-width: 820px;
+}
+
+.targetGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.targetChips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.targetChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--card-border);
+}
+
+.targetChipActive {
+  background: var(--primary);
+  color: #efece3;
+}
+
+.targetChipDone {
+  background: var(--primary-light);
+  color: var(--foreground);
+}
+
+.targetChipPending {
+  background: var(--surface-hover);
+  color: var(--foreground);
+}
+
+.panel {
+  background: rgba(239, 236, 227, 0.65);
+  border-radius: 14px;
+  padding: 14px;
+  border: 1px solid var(--card-border);
+  margin-bottom: 14px;
+}
+
+.panelHead {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.panelTitle {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.panelSubtitle {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+.addBtn {
+  gap: 6px;
+}
+
+.loadingText {
+  padding: 16px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.emptyText {
+  padding: 10px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.list {
+  display: grid;
+  gap: 12px;
+}
+
+.item {
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--surface);
+}
+
+.itemTop {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+
+.itemBody {
+  flex: 1;
+  display: grid;
+  gap: 6px;
+}
+
+.fieldLabel {
+  font-size: 12px;
+  color: var(--muted);
+  display: grid;
+  gap: 4px;
+}
+
+.removeBtn {
+  min-width: 36px;
+  padding: 8px 10px;
+}
+
+.sliderWrap {
+  display: grid;
+  gap: 8px;
+  position: relative;
+}
+
+.sliderScale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.sliderValue {
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.slider {
+  width: 100%;
+}
+
+.slider:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sliderWarning {
+  /* softened warning state: subtle amber tint instead of harsh red */
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.06) inset;
+  outline: 1px solid rgba(245, 158, 11, 0.09);
+}
+
+.addBtnBottom {
+  margin-top: 8px;
+}
+
+.notes {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.inputField {
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--card-border);
+  font-size: 13px;
+  height: 34px;
+}
+
+.aiLabel {
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.02);
+  color: var(--foreground-secondary);
+}
+
+.marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  pointer-events: none;
+}
+.marker::before {
+  /* thin subtle vertical guide line */
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 28px;
+  bottom: 14px;
+  width: 1px;
+  background: rgba(239,68,68,0.12);
+  transform: translateX(-50%);
+}
+.marker::after {
+  /* red down-pointing triangle to indicate the live limit */
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 18px;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-top: 8px solid #ef4444; /* red triangle */
+}
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.footerActions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.addBtnWrap {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+}

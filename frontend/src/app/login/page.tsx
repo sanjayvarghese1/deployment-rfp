@@ -33,7 +33,7 @@ function LoginContent() {
     setError("");
     setLoading(true);
     try {
-      const { error: signInError } = await supabase.auth.signInWithPassword({
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
@@ -42,7 +42,11 @@ function LoginContent() {
         throw signInError;
       }
 
-      router.push("/");
+      if (data?.session) {
+        router.push("/");
+      } else {
+        throw new Error("No session created");
+      }
     } catch (err: any) {
       setError(err.message || "Login failed");
     } finally {

@@ -1,0 +1,82 @@
+.rootCard {
+  max-width: 800px;
+  margin: 0 auto;
+}
+.header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--card-border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.headerIcon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.headerTitle {
+  font-weight: 600;
+  font-size: 15px;
+}
+.headerSubtitle {
+  font-size: 12px;
+  color: var(--muted);
+}
+.contentPadding {
+  padding: 12px 20px 0;
+}
+.stepsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.stepChip {
+  padding: 8px 10px;
+  border-radius: 999px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--card-border);
+}
+.stepActive { background: var(--primary); color: #EFECE3; }
+.stepDone { background: var(--primary-light); color: var(--foreground); }
+.stepPending { background: var(--surface); color: var(--foreground); }
+.progressWrap { padding: 0 20px 8px; }
+.progressCard { background: var(--surface); border-radius: 12px; padding: 14px 16px; }
+.progressBarBg { height: 6px; border-radius: 3px; background: var(--surface-hover); overflow: hidden; }
+.progressBar { height: 100%; background: var(--primary); border-radius: 3px; transition: width 0.4s ease; }
+.fileSummary { background: linear-gradient(180deg, var(--surface) 0%, rgba(239,236,227,0.7) 100%); border-radius: 18px; padding: 18px; margin-bottom: 12px; border: 1px solid var(--card-border); }
+.fileSummaryTitle { font-size: 16px; font-weight: 700; color: var(--foreground); margin-bottom: 8px; }
+.fileSummarySubtitle { font-size: 13px; color: var(--muted); line-height: 1.7; max-width: 860px; }
+.actionsGrid { background: var(--surface); border-radius: 16px; padding: 16px; border: 1px solid var(--card-border); display: grid; gap: 14px; }
+.fileSelectorCard { background: rgba(239,236,227,0.65); border-radius: 14px; padding: 14px; border: 1px solid var(--card-border); }
+.fileSelectorTitle { font-size: 11px; text-transform: uppercase; letter-spacing: 0.16em; color: var(--muted); margin-bottom: 8px; }
+.fileSelectorDesc { font-size: 13px; color: var(--foreground); line-height: 1.6; margin-bottom: 12px; }
+.fileSelectorRow { display: grid; gap: 10px; }
+.btnRow { display: flex; gap: 10px; flex-wrap: wrap; }
+.downloadBtn { gap: 6px; }
+.outlineBtn { gap: 6px; }
+.nextBtn { gap: 6px; }
+.suggestionsCard { background: var(--surface); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+.suggestionItem { border: 1px solid var(--card-border); border-radius: 10px; padding: 12px; background: var(--surface-hover); }
+.suggestionActions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.textareaFull { width: 100%; resize: vertical; }
+.warningText { margin-top: 10px; font-size: 12px; color: var(--warning); }
+.smallMuted { font-size: 12px; color: var(--muted); }
+.scoreRow { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.scoreCircle { width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #EFECE3; font-weight: 700; font-size: 16px; }
+.strengthsList { font-size: 12px; margin-top: 10px; }
+.pageContent { padding: 0 20px 20px; }
+.fileSummaryLabel { font-size: 12px; text-transform: uppercase; letter-spacing: 0.18em; color: var(--muted); margin-bottom: 8px; }
+.fileSelectorGrid { display: grid; gap: 10px; }
+.flexWrap { display: flex; gap: 10px; flex-wrap: wrap; }
+.suggestionsGrid { display: grid; gap: 12px; }
+.suggestionTitle { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.suggestionText { font-size: 13px; margin-bottom: 10px; color: var(--foreground-secondary); }
+.suggestionButtons { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.btnSmall { font-size: 12px; padding: 6px 10px; }

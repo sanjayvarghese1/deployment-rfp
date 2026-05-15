@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 /* eslint-disable */
 
@@ -12,4 +12,3 @@ export default function RfpUploadReviewPage() {
     </div>
   );
 }
-
