@@ -25,6 +25,11 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/healthz")
+async def healthz() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 class RfpBackgroundRequest(BaseModel):
     organization_name: str
     project_title: str

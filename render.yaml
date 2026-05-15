@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: good-rfp-backend
+    env: python
+    branch: main
+    root: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -k uvicorn.workers.UvicornWorker app.main:app --bind 0.0.0.0:$PORT --workers 2
+    healthCheckPath: /healthz
+    autoDeploy: true
+    plan: free
