@@ -3,7 +3,7 @@ import { openRouterChat, openRouterChatJSON, AGENT_MODEL } from "@/lib/openroute
 import { geminiChat, geminiChatJSON, isGeminiAvailable } from "@/lib/gemini";
 import { langfuse } from "@/config/langfuse";
 
-export const maxDuration = 300; // Vercel Hobby plan max: 300 seconds. Pro plan allows 900.
+export const maxDuration = 240; // Conservative limit for Vercel Hobby (max 300)
 
 export async function POST(req: NextRequest) {
   try {
