@@ -17,3 +17,6 @@ This repository is now split into separate frontend and backend folders.
 1. Start the frontend from `frontend/`.
 2. Start the backend from `backend/` on port `8000`.
 3. Set `NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:8000` in the frontend environment.
+
+## Deployement
+ongoing
