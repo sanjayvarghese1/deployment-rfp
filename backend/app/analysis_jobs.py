@@ -126,6 +126,7 @@ async def _run_background_analysis(job_id: str, origin: str, body: dict[str, Any
                     "contract_deadline": (body.get("contract") or {}).get("deadline"),
                     "contract_certifications": (body.get("contract") or {}).get("certifications"),
                     "vendors": body.get("vendors") or [],
+                    "mandatoryCriteria": body.get("mandatoryCriteria"),
                     "fastMode": True,
                 },
             )

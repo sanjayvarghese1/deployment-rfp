@@ -1,15 +1,17 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { RFP_QUESTIONS, FINAL_INTAKE_KEY, getFinalIntakeQuestionLabel, type PipelineProgress, type PipelineResult, type RfpInput, type DecompositionData, type PdfTemplate, type QAResult } from "@/lib/rfp/config";
+import { RFP_QUESTIONS, FINAL_INTAKE_KEY, getFinalIntakeQuestionLabel, type PipelineProgress, type PipelineResult, type RfpInput, type DecompositionData, type PdfTemplate, type QAResult, type MandatoryCriterion, type MandatoryCriteriaRecommendation } from "@/lib/rfp/config";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/services/supabase";
 import { getBackgroundGenerationSnapshot, startBackgroundRfpGeneration, subscribeBackgroundGeneration } from "@/lib/rfp/background";
 import { apiUrl } from "@/lib/api";
+import MandatoryCriteriaPhase from "@/components/MandatoryCriteriaPhase";
+import { addCriterionTarget, buildFallbackCriteria, buildMandatoryCriteriaPayload, normalizeRecommendation, removeCriterionTarget, updateCriterionTarget } from "@/lib/rfp/mandatoryCriteria";
 
 type FlowState = "idle" | "generating" | "review";
-type WizardStep = 1 | 2 | 3;
+type WizardStep = 1 | 2 | 3 | 4;
 type QaDecisionMode = "auto" | "custom" | "skip";
 
 const INTAKE_ORDER = [...RFP_QUESTIONS.map((question) => question.key), FINAL_INTAKE_KEY];
@@ -59,6 +61,7 @@ interface RfpChatbotProps {
     sectionLabels: Record<string, string>;
     pdfBase64: string;
     metadata: { organization_name: string; project_title: string; category: string; date: string };
+    mandatoryCriteria?: MandatoryCriteriaState;
   }) => void;
 }
 
@@ -98,6 +101,15 @@ interface EditorDraftSnapshot {
 }
 
 type TargetRfp = "full" | string;
+
+interface MandatoryCriteriaState {
+  loading: boolean;
+  ready: boolean;
+  targets: string[];
+  activeTargetIndex: number;
+  criteriaByTarget: Record<string, MandatoryCriterion[]>;
+  error: string | null;
+}
 
 function getNextRequiredKey(answers: Record<string, string>): string | null {
   for (const key of INTAKE_ORDER) {
@@ -153,6 +165,14 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated }: RfpC
   const [result, setResult] = useState<Omit<PipelineResult, "pdfBase64"> | null>(null);
   const [pdfBase64, setPdfBase64] = useState<string | null>(null);
   const [decomposition, setDecomposition] = useState<DecompositionData | null>(null);
+  const [mandatoryCriteria, setMandatoryCriteria] = useState<MandatoryCriteriaState>({
+    loading: false,
+    ready: false,
+    targets: [],
+    activeTargetIndex: 0,
+    criteriaByTarget: {},
+    error: null,
+  });
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(() => {
     const snapshot = getBackgroundGenerationSnapshot();
@@ -452,6 +472,101 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated }: RfpC
   const availableFileTargets: TargetRfp[] = selectedSubsystems.has("full")
     ? ["full"]
     : generatedSubsystemDrafts.map((draft) => draft.name);
+  const mandatoryTargets = selectedSubsystems.has("full")
+    ? ["full"]
+    : (selectedSubsystemNames.length > 0 ? selectedSubsystemNames : Array.from(selectedSubsystems).filter((name) => name !== "full"));
+
+  const loadMandatoryCriteriaRecommendations = useCallback(async (targets: string[]) => {
+    const normalizedTargets = targets.length > 0 ? targets : ["full"];
+    setMandatoryCriteria((current) => ({ ...current, loading: true, ready: false, error: null, targets: normalizedTargets }));
+
+    try {
+      const response = await fetch(apiUrl("/api/rfp/mandatory-criteria"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          organizationName: answers.organization_name || profile?.company_name || "Organization",
+          projectTitle: result?.metadata.project_title || answers.project_title || "RFP",
+          category: result?.metadata.category || answers.category || "other",
+          selectedSubsystems: normalizedTargets,
+          summary: result ? Object.values(result.sections).find(Boolean)?.slice(0, 2000) || "" : answers.detailed_project_description || "",
+          decomposition: decompositionAnalysis?.subsystems || {},
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text().catch(() => "Failed to generate mandatory criteria"));
+      }
+
+      const data = (await response.json()) as MandatoryCriteriaRecommendation;
+      const criteriaByTarget = normalizeRecommendation(data, normalizedTargets);
+      setMandatoryCriteria({
+        loading: false,
+        ready: true,
+        targets: normalizedTargets,
+        activeTargetIndex: 0,
+        criteriaByTarget,
+        error: null,
+      });
+    } catch (error) {
+      console.warn("Mandatory criteria recommendation failed:", error);
+      const fallbackTargets = normalizedTargets.length > 0 ? normalizedTargets : ["full"];
+      const criteriaByTarget = Object.fromEntries(fallbackTargets.map((target) => [target, buildFallbackCriteria(target === "full" ? "Full RFP" : target.replace(/_/g, " "))]));
+      setMandatoryCriteria({
+        loading: false,
+        ready: true,
+        targets: fallbackTargets,
+        activeTargetIndex: 0,
+        criteriaByTarget,
+        error: null,
+      });
+    }
+  }, [answers.category, answers.detailed_project_description, answers.organization_name, answers.project_title, decompositionAnalysis?.subsystems, profile?.company_name, result]);
+
+  useEffect(() => {
+    if (wizardStep < 3 || !result) return;
+    if (mandatoryCriteria.loading) return;
+    if (mandatoryCriteria.ready && mandatoryCriteria.targets.length > 0) return;
+    void loadMandatoryCriteriaRecommendations(mandatoryTargets);
+  }, [loadMandatoryCriteriaRecommendations, mandatoryCriteria.loading, mandatoryCriteria.ready, mandatoryTargets, result, wizardStep]);
+
+  const handleMandatoryCriteriaBack = useCallback(() => {
+    setMandatoryCriteria((current) => {
+      if (current.activeTargetIndex <= 0) {
+        setWizardStep(3);
+        return current;
+      }
+      return { ...current, activeTargetIndex: current.activeTargetIndex - 1 };
+    });
+  }, []);
+
+  const handleMandatoryCriteriaNext = useCallback(() => {
+    setMandatoryCriteria((current) => {
+      const nextIndex = Math.min(current.activeTargetIndex + 1, Math.max(0, current.targets.length - 1));
+      return { ...current, activeTargetIndex: nextIndex };
+    });
+  }, []);
+
+  const updateMandatoryCriterion = useCallback((target: string, index: number, patch: Partial<MandatoryCriterion>) => {
+    setMandatoryCriteria((current) => ({
+      ...current,
+      criteriaByTarget: updateCriterionTarget(current.criteriaByTarget, target, index, patch),
+    }));
+  }, []);
+
+  const addMandatoryCriterion = useCallback((target: string) => {
+    setMandatoryCriteria((current) => ({
+      ...current,
+      criteriaByTarget: addCriterionTarget(current.criteriaByTarget, target),
+    }));
+  }, []);
+
+  const removeMandatoryCriterion = useCallback((target: string, index: number) => {
+    setMandatoryCriteria((current) => ({
+      ...current,
+      criteriaByTarget: removeCriterionTarget(current.criteriaByTarget, target, index),
+    }));
+  }, []);
 
   useEffect(() => {
     if (availableFileTargets.length === 0) return;
@@ -624,6 +739,14 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated }: RfpC
     setResult(null);
     setPdfBase64(null);
     setDecomposition(null);
+    setMandatoryCriteria({
+      loading: false,
+      ready: false,
+      targets: [],
+      activeTargetIndex: 0,
+      criteriaByTarget: {},
+      error: null,
+    });
     setProgress(null);
     setMessages([]);
     setInputValue("");
@@ -848,14 +971,55 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated }: RfpC
         posted_by: user.id,
         posted_by_name: profile?.company_name || (user as any).user_metadata?.full_name || user.email || "Unknown",
         poster_verified: profile?.verified || false,
-        rfp_metadata: result.metadata,
+        rfp_metadata: {
+          ...result.metadata,
+          mandatory_criteria: buildMandatoryCriteriaPayload(mandatoryCriteria.criteriaByTarget, mandatoryCriteria.targets, mandatoryCriteria.activeTargetIndex),
+        },
         rfp_qa: result.qa,
         rfp_template: result.template,
         created_at: new Date().toISOString(),
       };
 
-      const hasSubsystems = decomposition?.needsDecomposition;
+      const normalizeName = (value: string) => value.trim().toLowerCase().replace(/_/g, " ");
+      const fullSelected = selectedSubsystems.has("full");
+      const subsystemDrafts = decomposition?.subsystemDrafts || [];
       const subsystemPdfs = decomposition?.subsystemPdfs || [];
+      const availableSubsystemNames = Array.from(new Set([
+        ...subsystemDrafts.map((draft) => draft.name),
+        ...subsystemPdfs.map((pdf) => pdf.name),
+      ]));
+
+      // Build the list of subsystem outputs from selected subsystem names first,
+      // then fall back to all available drafts/PDFs.
+      const selectedForSave = fullSelected
+        ? []
+        : (selectedSubsystemNames.length > 0 ? selectedSubsystemNames : availableSubsystemNames);
+
+      const subsystemOutputs = selectedForSave
+        .map((name) => {
+          const draft = subsystemDrafts.find((item) => normalizeName(item.name) === normalizeName(name));
+          const pdf = subsystemPdfs.find((item) => normalizeName(item.name) === normalizeName(name));
+          if (!draft && !pdf) return null;
+          return {
+            name: draft?.name || pdf?.name || name,
+            sections: draft?.sections || result.sections,
+            sectionLabels: draft?.sectionLabels || result.sectionLabels,
+            metadata: draft?.metadata || result.metadata,
+            template: draft?.template || result.template,
+            pdfBase64: draft?.pdfBase64 || pdf?.pdfBase64 || "",
+          };
+        })
+        .filter((item): item is {
+          name: string;
+          sections: Record<string, string>;
+          sectionLabels: Record<string, string>;
+          metadata: { organization_name: string; project_title: string; category: string; date: string };
+          template: string;
+          pdfBase64: string;
+        } => Boolean(item && item.name));
+
+      const hasSubsystemOutputs = subsystemOutputs.length > 0;
+      const shouldSaveFull = fullSelected;
 
       // If this is from v6 (embedded mode), call the callback instead of saving to database
       if (contractId && onRfpGenerated) {
@@ -865,6 +1029,7 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated }: RfpC
           sectionLabels: result.sectionLabels,
           pdfBase64: pdfBase64 || "",
           metadata: result.metadata,
+          mandatoryCriteria,
         });
         setSaved(true);
         setMessages((prev) => [...prev, { role: "bot", text: "RFP generated! Returning to contract view..." }]);
@@ -874,41 +1039,62 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated }: RfpC
 
       // Otherwise, save to Supabase (standalone mode)
       const saves: Promise<any>[] = [];
-      
-      saves.push(
-        (supabase.from("contracts").insert({
-          ...commonFields,
-          title: subsystemPdfs.length > 0
-            ? `${result.metadata.project_title} — Full Combined`
-            : result.metadata.project_title,
-          description: Object.values(result.sections).find(Boolean)?.slice(0, 300) || result.metadata.project_title,
-          rfp_sections: result.sections,
-          rfp_section_labels: result.sectionLabels,
-          rfp_pdf_base64: pdfBase64 || "",
-          rfp_decomposition: hasSubsystems ? {
-            subsystems: decomposition!.subsystems,
-            inferredRequirements: decomposition!.inferredRequirements,
-            needsDecomposition: true,
-          } : null,
-        }).select()) as unknown as Promise<any>
-      );
+
+      if (shouldSaveFull) {
+        saves.push(
+          (supabase.from("contracts").insert({
+            ...commonFields,
+            title: result.metadata.project_title,
+            description: Object.values(result.sections).find(Boolean)?.slice(0, 300) || result.metadata.project_title,
+            rfp_sections: result.sections,
+            rfp_section_labels: result.sectionLabels,
+            rfp_pdf_base64: pdfBase64 || "",
+            rfp_decomposition: null,
+            last_analysis_result: {
+              ...result.qa,
+              mandatory_criteria: buildMandatoryCriteriaPayload(mandatoryCriteria.criteriaByTarget, ["full"], 0),
+            },
+            rfp_metadata: {
+              ...commonFields.rfp_metadata,
+              mandatory_criteria: buildMandatoryCriteriaPayload(mandatoryCriteria.criteriaByTarget, ["full"], 0),
+            },
+          }).select()) as unknown as Promise<any>
+        );
+      }
 
       // Save each subsystem as a separate contract too
-      if (hasSubsystems && subsystemPdfs.length > 0) {
-        for (const sub of subsystemPdfs) {
+      if (hasSubsystemOutputs) {
+        for (const sub of subsystemOutputs) {
+          const targetKey = mandatoryCriteria.targets.find((target) => normalizeName(target) === normalizeName(sub.name)) || sub.name;
+          const subsystemCriteriaPayload = buildMandatoryCriteriaPayload(
+            mandatoryCriteria.criteriaByTarget,
+            [targetKey],
+            0,
+          );
+
           saves.push(
             (supabase.from("contracts").insert({
               ...commonFields,
-              title: `${result.metadata.project_title} — ${sub.name}`,
+              title: `${sub.metadata.project_title} — ${sub.name}`,
               description: `Subsystem RFP for "${sub.name}" decomposed from ${result.metadata.project_title}`.slice(0, 300),
-              rfp_sections: result.sections,
-              rfp_section_labels: result.sectionLabels,
+              rfp_sections: sub.sections,
+              rfp_section_labels: sub.sectionLabels,
               rfp_pdf_base64: sub.pdfBase64 || "",
               rfp_decomposition: {
                 subsystems: decomposition!.subsystems,
                 inferredRequirements: decomposition!.inferredRequirements,
                 needsDecomposition: true,
                 subsystemName: sub.name,
+              },
+              rfp_metadata: {
+                ...commonFields.rfp_metadata,
+                ...sub.metadata,
+                mandatory_criteria: subsystemCriteriaPayload,
+              },
+              rfp_template: sub.template,
+              last_analysis_result: {
+                ...result.qa,
+                mandatory_criteria: subsystemCriteriaPayload,
               },
             }).select()) as unknown as Promise<any>
           );
@@ -918,11 +1104,13 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated }: RfpC
       await Promise.all(saves);
       setSaved(true);
 
-      if (subsystemPdfs.length > 0) {
-        const total = subsystemPdfs.length + 1;
-        setMessages((prev) => [...prev, { role: "bot", text: `All **${total} RFPs** saved to My Contracts (${subsystemPdfs.length} subsystem${subsystemPdfs.length > 1 ? "s" : ""} + 1 main)! Go to the **My Contracts** tab to manage them.` }]);
+      if (shouldSaveFull) {
+        setMessages((prev) => [...prev, { role: "bot", text: "Full RFP saved to My Contracts. Go to the **My Contracts** tab to approve and publish it." }]);
+      } else if (hasSubsystemOutputs) {
+        const total = subsystemOutputs.length;
+        setMessages((prev) => [...prev, { role: "bot", text: `All **${total} selected subsystem RFP${total > 1 ? "s" : ""}** saved to My Contracts. Go to the **My Contracts** tab to approve and publish.` }]);
       } else {
-        setMessages((prev) => [...prev, { role: "bot", text: "RFP saved to My Contracts! Go to the **My Contracts** tab to approve and publish it." }]);
+        setMessages((prev) => [...prev, { role: "bot", text: "No generated subsystem output found for the selected items, so nothing was saved." }]);
       }
       onSaved?.();
     } catch (err: unknown) {
@@ -953,11 +1141,12 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated }: RfpC
 
       {/* Stage progress */}
       <div style={{ padding: "12px 20px 0" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8, marginBottom: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8, marginBottom: 10 }}>
           {[
             { label: "1. Intake", active: wizardStep === 1, done: wizardStep > 1 },
             { label: "2. QA Review", active: wizardStep === 2, done: wizardStep > 2 },
-            { label: "3. Results", active: wizardStep === 3, done: false },
+            { label: "3. Results", active: wizardStep === 3, done: wizardStep > 3 },
+            { label: "4. Mandatory Criteria", active: wizardStep === 4, done: false },
           ].map((step) => (
             <div
               key={step.label}
@@ -1167,17 +1356,13 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated }: RfpC
 
             <div style={{ background: "var(--surface)", borderRadius: 16, padding: 16, border: "1px solid var(--card-border)", display: "grid", gap: 14 }}>
               <div style={{ background: "rgba(239,236,227,0.65)", borderRadius: 14, padding: 14, border: "1px solid var(--card-border)" }}>
-                <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.16em", color: "var(--muted)", marginBottom: 8 }}>
-                  File selector
-                </div>
-                <div style={{ fontSize: 13, color: "var(--foreground)", lineHeight: 1.6, marginBottom: 12 }}>
-                  Choose one generated file and use the same selector for download or edit.
-                </div>
+                <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.16em", color: "var(--muted)", marginBottom: 8 }}>File selector</div>
+                <div style={{ fontSize: 13, color: "var(--foreground)", lineHeight: 1.6, marginBottom: 12 }}>Choose one generated file and use the same selector for download or edit.</div>
                 <div style={{ display: "grid", gap: 10 }}>
                   <label style={{ display: "grid", gap: 4, fontSize: 12, color: "var(--muted)" }}>
                     Select file
-                    <select className="input-field" value={downloadTarget} onChange={(e) => {
-                      const nextTarget = e.target.value as TargetRfp;
+                    <select className="input-field" value={downloadTarget} onChange={(event) => {
+                      const nextTarget = event.target.value as TargetRfp;
                       setDownloadTarget(nextTarget);
                       setEditTarget(nextTarget);
                       try { window.localStorage.setItem(SELECTED_TARGET_KEY, nextTarget); } catch {}
@@ -1205,22 +1390,14 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated }: RfpC
                 <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zm-8 2V5h2v6h1.17L12 13.17 9.83 11H11zm-6 7h14v2H5v-2z"/></svg>
                 Download Markdown
               </button>
+
               {user && (
-                <button
-                  className={saved ? "btn-outline" : "btn-primary"}
-                  onClick={saveToMyContracts}
-                  disabled={saving || saved}
-                  style={{ gap: 6 }}
-                >
-                  {saving ? (
-                    <><div style={{ width: 14, height: 14, border: "2px solid rgba(239,236,227,0.3)", borderTop: "2px solid #EFECE3", borderRadius: "50%", animation: "spin 1s linear infinite" }} />Saving...</>
-                  ) : saved ? (
-                    <><svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>Saved to My Contracts</>
-                  ) : (
-                    <><svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/></svg>Save to My Contracts</>
-                  )}
+                <button className="btn-primary" onClick={() => setWizardStep(4)} disabled={saving} style={{ gap: 6 }}>
+                  <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                  Next
                 </button>
               )}
+
               <button
                 className="btn-ghost"
                 onClick={() => {
@@ -1236,6 +1413,14 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated }: RfpC
                   setQaSuggestionStates({});
                   setQaLoading(false);
                   setForcedQuestionKey(null);
+                  setMandatoryCriteria({
+                    loading: false,
+                    ready: false,
+                    targets: [],
+                    activeTargetIndex: 0,
+                    criteriaByTarget: {},
+                    error: null,
+                  });
                   setMessages([
                     { role: "bot", text: "Let's generate a new RFP. I will ask 19 questions one by one." },
                     { role: "bot", text: RFP_QUESTIONS[0].label },
@@ -1251,19 +1436,15 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated }: RfpC
               >
                 Start Over
               </button>
+
             </div>
 
-            {/* Section preview */}
             <details style={{ marginTop: 16 }}>
-              <summary style={{ cursor: "pointer", fontWeight: 600, fontSize: 14, color: "var(--primary)" }}>
-                Preview Sections ({Object.keys(result.sections).length})
-              </summary>
+              <summary style={{ cursor: "pointer", fontWeight: 600, fontSize: 14, color: "var(--primary)" }}>Preview Sections ({Object.keys(result.sections).length})</summary>
               <div style={{ marginTop: 8, maxHeight: 300, overflowY: "auto" }}>
                 {Object.entries(result.sections).map(([key, val]) => (
                   <div key={key} style={{ marginBottom: 12, padding: "8px 12px", background: "var(--surface)", borderRadius: 8, fontSize: 13 }}>
-                    <div style={{ fontWeight: 600, marginBottom: 4, color: "var(--primary)" }}>
-                      {result.sectionLabels[key] || key}
-                    </div>
+                    <div style={{ fontWeight: 600, marginBottom: 4, color: "var(--primary)" }}>{result.sectionLabels[key] || key}</div>
                     <div style={{ whiteSpace: "pre-wrap", color: "var(--muted)", maxHeight: 100, overflow: "hidden" }}>
                       {val.slice(0, 300)}{val.length > 300 ? "..." : ""}
                     </div>
@@ -1271,6 +1452,28 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated }: RfpC
                 ))}
               </div>
             </details>
+          </div>
+        )}
+
+        {wizardStep === 4 && result && (
+          <div style={{ padding: "0 20px 20px" }}>
+            <div className="animate-fadeIn" style={{ marginTop: 12 }}>
+              <MandatoryCriteriaPhase
+                title="4. Mandatory Criteria"
+                subtitle="The AI-preloaded thresholds are ready. Adjust the sliders, add or remove criteria for the current subsystem, and move through the selected subsystems in order before saving all of them together."
+                targets={mandatoryCriteria.targets.length > 0 ? mandatoryCriteria.targets : mandatoryTargets}
+                activeTargetIndex={mandatoryCriteria.activeTargetIndex}
+                criteriaByTarget={mandatoryCriteria.criteriaByTarget}
+                loading={mandatoryCriteria.loading}
+                ready={(mandatoryCriteria.targets.length > 0 ? mandatoryCriteria.targets : mandatoryTargets).length > 0 && !mandatoryCriteria.loading}
+                onBack={handleMandatoryCriteriaBack}
+                onNext={handleMandatoryCriteriaNext}
+                onSaveAll={saveToMyContracts}
+                onAddCriterion={addMandatoryCriterion}
+                onRemoveCriterion={removeMandatoryCriterion}
+                onUpdateCriterion={updateMandatoryCriterion}
+              />
+            </div>
           </div>
         )}
 

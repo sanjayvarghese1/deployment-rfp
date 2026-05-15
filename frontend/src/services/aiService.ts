@@ -1,5 +1,6 @@
 import { supabase } from "@/services/supabase";
 import { apiUrl } from "@/lib/api";
+import type { MandatoryCriteriaPayload } from "@/lib/rfp/config";
 
 const AI_API_BASE_PATH = "/api/ai";
 const AI_API_BASE = apiUrl(AI_API_BASE_PATH);
@@ -33,6 +34,7 @@ export interface ProposalInput {
   vendor_timeline: string;
   vendor_experience: string;
   proposal_data?: string;
+  mandatoryCriteria?: MandatoryCriteriaPayload;
 }
 
 export async function generateRFP(input: RFPInput): Promise<string> {
