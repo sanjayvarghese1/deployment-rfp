@@ -13,14 +13,14 @@ function RfpIntakeRouteContent() {
   const { user } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const mode = searchParams.get("mode");
-  const tab = searchParams.get("tab");
+  const mode = searchParams?.get("mode");
+  const tab = searchParams?.get("tab");
   const [mainTab, setMainTab] = useState<"generate" | "blank" | "responses">(
     tab === "blank" || tab === "responses" ? tab : "generate"
   );
 
   useEffect(() => {
-    const urlTab = searchParams.get("tab");
+    const urlTab = searchParams?.get("tab");
     if (urlTab === "blank" || urlTab === "responses" || urlTab === "generate") {
       setMainTab(urlTab);
     }

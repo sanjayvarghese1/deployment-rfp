@@ -53,10 +53,10 @@ function formatAnalysisTimeline(analysis: ProposalAnalysis | null, proposal: any
 }
 
 export default function VendorReportPage() {
-  const params = useParams();
+  const params = useParams<{ id?: string; proposalId?: string }>();
   const router = useRouter();
-  const contractId = String(params.id || "");
-  const proposalId = String(params.proposalId || "");
+  const contractId = String(params?.id || "");
+  const proposalId = String(params?.proposalId || "");
 
   const [loading, setLoading] = useState(true);
   const [contract, setContract] = useState<any>(null);
