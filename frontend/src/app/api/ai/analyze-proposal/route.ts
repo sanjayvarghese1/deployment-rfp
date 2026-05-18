@@ -2,9 +2,424 @@ import { NextRequest, NextResponse } from "next/server";
 import { openRouterChat, openRouterChatJSON, AGENT_MODEL } from "@/lib/openrouter";
 import { langfuse } from "@/config/langfuse";
 import { saveProposalAnalysisResult } from "@/services/aiService";
-import type { ProposalAnalysis, JudgeResult } from "@/services/aiService";
+import type { MandatoryCriteriaPayload } from "@/lib/rfp/config";
+import type { AnalysisScoringCriterion, CriterionScore, JudgeResult, ProposalAnalysis } from "@/services/aiService";
 
 export const maxDuration = 240; // Conservative limit for Vercel Hobby (max 300)
+
+type ScoringCriterion = {
+  id: string;
+  label: string;
+  max_score: number;
+};
+
+type OpenRouterCriterionResponse = {
+  score?: number;
+  reason?: string;
+  evidence?: string;
+  support_level?: "explicit" | "partial" | "inferred" | string;
+  confidence?: number;
+};
+
+type ScoringStrictness = "strict" | "balanced" | "lenient";
+
+const LEGACY_SCORING_CRITERIA: ScoringCriterion[] = [
+  { id: "technical_fit", label: "Technical fit", max_score: 30 },
+  { id: "cost_efficiency", label: "Cost efficiency", max_score: 20 },
+  { id: "relevant_experience", label: "Relevant experience", max_score: 20 },
+  { id: "timeline_fit", label: "Timeline fit", max_score: 15 },
+  { id: "compliance_completeness", label: "Compliance completeness", max_score: 15 },
+];
+
+function clampScore(value: unknown, maxScore: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.min(maxScore, Math.round(parsed)));
+}
+
+function normalizeCriterionLabel(label: string): string {
+  return label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+function normalizeRubric(mandatoryCriteria?: MandatoryCriteriaPayload | null): ScoringCriterion[] {
+  const payload = mandatoryCriteria || null;
+  const sourceCriteria = Array.isArray(payload?.fullRfp) && payload.fullRfp.length > 0
+    ? payload.fullRfp
+    : (() => {
+        const subsystemEntries = Object.entries(payload?.subsystems || {});
+        if (subsystemEntries.length > 0) {
+          return subsystemEntries[0]?.[1] || [];
+        }
+        return [];
+      })();
+
+  const mapped = sourceCriteria
+    .filter((item) => Number(item?.value) > 0)
+    .map((item, index) => {
+      const label = String(item.label || `Criterion ${index + 1}`);
+      return {
+        id: normalizeCriterionLabel(item.id || label || `criterion_${index + 1}`),
+        label,
+        max_score: Math.max(1, Math.round(Number(item.value ?? item.recommendedValue ?? 0))),
+      };
+    })
+    .filter((item) => item.max_score > 0);
+
+  if (mapped.length === 0) {
+    return LEGACY_SCORING_CRITERIA;
+  }
+
+  const total = mapped.reduce((sum, item) => sum + item.max_score, 0);
+  if (total === 100) return mapped;
+
+  const factor = 100 / total;
+  const scaled = mapped.map((item) => ({
+    ...item,
+    max_score: Math.max(1, Math.round(item.max_score * factor)),
+  }));
+  const adjustedTotal = scaled.reduce((sum, item) => sum + item.max_score, 0);
+  const drift = 100 - adjustedTotal;
+  if (drift !== 0 && scaled.length > 0) {
+    scaled[scaled.length - 1] = {
+      ...scaled[scaled.length - 1],
+      max_score: Math.max(1, scaled[scaled.length - 1].max_score + drift),
+    };
+  }
+  return scaled;
+}
+
+function isContentRich(text: string): boolean {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  return normalized.length > 120;
+}
+
+function getScoringStrictness(): ScoringStrictness {
+  const raw = String(process.env.ANALYSIS_SCORING_STRICTNESS || "balanced").trim().toLowerCase();
+  if (raw === "strict") return "strict";
+  if (raw === "lenient") return "lenient";
+  return "balanced";
+}
+
+function getFullScoreConfidenceThreshold(): number {
+  const raw = Number(process.env.ANALYSIS_FULL_SCORE_CONFIDENCE ?? 0.9);
+  if (!Number.isFinite(raw)) return 0.9;
+  return Math.max(0, Math.min(1, raw));
+}
+
+function heuristicStrengthCap(strictness: ScoringStrictness): number {
+  // Slightly tightened caps to reduce chance of heuristics approaching full marks
+  if (strictness === "strict") return 0.38;
+  if (strictness === "lenient") return 0.58;
+  return 0.48;
+}
+
+function buildCriterionHints(label: string): string[] {
+  const normalized = normalizeCriterionLabel(label);
+
+  if (normalized.includes("explain") || normalized.includes("audit") || normalized.includes("trace")) {
+    return ["logs", "audit trail", "traceability", "reasoning visibility", "explainability", "decision records"];
+  }
+
+  if (normalized.includes("fine_tun") || normalized.includes("customiz") || normalized.includes("domain")) {
+    return ["fine-tuning", "customization", "model adaptation", "domain-specific training", "prompt tuning", "configuration"];
+  }
+
+  if (normalized.includes("real_time") || normalized.includes("sync")) {
+    return ["real time", "real-time", "master data", "data sync", "data synchronization", "synchronization", "replication", "change data capture", "integration", "message queue", "retry logic", "reconciliation"];
+  }
+
+  if (normalized.includes("cycle_time") || normalized.includes("timeline") || normalized.includes("delivery") || normalized.includes("speed")) {
+    return ["timeline", "delivery speed", "implementation schedule", "turnaround", "deployment pace", "time to value"];
+  }
+
+  if (normalized.includes("sap") || normalized.includes("oracle") || normalized.includes("compatibility") || normalized.includes("erp")) {
+    return ["sap", "sap ecc", "oracle", "oracle erp", "erp compatibility", "system compatibility", "integration gateway"];
+  }
+
+  if (normalized.includes("zero_data_loss") || normalized.includes("loss") || normalized.includes("failure")) {
+    return ["zero data loss", "no data loss", "retry logic", "queue", "reconciliation", "checkpoint", "transaction log", "rollback", "idempotent"];
+  }
+
+  if (normalized.includes("technical") || normalized.includes("platform")) {
+    return ["architecture", "integration", "security", "deployment", "scalability", "compatibility"];
+  }
+
+  if (normalized.includes("compliance") || normalized.includes("governance")) {
+    return ["policies", "controls", "standards", "approvals", "governance", "compliance"];
+  }
+
+  return [];
+}
+
+function buildHeuristicScore(input: {
+  criterion: ScoringCriterion;
+  vendorText: string;
+  vendorMarkdown: string;
+  strictness?: ScoringStrictness;
+}): CriterionScore {
+  const genericStopTokens = new Set([
+    "vendor",
+    "vendors",
+    "name",
+    "proposal",
+    "proposals",
+    "proposed",
+    "price",
+    "timeline",
+    "experience",
+    "feature",
+    "features",
+    "workflow",
+    "hub",
+    "days",
+    "day",
+  ]);
+
+  const haystack = `${input.vendorText}\n${input.vendorMarkdown}`.toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+  const rawHints = buildCriterionHints(input.criterion.label).map((hint) => hint.toLowerCase());
+  const labelTokens = normalizeCriterionLabel(input.criterion.label)
+    .split("_")
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 5 && !["real", "time", "data", "master", "sync", "erp", "api"].includes(token))
+    .filter((token) => !genericStopTokens.has(token));
+
+  const candidates = [...new Set([...rawHints, ...labelTokens])]
+    .map((hint) => hint.replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim())
+    .filter((hint) => {
+      if (!hint) return false;
+      if (genericStopTokens.has(hint)) return false;
+      if (!hint.includes(" ") && hint.length < 5) return false;
+      return true;
+    })
+    .map((hint) => ({
+    hint: hint.replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim(),
+    phraseWeight: hint.includes(" ") ? 1.2 : 0.4,
+  }));
+
+  const matched = candidates.filter((candidate) => candidate.hint && haystack.includes(candidate.hint));
+  const vendorTextNormalized = (input.vendorText || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+  const matchedInText = candidates.filter((candidate) => candidate.hint && vendorTextNormalized.includes(candidate.hint));
+
+  if (matched.length === 0) {
+    return {
+      score: 0,
+      reason: `No heuristic evidence found for ${input.criterion.label}.`,
+      evidence: "",
+      support_level: "inferred",
+      confidence: 0,
+    } as unknown as CriterionScore;
+  }
+
+  const strongMatches = matched.filter((candidate) => candidate.phraseWeight >= 1.0);
+  // Require at least one strong multi-word phrase present in the raw vendor text,
+  // or at least two candidate matches explicitly present in the vendor text.
+  if (strongMatches.length > 0) {
+    const strongInText = strongMatches.filter((c) => vendorTextNormalized.includes(c.hint));
+    if (strongInText.length === 0) {
+      // strong phrase matched only in markdown/extracted text, not raw vendor text -> ignore
+      return {
+        score: 0,
+        reason: `Heuristic phrase found but not present in submitted vendor text; scoring requires phrase evidence in vendor text.`,
+        evidence: matchedInText.slice(0, 3).map((item) => item.hint).join(", "),
+      };
+    }
+  } else {
+    // No strong multi-word matches: allow a single candidate match in raw vendor text (relaxed)
+    if (matchedInText.length < 1) {
+      return {
+        score: 0,
+        reason: `Heuristic evidence was insufficient in vendor text for ${input.criterion.label}.`,
+        evidence: matchedInText.slice(0, 3).map((item) => item.hint).join(", "),
+      };
+    }
+  }
+
+  const rawStrength = matchedInText.reduce((sum, candidate) => sum + candidate.phraseWeight, 0);
+  const strengthCap = heuristicStrengthCap(input.strictness || "balanced");
+  const score = Math.max(1, Math.min(input.criterion.max_score, Math.round(input.criterion.max_score * Math.min(strengthCap, 0.08 * rawStrength))));
+  const confidence = Math.max(0.45, Math.min(0.75, 0.4 + 0.05 * rawStrength));
+  const support_level = "partial";
+
+  return {
+    score,
+    reason: `Heuristic evidence found for ${input.criterion.label}: ${matchedInText.slice(0, 3).map((item) => item.hint).join(", ")}.`,
+    evidence: matchedInText.slice(0, 3).map((item) => item.hint).join(", "),
+    support_level,
+    confidence,
+  } as unknown as CriterionScore;
+}
+
+function buildCriterionEvidencePrompt(input: {
+  criterion: ScoringCriterion;
+  rfpMarkdown: string;
+  vendorMarkdown: string;
+  vendorText: string;
+  retry?: boolean;
+  lenient?: boolean;
+  strictness?: ScoringStrictness;
+}): string {
+  const { criterion, rfpMarkdown, vendorMarkdown, vendorText, retry } = input;
+  const hints = buildCriterionHints(criterion.label);
+  const strictnessNote = input.strictness === "strict"
+    ? "- STRICT MODE: award points only when evidence is specific and clearly grounded in the vendor text."
+    : input.strictness === "lenient"
+      ? "- LENIENT MODE: when capability is reasonably implied by concrete context, award partial credit instead of defaulting to zero."
+      : "- BALANCED MODE: prioritize explicit evidence, but award partial credit for credible indirect evidence.";
+  return `You are Agent 2: The Scorer.
+Score exactly ONE criterion for one vendor proposal using evidence from the provided text.
+
+CRITERION
+${criterion.label}
+Maximum score: ${criterion.max_score}
+
+SCORING RULES
+- Inspect the vendor proposal and the RFP carefully.
+- Use 0 only if there is genuinely no evidence for this criterion.
+- If there is partial evidence, assign a partial score above 0.
+- Do not skip the criterion because another one is weak.
+- Do not return 0 just because the wording is indirect.
+- Match concepts semantically. Do not require the exact criterion label to appear in the proposal.
+- If the proposal uses related language, synonyms, or functional equivalents, treat that as evidence.
+- If you see any relevant partial match, give a non-zero score rather than collapsing to zero.
+- Quote the clearest evidence you used.
+- Keep the reason short and factual.
+${strictnessNote}
+${retry ? "- This is a retry because the first pass came back with an all-zero result. Re-read the text and be less conservative if evidence is present." : ""}
+
+${input.lenient ? "- LENIENT MODE: Be more permissive when evidence is indirect or implied. If the vendor's submission suggests capability or intent, award reasonable partial credit and explain the inference clearly. Avoid inventing facts, but allow inferred evidence from contextual cues." : ""}
+
+RELATED HINTS
+${hints.length > 0 ? hints.map((hint) => `- ${hint}`).join("\n") : "- No extra hints"}
+
+OUTPUT JSON ONLY IN THIS SHAPE:
+{
+  "score": <number>,
+  "reason": "<short reason>",
+  "evidence": "<exact or near-exact supporting evidence or empty string if none>",
+  "support_level": "<explicit|partial|inferred>",
+  "confidence": <number between 0 and 1>
+}
+
+RFP EXTRACT:
+${rfpMarkdown}
+
+VENDOR EXTRACT:
+${vendorMarkdown}
+
+RAW VENDOR TEXT:
+${vendorText}`;
+}
+
+async function scoreCriterion(input: {
+  criterion: ScoringCriterion;
+  rfpMarkdown: string;
+  vendorMarkdown: string;
+  vendorText: string;
+  retry?: boolean;
+  lenient?: boolean;
+  strictness?: ScoringStrictness;
+}): Promise<CriterionScore> {
+  const prompt = buildCriterionEvidencePrompt(input);
+  const temperature = input.lenient
+    ? 0.4
+    : input.strictness === "lenient"
+      ? 0.25
+      : 0;
+  const response = (await openRouterChatJSON({
+    model: AGENT_MODEL.QUALITY_ASSURANCE,
+    messages: [
+      { role: "system", content: "You are a JSON-only API. Return raw JSON only with score, reason, and evidence. Do not add markdown or commentary." },
+      { role: "user", content: prompt },
+    ],
+    max_tokens: 1200,
+    temperature,
+  })) as OpenRouterCriterionResponse;
+
+  let score = clampScore(response.score, input.criterion.max_score);
+  const reason = String(response.reason || "").trim().slice(0, 220);
+  const evidence = String(response.evidence || "").trim().slice(0, 500);
+  const supportLevelRaw = String(response.support_level || "").trim().toLowerCase();
+  const supportLevel = supportLevelRaw === "explicit" || supportLevelRaw === "partial" || supportLevelRaw === "inferred"
+    ? supportLevelRaw
+    : (evidence ? "partial" : "inferred");
+  const confidence = Number.isFinite(Number(response.confidence))
+    ? Math.max(0, Math.min(1, Number(response.confidence)))
+    : (supportLevel === "explicit" ? 0.85 : supportLevel === "partial" ? 0.7 : 0.55);
+
+  // Calibration guardrails:
+  // - inferred evidence cannot receive near-perfect points
+  // - partial evidence can score high but not perfect
+  // - explicit evidence can reach full marks only with strong confidence
+  // Stricter caps: inferred evidence cannot score above 60% of max, partial above 85%.
+  const inferredCap = Math.max(1, Math.floor(input.criterion.max_score * 0.6));
+  const partialCap = Math.max(1, Math.floor(input.criterion.max_score * 0.85));
+
+  if (supportLevel === "inferred") {
+    score = Math.min(score, inferredCap);
+  } else if (supportLevel === "partial") {
+    score = Math.min(score, partialCap);
+  }
+
+  // If confidence is low, softly dampen the score regardless of support level.
+  if (confidence < 0.6 && score > 0) {
+    const dampened = Math.round(score * (0.8 + confidence * 0.25));
+    score = Math.max(1, Math.min(score, dampened));
+  }
+
+  // Full marks require explicit support and a configurable high confidence threshold.
+  const fullScoreThreshold = getFullScoreConfidenceThreshold();
+  if (score === input.criterion.max_score && !(supportLevel === "explicit" && confidence >= fullScoreThreshold)) {
+    score = Math.max(1, input.criterion.max_score - 1);
+  }
+
+  // Additional validation: when a max score was awarded, ensure the evidence
+  // appears in the vendor text and that the RFP contains related hint tokens.
+  // This reduces false full-marks where the LLM invents or misaligns evidence.
+  if (score === input.criterion.max_score) {
+    try {
+      const evidenceLower = (evidence || "").toLowerCase();
+      const vendorLower = String(input.vendorMarkdown || input.vendorText || "").toLowerCase();
+      const rfpLower = String(input.rfpMarkdown || "").toLowerCase();
+      const hints = buildCriterionHints(input.criterion.label).map((h) => h.toLowerCase());
+      const labelTokens = normalizeCriterionLabel(input.criterion.label).split("_").filter(Boolean);
+      const candidates = [...new Set([...hints, ...labelTokens])];
+
+      const evidenceInVendor = evidenceLower.length >= 5 && vendorLower.includes(evidenceLower);
+      const hintOverlap = candidates.some((tok) => tok && rfpLower.includes(tok) && (vendorLower.includes(tok) || (evidenceLower && evidenceLower.includes(tok))));
+
+      if (!(evidenceInVendor && hintOverlap)) {
+        // Demote full mark if evidence doesn't align with both RFP and vendor text
+        score = Math.max(1, input.criterion.max_score - 1);
+      }
+    } catch (err) {
+      // ignore validation failures - keep prior guarded score
+    }
+  }
+
+  return {
+    score,
+    reason: reason || (score > 0 ? `Evidence found for ${input.criterion.label}.` : `No evidence found for ${input.criterion.label}.`),
+    evidence,
+    support_level: supportLevel,
+    confidence,
+  } as unknown as CriterionScore;
+}
+
+function criteriaToMandatoryCriteria(criteria: ScoringCriterion[]): MandatoryCriteriaPayload {
+  return {
+    fullRfp: criteria.map((criterion, index) => ({
+      id: criterion.id || `criterion_${index + 1}`,
+      label: criterion.label,
+      value: criterion.max_score,
+      recommendedValue: criterion.max_score,
+      source: "user",
+    })),
+    subsystems: {},
+    selectedSubsystems: ["full"],
+    activeSubsystemIndex: 0,
+    completedSubsystems: [],
+  };
+}
 
 /* ═══════════════════════════════════════════════════════════════════
    Agent 1 — Extractor
@@ -97,137 +512,211 @@ ${text}`;
    Agent 2 — Scorer
    Scores ONE vendor proposal against ONE RFP using weighted criteria.
    ═══════════════════════════════════════════════════════════════════ */
-async function runScorer(rfpMarkdown: string, vendorMarkdown: string, vendorName: string): Promise<ProposalAnalysis> {
-  const prompt = `You are Agent 2: The Scorer.
-Your task is to evaluate ONE vendor proposal against ONE RFP.
-You must score the vendor independently against the contract requirements using these weighted criteria:
-- Technical Fit: 30%
-- Cost Efficiency: 20%
-- Relevant Experience: 20%
-- Timeline Fit: 15%
-- Compliance & Completeness: 15%
+async function runScorer(
+  rfpMarkdown: string,
+  vendorMarkdown: string,
+  vendorName: string,
+  vendorText: string,
+  mandatoryCriteria?: MandatoryCriteriaPayload,
+  options?: { llmOnly?: boolean },
+): Promise<ProposalAnalysis> {
+  const scoringCriteria = normalizeRubric(mandatoryCriteria);
+  const strictness = getScoringStrictness();
+  const criterionScores: AnalysisScoringCriterion[] = [];
 
-SCORING DEFINITIONS
-
-1. Technical Fit (30%)
-Does the vendor proposal match the contract scope, requirements, technical expectations, and deliverables?
-Reward direct relevance, specificity, feasibility, and solution suitability.
-Do not reward verbosity alone.
-
-2. Cost Efficiency (20%)
-Is the proposed price reasonable relative to the contract budget and the value offered?
-Cheaper does NOT automatically mean better if the proposal is weak or risky.
-
-3. Relevant Experience (20%)
-Does the vendor show relevant prior work for this exact type of contract?
-Prefer directly relevant project experience over generic experience.
-
-4. Timeline Fit (15%)
-Is the proposed timeline realistic and aligned with the contract needs?
-Missing or vague timelines should reduce the score.
-
-5. Compliance & Completeness (15%)
-Is the proposal structured, complete, procurement-ready, and aligned with mandatory requirements?
-Check for scope clarity, deliverables, assumptions, support, risks, constraints, and completeness.
-
-INPUTS
-
-RFP EXTRACT:
-${rfpMarkdown}
-
-VENDOR EXTRACT:
-${vendorMarkdown}
-
-INSTRUCTIONS
-- First compare the vendor proposal against the RFP requirements.
-- Score each criterion from 0 to 100.
-- Then compute:
-overall_score = (technical_fit * 0.30) + (cost_efficiency * 0.20) + (relevant_experience * 0.20) + (timeline_fit * 0.15) + (compliance_completeness * 0.15)
-
-RECOMMENDATION SCALE
-- 85-100: Strongly Recommended
-- 70-84: Recommended
-- 55-69: Consider
-- 40-54: Risky
-- Below 40: Not Recommended
-
-RISK RULES
-Flag risks such as:
-- price materially above budget
-- weak technical alignment
-- vague or missing timeline
-- insufficient relevant experience
-- incomplete proposal
-- missing compliance information
-- unclear deliverables or assumptions
-
-AUDIT REQUIREMENT
-You may reason internally in detail, but the final output must be strict JSON only.
-Keep each "reason" field to 1 sentence (under 30 words). Keep strengths/weaknesses/risk_flags to short phrases.
-
-RETURN STRICT JSON:
-{
-  "vendor_name": "${vendorName}",
-  "overall_score": <number>,
-  "independent_recommendation": "<Strongly Recommended|Recommended|Consider|Risky|Not Recommended>",
-  "criterion_scores": {
-    "technical_fit": { "score": <number>, "reason": "<string>" },
-    "cost_efficiency": { "score": <number>, "reason": "<string>" },
-    "relevant_experience": { "score": <number>, "reason": "<string>" },
-    "timeline_fit": { "score": <number>, "reason": "<string>" },
-    "compliance_completeness": { "score": <number>, "reason": "<string>" }
-  },
-  "strengths": ["<string>"],
-  "weaknesses": ["<string>"],
-  "risk_flags": ["<string>"],
-  "analysis_summary": "<string>"
-}`;
-
-  try {
-    return await openRouterChatJSON({
-      model: AGENT_MODEL.REQUIREMENT_EXTRACTION,
-      messages: [
-        { role: "system", content: "You are a JSON-only API. You MUST respond with raw valid JSON only. No explanations, no markdown, no text before or after the JSON object. Keep all string values concise (under 30 words each)." },
-        { role: "user", content: prompt },
-      ],
-      max_tokens: 6000,
-      temperature: 0,
+  for (const criterion of scoringCriteria) {
+    const scored = await scoreCriterion({
+      criterion,
+      rfpMarkdown,
+      vendorMarkdown,
+      vendorText,
+      strictness,
     });
-  } catch (err) {
-    // If the model returned non-JSON, attempt a JSON-fix pass: ask the model to convert its previous output into the required JSON.
-    const rawErrMsg = err instanceof Error ? err.message : String(err);
-    console.warn(`Scorer JSON parse failed for ${vendorName}:`, rawErrMsg.slice(0, 200));
+    criterionScores.push({
+      id: criterion.id,
+      label: criterion.label,
+      max_score: criterion.max_score,
+      score: scored.score,
+      reason: scored.reason,
+      evidence: scored.evidence,
+      support_level: (scored as any).support_level,
+      confidence: (scored as any).confidence,
+    });
+  }
 
-    try {
-      // Get the raw textual response from the model (best-effort)
-      const raw = await openRouterChat({
-        model: AGENT_MODEL.REQUIREMENT_EXTRACTION,
-        messages: [
-          { role: "system", content: "You are an analysis assistant. Provide the full raw analysis output." },
-          { role: "user", content: prompt },
-        ],
-        max_tokens: 6000,
-        temperature: 0,
+  const initialTotal = criterionScores.reduce((sum, item) => sum + item.score, 0);
+  const vendorHasContent = isContentRich(vendorText) || isContentRich(vendorMarkdown);
+
+  // Per-criterion rescue: when LLM gives 0 but there is direct text evidence,
+  // use a bounded heuristic score instead of forcing a full all-zero fallback pass.
+  if (!options?.llmOnly && vendorHasContent) {
+    for (let i = 0; i < scoringCriteria.length; i++) {
+      const current = criterionScores[i];
+      if (!current || current.score > 0) continue;
+      const criterion = scoringCriteria[i];
+      const heuristic = buildHeuristicScore({
+        criterion,
+        vendorText,
+        vendorMarkdown,
+        strictness,
       });
-
-      // Re-prompt a JSON fixer: convert the raw analysis into strict JSON matching the schema.
-      const fixerPrompt = `You are a JSON fixer. Convert the following analysis output into strict JSON matching this schema:\n${JSON.stringify({ vendor_name: "", overall_score: 0, independent_recommendation: "", criterion_scores: { technical_fit: { score: 0, reason: "" }, cost_efficiency: { score: 0, reason: "" }, relevant_experience: { score: 0, reason: "" }, timeline_fit: { score: 0, reason: "" }, compliance_completeness: { score: 0, reason: "" } }, strengths: [], weaknesses: [], risk_flags: [], analysis_summary: "" }, null, 2)}\n\nHere is the raw analysis:\n\n${raw}`;
-
-      return await openRouterChatJSON({
-        model: AGENT_MODEL.REQUIREMENT_EXTRACTION,
-        messages: [
-          { role: "system", content: "You are a JSON-only API. Extract valid JSON only, no surrounding text." },
-          { role: "user", content: fixerPrompt },
-        ],
-        max_tokens: 6000,
-        temperature: 0,
-      });
-    } catch (fixErr) {
-      console.error(`Scorer JSON fixer failed for ${vendorName}:`, fixErr instanceof Error ? fixErr.message : String(fixErr));
-      // rethrow original error to be handled by caller
-      throw err;
+      if (heuristic.score > 0) {
+        criterionScores[i] = {
+          ...current,
+          score: heuristic.score,
+          reason: `${current.reason} Heuristic assist: ${heuristic.reason}`.slice(0, 220),
+          evidence: heuristic.evidence || current.evidence,
+          support_level: (heuristic as any).support_level || (current as any).support_level,
+          confidence: (heuristic as any).confidence || (current as any).confidence,
+        };
+      }
     }
   }
+
+  if (vendorHasContent && initialTotal === 0) {
+    criterionScores.length = 0;
+    for (const criterion of scoringCriteria) {
+      const scored = await scoreCriterion({
+        criterion,
+        rfpMarkdown,
+        vendorMarkdown,
+        vendorText,
+        retry: true,
+        strictness,
+      });
+      criterionScores.push({
+        id: criterion.id,
+        label: criterion.label,
+        max_score: criterion.max_score,
+        score: scored.score,
+        reason: scored.reason,
+        evidence: scored.evidence,
+        support_level: (scored as any).support_level,
+        confidence: (scored as any).confidence,
+      });
+    }
+  }
+
+  // Only run heuristic fallback when not explicitly requested to use LLM-only scoring
+  if (!options?.llmOnly && vendorHasContent && criterionScores.every((item) => item.score === 0)) {
+    criterionScores.length = 0;
+    for (const criterion of scoringCriteria) {
+      const scored = buildHeuristicScore({
+        criterion,
+        vendorText,
+        vendorMarkdown,
+        strictness,
+      });
+      criterionScores.push({
+        id: criterion.id,
+        label: criterion.label,
+        max_score: criterion.max_score,
+        score: scored.score,
+        reason: scored.reason,
+        evidence: scored.evidence,
+        support_level: (scored as any).support_level,
+        confidence: (scored as any).confidence,
+      });
+    }
+  }
+  // If heuristics produced no evidence (all-zero) and LLM-only was not requested, fall back to the LLM scorer
+  if (!options?.llmOnly && vendorHasContent && criterionScores.every((item) => item.score === 0)) {
+    criterionScores.length = 0;
+    for (const criterion of scoringCriteria) {
+      const scored = await scoreCriterion({
+        criterion,
+        rfpMarkdown,
+        vendorMarkdown,
+        vendorText,
+        retry: true,
+        lenient: true,
+        strictness,
+      });
+      criterionScores.push({
+        id: criterion.id,
+        label: criterion.label,
+        max_score: criterion.max_score,
+        score: scored.score,
+        reason: scored.reason,
+        evidence: scored.evidence,
+        support_level: (scored as any).support_level,
+        confidence: (scored as any).confidence,
+      });
+    }
+  }
+
+  // If the caller explicitly requested LLM-only scoring, run a lenient LLM pass to score all criteria
+  if (options?.llmOnly && vendorHasContent) {
+    criterionScores.length = 0;
+    for (const criterion of scoringCriteria) {
+      const scored = await scoreCriterion({
+        criterion,
+        rfpMarkdown,
+        vendorMarkdown,
+        vendorText,
+        retry: true,
+        lenient: true,
+        strictness,
+      });
+      criterionScores.push({
+        id: criterion.id,
+        label: criterion.label,
+        max_score: criterion.max_score,
+        score: scored.score,
+        reason: scored.reason,
+        evidence: scored.evidence,
+        support_level: (scored as any).support_level,
+        confidence: (scored as any).confidence,
+      });
+    }
+  }
+
+  const overall_score = criterionScores.reduce((sum, item) => sum + item.score, 0);
+  const criterion_scores = Object.fromEntries(criterionScores.map((criterion) => [criterion.id, {
+    score: criterion.score,
+    reason: criterion.reason,
+    evidence: criterion.evidence,
+    max_score: criterion.max_score,
+  }]));
+  // Build weaknesses (include low scoring and non-explicit evidence as weaknesses)
+  const weaknessThresholdFactor = 0.4; // criteria scoring below 40% of max considered weaknesses
+  const weaknesses = criterionScores
+    .filter((item) => (
+      item.score === 0 ||
+      item.score < Math.ceil(item.max_score * weaknessThresholdFactor) ||
+      ((item as any).support_level || "") !== "explicit" && item.score < item.max_score
+    ))
+    .map((item) => `${item.label}: ${item.reason || "Insufficient or indirect evidence"}`).slice(0, 5);
+
+  // Risk flags for inferred evidence or low confidence
+  const risk_flags = criterionScores
+    .filter((item) => ((item as any).support_level === "inferred") || ((item as any).confidence !== undefined && (item as any).confidence < 0.6) || item.score === 0)
+    .map((item) => {
+      if (item.score === 0) return `${item.label} missing`;
+      if ((item as any).support_level === "inferred") return `${item.label} inferred evidence`;
+      if ((item as any).confidence !== undefined && (item as any).confidence < 0.6) return `${item.label} low confidence`;
+      return `${item.label} review recommended`;
+    }).slice(0, 5);
+
+  return {
+    vendor_name: vendorName,
+    overall_score,
+    independent_recommendation:
+      overall_score >= 85 ? "Strongly Recommended"
+        : overall_score >= 70 ? "Recommended"
+        : overall_score >= 55 ? "Consider"
+        : overall_score >= 40 ? "Risky"
+        : "Not Recommended",
+    criterion_scores,
+    scoring_criteria: criterionScores,
+    mandatory_criteria: criteriaToMandatoryCriteria(scoringCriteria),
+    strengths: criterionScores.filter((item) => item.score > 0).map((item) => `${item.label}: ${item.reason}`).slice(0, 5),
+    weaknesses,
+    risk_flags,
+    analysis_summary: overall_score === 0
+      ? "The proposal did not contain enough evidence to score any criterion."
+      : `Weighted score based on ${criterionScores.length} criteria and vendor evidence. ${weaknesses.length} identified weaknesses.`,
+  };
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -432,6 +921,66 @@ function buildVendorText(input: {
   }
 }
 
+// ─ Weak-text detection: identify storage pointers and insufficient content ─
+function isWeakProposalText(text: string | null | undefined): boolean {
+  const normalized = String(text || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return true;
+
+  // Check for JSON storage pointers (not real proposal content)
+  if (normalized.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(normalized) as Record<string, unknown>;
+      const storagePath = String(parsed.storagePath || parsed.storage_path || "").trim();
+      const source = String(parsed.source || "").trim();
+      const sections = parsed.sections as Record<string, unknown> | undefined;
+      const sectionTextLength = sections
+        ? Object.values(sections).reduce((sum: number, value) => sum + String(value || "").trim().length, 0 as number)
+        : 0;
+
+      // JSON that only points to a file location is not evaluable proposal content.
+      if (storagePath && sectionTextLength < 120) return true;
+      if (source === "uploaded_pdf" && sectionTextLength < 120) return true;
+      if (sectionTextLength > 0) return sectionTextLength < 140;
+    } catch {
+      // Non-JSON-like text continues through generic weak-text checks.
+    }
+  }
+
+  // Generic weak-text indicators
+  if (normalized.length < 140) return true;
+  if (/\[(pdf uploaded|pdf extraction failed)/i.test(normalized)) return true;
+  const notFoundCount = (normalized.match(/not found/gi) || []).length;
+  const naCount = (normalized.match(/\bn\/a\b/gi) || []).length;
+  if (notFoundCount + naCount >= 6) return true;
+  const metadataOnly = ["vendor name", "proposed price", "proposed timeline", "vendor experience"]
+    .filter((token) => normalized.toLowerCase().includes(token)).length;
+  return metadataOnly >= 2 && normalized.length < 500;
+}
+
+// ─ Re-extract proposal from PDF if current text looks like a storage pointer ─
+async function reExtractProposalFromPdf(origin: string, pdfUrl: string): Promise<string | null> {
+  try {
+    const response = await fetch(`${origin}/api/extract-pdf`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pdfUrl }),
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      console.warn(`[AI:score_single] reExtract failed status=${response.status} body=${body.slice(0, 200)}`);
+      return null;
+    }
+
+    const data = await response.json().catch(() => null) as { extracted_text?: string } | null;
+    const extractedText = String(data?.extracted_text || "").trim();
+    return extractedText.length > 0 ? extractedText : null;
+  } catch (error) {
+    console.warn("[AI:score_single] reExtract error:", error);
+    return null;
+  }
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    API Route — Orchestrates the 3-agent pipeline
    ═══════════════════════════════════════════════════════════════════
@@ -455,8 +1004,20 @@ export async function POST(req: NextRequest) {
     // Runs Agent 1 (Extractor) + Agent 2 (Scorer) for a single vendor
     if (mode === "score_single") {
       console.log(`[AI:POST] Entering score_single path`);
-      const { contract_title, contract_description, contract_budget, contract_deadline, contract_certifications,
-              vendor_name, vendor_price, vendor_timeline, vendor_experience, proposal_data, mandatoryCriteria } = body;
+      let { contract_title, contract_description, contract_budget, contract_deadline, contract_certifications,
+              vendor_name, vendor_price, vendor_timeline, vendor_experience, proposal_data, mandatoryCriteria, proposal_file } = body;
+
+      // ── Detect weak proposal text and attempt re-extraction ──
+      if (isWeakProposalText(proposal_data) && proposal_file) {
+        console.log(`[AI:score_single] Detected weak proposal text (JSON storage pointer or insufficient content), attempting re-extraction from PDF`);
+        const reExtracted = await reExtractProposalFromPdf(req.nextUrl.origin, proposal_file);
+        if (reExtracted && !isWeakProposalText(reExtracted)) {
+          console.log(`[AI:score_single] Successfully re-extracted ${reExtracted.length} chars from PDF`);
+          proposal_data = reExtracted;
+        } else {
+          console.warn(`[AI:score_single] Re-extraction failed or still weak, proceeding with original`);
+        }
+      }
 
       // Build RFP text from contract fields
       const rfpText = [
@@ -480,6 +1041,8 @@ export async function POST(req: NextRequest) {
         metadata: {
           vendorName: vendor_name || "Unknown",
           fileNames: proposal_data ? ["proposal_data_json"] : [],
+          vendorPrice: vendor_price || null,
+          contractBudget: contract_budget || null,
           mandatoryCriteriaPresent: Boolean(mandatoryCriteria),
           modelUsed: AGENT_MODEL.DOCUMENT_ANALYSIS,
           tokenUsage: null,
@@ -535,7 +1098,7 @@ export async function POST(req: NextRequest) {
       });
 
       // Agent 2: Score
-      const scorerResult = await runScorer(rfpMarkdown, vendorMarkdown, vendor_name || "Unknown");
+      const scorerResult = await runScorer(rfpMarkdown, vendorMarkdown, vendor_name || "Unknown", vendorText, mandatoryCriteria, { llmOnly: !!body.llmOnly });
 
       extractRequirementsSpan.end({
         output: {
@@ -562,6 +1125,7 @@ export async function POST(req: NextRequest) {
       trace.update({
         metadata: {
           vendorName: vendor_name || "Unknown",
+          vendorPrice: vendor_price || null,
           finalScore: scorerResult.overall_score,
           latency: Date.now() - requestStartedAt,
         },
@@ -634,6 +1198,7 @@ export async function POST(req: NextRequest) {
         name: `Vendor Analysis - ${contract_title || "Unknown Contract"}`,
         metadata: {
           contractTitle: contract_title || "Unknown",
+          contractBudget: contract_budget || null,
           vendorCount: Array.isArray(vendors) ? vendors.length : 0,
           mandatoryCriteriaPresent: Boolean(mandatoryCriteria),
           finalScore: null,
@@ -664,6 +1229,8 @@ export async function POST(req: NextRequest) {
           metadata: {
             vendorName: v.vendor_name || "Unknown",
             fileNames: v.proposal_data ? ["proposal_data_json"] : [],
+            vendorPrice: v.price || null,
+            contractBudget: contract_budget || null,
             modelUsed: AGENT_MODEL.DOCUMENT_ANALYSIS,
             tokenUsage: null,
             latency: null,
@@ -702,7 +1269,7 @@ export async function POST(req: NextRequest) {
           });
 
           console.log(`[AI:POST:full_pipeline] Calling runScorer for vendor=${v.vendor_name}`);
-          const scoreResult = await runScorer(rfpMarkdown, vendorMarkdown, v.vendor_name || "Unknown");
+          const scoreResult = await runScorer(rfpMarkdown, vendorMarkdown, v.vendor_name || "Unknown", vendorText, mandatoryCriteria);
           console.log(`[AI:POST:full_pipeline] runScorer completed for vendor=${v.vendor_name} score=${scoreResult.overall_score}`);
           extractRequirementsSpan.end({ output: { scoreChars: JSON.stringify(scoreResult).length } });
 
@@ -718,6 +1285,7 @@ export async function POST(req: NextRequest) {
           vendorTrace.update({
             metadata: {
               vendorName: v.vendor_name || "Unknown",
+              vendorPrice: v.price || null,
               finalScore: scoreResult.overall_score,
               latency: Date.now() - requestStartedAt,
             },
@@ -818,6 +1386,9 @@ export async function POST(req: NextRequest) {
           analyses_by_proposal_id: analysesByProposalId,
           judge_result: judgeResult ?? null,
           vendor_count: vendorScores.length,
+          rfp_extract: rfpMarkdown,
+          vendor_extracts: vendorExtracts,
+          vendor_scores: vendorScores,
         });
       }
 
