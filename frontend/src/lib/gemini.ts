@@ -26,7 +26,6 @@ export async function geminiChat(opts: {
     : messages;
 
   return openRouterChat({
-    model: "qwen/qwen3-max",
     messages: finalMessages,
     temperature,
     max_tokens: maxOutputTokens,
@@ -49,7 +48,6 @@ export async function geminiChatJSON<T = unknown>(opts: {
     : messages;
 
   return openRouterChatJSON<T>({
-    model: "qwen/qwen3-max",
     messages: finalMessages,
     temperature,
     max_tokens: maxOutputTokens,

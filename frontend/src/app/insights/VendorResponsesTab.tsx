@@ -274,6 +274,7 @@ export default function VendorResponsesTab() {
           budget: contract.budget || "",
           deadline: contract.deadline || "",
           certifications: contract.required_certifications || "",
+          mandatoryCriteria: contract.rfp_metadata?.mandatory_criteria,
         },
         vendors,
       });

@@ -37,6 +37,15 @@ export interface ProposalInput {
   mandatoryCriteria?: MandatoryCriteriaPayload;
 }
 
+export interface AnalysisScoringCriterion {
+  id: string;
+  label: string;
+  max_score: number;
+  score: number;
+  reason: string;
+  evidence?: string;
+}
+
 export async function generateRFP(input: RFPInput): Promise<string> {
   const res = await fetch(buildAIEndpoint("/generate-rfp"), {
     method: "POST",
@@ -53,19 +62,17 @@ export async function generateRFP(input: RFPInput): Promise<string> {
 export interface CriterionScore {
   score: number;
   reason: string;
+  max_score?: number;
+  evidence?: string;
 }
 
 export interface ProposalAnalysis {
   vendor_name: string;
   overall_score: number;
   independent_recommendation: string;
-  criterion_scores: {
-    technical_fit: CriterionScore;
-    cost_efficiency: CriterionScore;
-    relevant_experience: CriterionScore;
-    timeline_fit: CriterionScore;
-    compliance_completeness: CriterionScore;
-  };
+  criterion_scores: Record<string, CriterionScore>;
+  scoring_criteria?: AnalysisScoringCriterion[];
+  mandatory_criteria?: MandatoryCriteriaPayload;
   strengths: string[];
   weaknesses: string[];
   risk_flags: string[];
@@ -135,9 +142,15 @@ export interface SavedProposalAnalysisResult {
   analyses_by_proposal_id: Record<string, ProposalAnalysis>;
   judge_result: JudgeResult | null;
   vendor_count: number;
+  mandatory_criteria?: MandatoryCriteriaPayload;
+  rfp_extract?: string;
+  vendor_extracts?: Record<string, string>;
+  vendor_scores?: ProposalAnalysis[];
 }
 
-type PipelineContract = { title: string; description: string; budget: string; deadline?: string; certifications?: string };
+type PipelineContract = { title: string; description: string; budget: string; deadline?: string; certifications?: string; mandatoryCriteria?: MandatoryCriteriaPayload };
+
+const ANALYSIS_CACHE_VERSION = 5;
 
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -156,13 +169,14 @@ function hashString(input: string): string {
 
 export function buildPipelineCacheKey(contract: PipelineContract, vendors: VendorInput[]): string {
   const normalized = {
-    version: 2,
+    version: ANALYSIS_CACHE_VERSION,
     contract: {
       title: contract.title || "",
       description: contract.description || "",
       budget: contract.budget || "",
       deadline: contract.deadline || "",
       certifications: contract.certifications || "",
+      mandatoryCriteria: contract.mandatoryCriteria || null,
     },
     vendors: vendors.map((vendor) => ({
       vendor_name: vendor.vendor_name || "",
@@ -174,6 +188,14 @@ export function buildPipelineCacheKey(contract: PipelineContract, vendors: Vendo
   };
 
   return hashString(stableStringify(normalized));
+}
+
+function hasMeaningfulAnalysis(result: Partial<FullPipelineResult> | undefined): boolean {
+  if (!result?.vendor_scores || !Array.isArray(result.vendor_scores) || result.vendor_scores.length === 0) {
+    return false;
+  }
+
+  return result.vendor_scores.some((vendor) => Number(vendor?.overall_score ?? 0) > 0);
 }
 
 // ─── score_single: Agent 1 + Agent 2 for one vendor ────────
@@ -219,7 +241,7 @@ export interface VendorInput {
 }
 
 export async function runFullPipeline(
-  contract: { title: string; description: string; budget: string; deadline?: string; certifications?: string },
+  contract: PipelineContract,
   vendors: VendorInput[],
   apiBaseUrl?: string,
   options?: { fastMode?: boolean }
@@ -239,6 +261,7 @@ export async function runFullPipeline(
         contract_budget: contract.budget,
         contract_deadline: contract.deadline,
         contract_certifications: contract.certifications,
+        mandatoryCriteria: contract.mandatoryCriteria,
         vendors,
         fastMode: !!options?.fastMode,
       }),
@@ -277,7 +300,7 @@ export async function runCachedFullPipeline(
 
     const cachedResult = cached?.result as Partial<FullPipelineResult> | undefined;
 
-    if (cachedResult?.vendor_scores && cachedResult.rfp_extract && cachedResult.vendor_extracts) {
+    if (cachedResult?.vendor_scores && cachedResult.rfp_extract && cachedResult.vendor_extracts && hasMeaningfulAnalysis(cachedResult)) {
       return {
         vendor_scores: cachedResult.vendor_scores,
         judge: cachedResult.judge ?? null,
@@ -286,6 +309,10 @@ export async function runCachedFullPipeline(
         from_cache: true,
         cache_key: cacheKey,
       };
+    }
+
+    if (cachedResult?.vendor_scores && cachedResult.rfp_extract && cachedResult.vendor_extracts) {
+      console.warn("Ignoring cached analysis result with all-zero vendor scores; rerunning analysis.");
     }
   } catch (error) {
     console.warn("Failed to read analysis cache:", error);

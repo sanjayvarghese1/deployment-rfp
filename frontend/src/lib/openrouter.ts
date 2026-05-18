@@ -30,6 +30,10 @@ const OPENROUTER_FALLBACK_MODEL =
   process.env.OPENROUTER_FALLBACK_MODEL ||
   "qwen/qwen-plus-2025-2025-01-25";
 
+const OPENROUTER_ANALYSIS_MODEL =
+  process.env.OPENROUTER_ANALYSIS_MODEL ||
+  OPENROUTER_PRIMARY_MODEL;
+
 /**
  * Example pricing per 1K tokens (USD)
  * Update later using OpenRouter pricing page.
@@ -51,13 +55,13 @@ export const MODEL = {
 };
 
 export const AGENT_MODEL = {
-  DOCUMENT_ANALYSIS: "qwen/qwen3-max",
+  DOCUMENT_ANALYSIS: OPENROUTER_ANALYSIS_MODEL,
   REQUIREMENT_EXTRACTION: MODEL.PRIMARY,
   INTAKE_EXTRACTION: OPENROUTER_INTAKE_MODEL,
   TEMPLATE_SELECTION: MODEL.PRIMARY,
   TEMPLATE_FORMATTING: MODEL.PRIMARY,
-  RFP_WRITING: "qwen/qwen3-max",
-  QUALITY_ASSURANCE: "qwen/qwen3-max",
+  RFP_WRITING: OPENROUTER_ANALYSIS_MODEL,
+  QUALITY_ASSURANCE: OPENROUTER_ANALYSIS_MODEL,
 };
 
 /* ===================================================
