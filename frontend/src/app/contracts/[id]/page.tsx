@@ -28,6 +28,13 @@ function shortValue(raw: string | undefined, fallback: string): string {
   return s.slice(0, 20) + "…";
 }
 
+function extractPdfBase64(value: unknown): string | null {
+  if (typeof value !== "string" || !value) return null;
+  if (!value.startsWith("data:")) return value;
+  const commaIndex = value.indexOf(",");
+  return commaIndex >= 0 ? value.slice(commaIndex + 1) : null;
+}
+
 function downloadPdfFromBase64(base64: string, filename: string) {
   const byteChars = atob(base64);
   const bytes = new Uint8Array(byteChars.length);
@@ -560,9 +567,9 @@ export default function ContractDetailPage() {
         )}
 
         {/* Download RFP PDF */}
-        {contract.rfp_pdf_base64 && (
+        {extractPdfBase64(contract.rfp_pdf_base64) && (
           <button
-            onClick={() => downloadPdfFromBase64(contract.rfp_pdf_base64, `${contract.title || "RFP"}.pdf`)}
+            onClick={() => downloadPdfFromBase64(extractPdfBase64(contract.rfp_pdf_base64) as string, `${contract.rfp_file_name || contract.title || "RFP"}.pdf`)}
             className="inline-flex items-center gap-2 bg-[var(--primary)] text-[#EFECE3] px-5 py-2.5 rounded-lg text-sm font-semibold hover:bg-[var(--primary-hover)] transition-all shadow-sm mb-4"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>

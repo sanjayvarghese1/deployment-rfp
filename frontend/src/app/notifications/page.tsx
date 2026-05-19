@@ -134,9 +134,15 @@ export default function NotificationsPage() {
   }, [user]);
 
   const markAsRead = async (id: string) => {
+    // Optimistic UI update for responsiveness
+    setNotifications((prev) => prev.map((n) => (n.notification_id === id ? { ...n, read: true } : n)));
     try {
       const { error } = await supabase.from("notifications").update({ read: true }).eq("id", id);
-      if (error) throw error;
+      if (error) {
+        // Revert local change on error
+        setNotifications((prev) => prev.map((n) => (n.notification_id === id ? { ...n, read: false } : n)));
+        throw error;
+      }
     } catch (err) {
       console.error("Failed to mark notification as read:", err);
     }
@@ -145,6 +151,9 @@ export default function NotificationsPage() {
   const markAllAsRead = async () => {
     try {
       const unread = notifications.filter((n) => !n.read);
+      if (unread.length === 0) return;
+      // Per UX request: clear notifications immediately after marking read
+      setNotifications([]);
       await Promise.all(unread.map((n) => supabase.from("notifications").update({ read: true }).eq("id", n.notification_id)));
     } catch (err) {
       console.error("Failed to mark all as read:", err);
@@ -253,34 +262,20 @@ export default function NotificationsPage() {
           </div>
 
           {/* Unread dot + Actions */}
-          <div className="flex items-center gap-2 shrink-0 pt-1.5">
+          <div className="flex items-center gap-1 shrink-0 pt-1.5">
             {!n.read && <span className="w-2.5 h-2.5 rounded-full" style={{ background: "#000000" }} />}
             {!n.read && (
               <button
                 onClick={(e) => { e.stopPropagation(); markAsRead(n.notification_id); }}
-                className="p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
+                className="p-2 rounded-lg transition-all hover:bg-[#E5E2D8]"
                 style={{ color: "#000000" }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = "#E5E2D8"; e.currentTarget.style.color = "#000000"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#000000"; }}
                 title="Mark as read"
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2.5}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
                 </svg>
               </button>
             )}
-            <button
-              onClick={(e) => { e.stopPropagation(); deleteNotification(n.notification_id); }}
-              className="p-2 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
-              style={{ color: "#000000" }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "#FDE8E8"; e.currentTarget.style.color = "#fb7185"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#000000"; }}
-              title="Delete"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
           </div>
         </div>
       </div>
