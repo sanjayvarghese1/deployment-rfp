@@ -26,7 +26,7 @@ function normalizeCurrencyWithSuffix(text: string){
 let pdfParse: any;
 try{
   // Try to import the library's internal module to avoid test-run side effects
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+   
   pdfParse = require('pdf-parse/lib/pdf-parse.js');
 }catch(e){
   try{ pdfParse = require('pdf-parse'); }catch(err){ pdfParse = null; }
@@ -140,7 +140,7 @@ export async function POST(req: NextRequest){
       (async ()=>{
         try{
           for(const p of proposals){
-            const { data: proposal } = await svc.from('proposals').select('id,contract_id,vendor_name,price,timeline,experience').eq('id', p.id).single();
+            const { data: proposal } = await svc.from('proposals').select('id,contract_id,vendor_name,price,timeline,experience,proposal_file').eq('id', p.id).single();
             const { data: contract } = await svc.from('contracts').select('id,title,description,budget,deadline,required_certifications').eq('id', proposal?.contract_id).single();
             
             if(proposal && contract){
@@ -161,6 +161,7 @@ export async function POST(req: NextRequest){
                 vendor_timeline: proposal.timeline || extractedTimeline || '',
                 vendor_experience: proposal.experience || '',
                 proposal_data: safe,
+                proposal_file: proposal.proposal_file || fileUrl,
               };
               
               console.log(`[webhook-bg] Starting analysis for proposal ${p.id}`);

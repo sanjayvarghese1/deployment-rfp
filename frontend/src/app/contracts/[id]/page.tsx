@@ -222,6 +222,7 @@ export default function ContractDetailPage() {
             analyses_by_proposal_id: newAnalyses,
             judge_result: job.result.judge ?? null,
             vendor_count: proposals.length,
+            mandatory_criteria: contract?.rfp_metadata?.mandatory_criteria,
           };
           await saveProposalAnalysisResult(contractId, nextSavedAnalysis as any);
           setContract((current: any) => current ? { ...current, last_analysis_result: nextSavedAnalysis } : current);
@@ -327,6 +328,7 @@ export default function ContractDetailPage() {
           budget: contract.budget,
           deadline: contract.deadline,
           certifications: contract.required_certifications,
+          mandatoryCriteria: contract.rfp_metadata?.mandatory_criteria,
         },
         vendors,
       });
@@ -946,12 +948,35 @@ export default function ContractDetailPage() {
                             </summary>
                             <div className="mt-3 space-y-3">
                               <p className="text-sm text-[var(--muted)]">{analysis.analysis_summary}</p>
-                              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
-                                <div className="bg-[var(--primary-light)] rounded-lg p-2 text-center"><p className="text-[var(--muted)]">Technical</p><p className="font-bold text-[var(--primary)]">{analysis.criterion_scores?.technical_fit?.score ?? "–"}%</p></div>
-                                <div className="bg-[var(--success-light)] rounded-lg p-2 text-center"><p className="text-[var(--muted)]">Cost</p><p className="font-bold text-[var(--success)]">{analysis.criterion_scores?.cost_efficiency?.score ?? "–"}%</p></div>
-                                <div className="bg-[var(--surface)] rounded-lg p-2 text-center"><p className="text-[var(--muted)]">Experience</p><p className="font-bold text-[var(--primary)]">{analysis.criterion_scores?.relevant_experience?.score ?? "–"}%</p></div>
-                                <div className="bg-[var(--warning-light)] rounded-lg p-2 text-center"><p className="text-[var(--muted)]">Timeline</p><p className="font-bold text-[var(--warning)]">{analysis.criterion_scores?.timeline_fit?.score ?? "–"}%</p></div>
-                                <div className="bg-[var(--danger-light)] rounded-lg p-2 text-center"><p className="text-[var(--muted)]">Compliance</p><p className="font-bold text-[var(--danger)]">{analysis.criterion_scores?.compliance_completeness?.score ?? "–"}%</p></div>
+                              <div className="overflow-hidden rounded-lg border border-[var(--divider)] text-xs">
+                                <table className="w-full border-collapse">
+                                  <thead className="bg-[var(--surface)] text-left text-[var(--muted)]">
+                                    <tr>
+                                      <th className="px-3 py-2 font-medium">Criterion</th>
+                                      <th className="px-3 py-2 font-medium">Weight</th>
+                                      <th className="px-3 py-2 font-medium">Score</th>
+                                      <th className="px-3 py-2 font-medium">Reason</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {(Array.isArray(analysis.scoring_criteria) && analysis.scoring_criteria.length > 0
+                                      ? analysis.scoring_criteria
+                                      : [
+                                          { id: "technical_fit", label: "Technical", max_score: 30, score: analysis.criterion_scores?.technical_fit?.score ?? 0, reason: analysis.criterion_scores?.technical_fit?.reason ?? "" },
+                                          { id: "cost_efficiency", label: "Cost", max_score: 20, score: analysis.criterion_scores?.cost_efficiency?.score ?? 0, reason: analysis.criterion_scores?.cost_efficiency?.reason ?? "" },
+                                          { id: "relevant_experience", label: "Experience", max_score: 20, score: analysis.criterion_scores?.relevant_experience?.score ?? 0, reason: analysis.criterion_scores?.relevant_experience?.reason ?? "" },
+                                          { id: "timeline_fit", label: "Timeline", max_score: 15, score: analysis.criterion_scores?.timeline_fit?.score ?? 0, reason: analysis.criterion_scores?.timeline_fit?.reason ?? "" },
+                                          { id: "compliance_completeness", label: "Compliance", max_score: 15, score: analysis.criterion_scores?.compliance_completeness?.score ?? 0, reason: analysis.criterion_scores?.compliance_completeness?.reason ?? "" },
+                                        ]).map((row, index) => (
+                                      <tr key={row.id || index} className={index % 2 === 0 ? "bg-white" : "bg-[var(--surface)]/40"}>
+                                        <td className="px-3 py-2 align-top font-medium text-[var(--foreground)]">{row.label}</td>
+                                        <td className="px-3 py-2 align-top text-[var(--muted)]">{row.max_score}/100</td>
+                                        <td className="px-3 py-2 align-top text-[var(--foreground)]">{row.score}/{row.max_score}</td>
+                                        <td className="px-3 py-2 align-top text-[var(--muted)]">{row.reason || "No reason provided"}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
                               </div>
 
                               {(analysis.strengths?.length > 0 || analysis.weaknesses?.length > 0) && (

@@ -55,6 +55,7 @@ interface ChatMessage {
 interface RfpChatbotProps {
   onSaved?: () => void;
   contractId?: string;
+  initialUploadAnalysis?: UploadAnalysisPayload | null;
   onRfpGenerated?: (data: {
     title: string;
     sections: Record<string, string>;
@@ -63,6 +64,22 @@ interface RfpChatbotProps {
     metadata: { organization_name: string; project_title: string; category: string; date: string };
     mandatoryCriteria?: MandatoryCriteriaState;
   }) => void;
+}
+
+export interface UploadAnalysisPayload {
+  overallScore: number;
+  suggestions: string[];
+  strengths: string[];
+  analysis: {
+    fileName: string;
+    extractedText: string;
+    sections: Record<string, string>;
+    metadata?: {
+      title?: string;
+      author?: string;
+      creationDate?: string;
+    };
+  };
 }
 
 interface IntakeResponse {
@@ -140,7 +157,14 @@ function getNextRequiredGenerationKey(answers: Record<string, string>): string |
   return null;
 }
 
-export default function RfpChatbot({ onSaved, contractId, onRfpGenerated }: RfpChatbotProps = {}) {
+function toTitleCaseFromKey(key: string): string {
+  return key
+    .replace(/_/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initialUploadAnalysis }: RfpChatbotProps = {}) {
   const { user, profile } = useAuth();
   const router = useRouter();
   const [flowState, setFlowState] = useState<FlowState>("idle");
@@ -183,8 +207,18 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated }: RfpC
   const [intaking, setIntaking] = useState(false);
   const [downloadTarget, setDownloadTarget] = useState<TargetRfp>("full");
   const [editTarget, setEditTarget] = useState<TargetRfp>("full");
+  const uploadInitRef = useRef(false);
 
   const chatScrollRef = useRef<HTMLDivElement>(null);
+
+  // Reset save states when entering mandatory criteria or when new result arrives
+  useEffect(() => {
+    if (wizardStep === 4) {
+      setSaved(false);
+      setSaving(false);
+      console.log("Reset save states - entering mandatory criteria phase");
+    }
+  }, [wizardStep]);
 
   // Auto-scroll chat
   useEffect(() => {
@@ -282,6 +316,10 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated }: RfpC
         return base;
       });
     }
+
+    // When an edited draft is applied (returning from editor), ensure the UI shows the results page
+    setFlowState("review");
+    setWizardStep(3);
   }, []);
 
   useEffect(() => {
@@ -387,6 +425,85 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated }: RfpC
     });
     setQaSuggestionStates(initialStates);
   }, []);
+
+  useEffect(() => {
+    if (!initialUploadAnalysis || uploadInitRef.current) return;
+    uploadInitRef.current = true;
+
+    const nowDate = new Date().toISOString().slice(0, 10);
+    const uploadSections = initialUploadAnalysis.analysis.sections || {};
+    const hasDetectedSections = Object.keys(uploadSections).length > 0;
+    const sections = hasDetectedSections
+      ? uploadSections
+      : { project_overview: initialUploadAnalysis.analysis.extractedText.slice(0, 5000) };
+    const sectionLabels = Object.fromEntries(
+      Object.keys(sections).map((key) => [key, toTitleCaseFromKey(key)]),
+    );
+    const projectTitle =
+      initialUploadAnalysis.analysis.metadata?.title?.trim() ||
+      initialUploadAnalysis.analysis.fileName?.replace(/\.pdf$/i, "") ||
+      "Uploaded RFP";
+    const category = (answers.category || "other").toLowerCase();
+
+    const qaFromUpload: QAResult = {
+      overallScore: Math.max(0, Math.min(100, Math.round(initialUploadAnalysis.overallScore))),
+      missingSections: [],
+      improvements: (initialUploadAnalysis.suggestions || []).slice(0, 6),
+      strengths: (initialUploadAnalysis.strengths || []).slice(0, 5),
+      readinessLevel:
+        initialUploadAnalysis.overallScore >= 70
+          ? "ready"
+          : initialUploadAnalysis.overallScore >= 40
+            ? "needs_minor_edits"
+            : "needs_major_revisions",
+      scoreExplanation: "Initial QA score generated from uploaded RFP analysis.",
+    };
+
+    setAnswers((current) => ({
+      ...current,
+      organization_name: current.organization_name || profile?.company_name || "Organization",
+      project_title: current.project_title || projectTitle,
+      category: current.category || category,
+      detailed_project_description: current.detailed_project_description || initialUploadAnalysis.analysis.extractedText.slice(0, 5000),
+    }));
+
+    setResult({
+      sections,
+      sectionLabels,
+      metadata: {
+        organization_name: profile?.company_name || "Organization",
+        project_title: projectTitle,
+        category,
+        date: nowDate,
+      },
+      qa: qaFromUpload,
+      template: selectedTemplate,
+      decomposition: {
+        subsystems: {},
+        inferredRequirements: [],
+        needsDecomposition: false,
+        subsystemPdfs: [],
+        subsystemDrafts: [],
+      },
+    });
+    setQaReview(qaFromUpload);
+    initializeQaSuggestionStates(qaFromUpload);
+    setFlowState("review");
+    setWizardStep(2);
+    setMessages([]);
+    setError(null);
+    setSelectedSubsystems(new Set(["full"]));
+    setDownloadTarget("full");
+    setEditTarget("full");
+    setMandatoryCriteria({
+      loading: false,
+      ready: false,
+      targets: [],
+      activeTargetIndex: 0,
+      criteriaByTarget: {},
+      error: null,
+    });
+  }, [answers.category, initialUploadAnalysis, initializeQaSuggestionStates, profile?.company_name, selectedTemplate]);
 
   // Fetch decomposition analysis when intake is complete
   useEffect(() => {
@@ -926,7 +1043,9 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated }: RfpC
     }
 
     try {
-      const withReturn = { ...draft, returnTo: window.location.pathname + window.location.search };
+      // If this chatbot was initialized from an upload analysis, return to the upload-review results page
+      const preferredReturn = initialUploadAnalysis ? "/rfp/upload-review" : window.location.pathname + window.location.search;
+      const withReturn = { ...draft, returnTo: preferredReturn };
       window.localStorage.setItem(EDITOR_DRAFT_KEY, JSON.stringify(withReturn));
       try { window.localStorage.setItem(SELECTED_TARGET_KEY, target); } catch {}
       // also ensure a per-target draft record exists so subsequent Edit uses the same content
@@ -960,16 +1079,42 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated }: RfpC
   };
 
   const saveToMyContracts = async () => {
-    if (!result || !user || saving || saved) return;
+    console.log("▶ saveToMyContracts CALLED");
+    console.log("  Guards check:", { result: !!result, user: !!user, saving, saved });
+    
+    if (!result || !user) {
+      console.error("✗ FAILED: Missing result or user", { result: !!result, user: !!user });
+      setMessages((prev) => [...prev, { role: "bot", text: "Error: Missing user data or RFP result." }]);
+      return;
+    }
+    if (saving || saved) {
+      console.warn("✗ BLOCKED: Already saving/saved from previous operation", { saving, saved });
+      console.warn("  Tip: Clear browser cache or reload page if stuck");
+      return;
+    }
+    
+    console.log("  ✓ All guards passed, proceeding with save");
     setSaving(true);
     try {
+      console.log("✓ Starting save process");
+      console.log("  Mandatory criteria state:", {
+        targets: mandatoryCriteria.targets,
+        loading: mandatoryCriteria.loading,
+        ready: mandatoryCriteria.ready,
+        criteriaCount: Object.keys(mandatoryCriteria.criteriaByTarget).length,
+      });
+      
+      const userMetadataFullName = (
+        user as unknown as { user_metadata?: { full_name?: string } }
+      ).user_metadata?.full_name;
+
       const commonFields = {
         budget: answers.budget_framework || "TBD",
         deadline: answers.implementation_timeline || "TBD",
         status: "draft" as const,
         industry: result.metadata.category,
         posted_by: user.id,
-        posted_by_name: profile?.company_name || (user as any).user_metadata?.full_name || user.email || "Unknown",
+        posted_by_name: profile?.company_name || userMetadataFullName || user.email || "Unknown",
         poster_verified: profile?.verified || false,
         rfp_metadata: {
           ...result.metadata,
@@ -981,48 +1126,147 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated }: RfpC
       };
 
       const normalizeName = (value: string) => value.trim().toLowerCase().replace(/_/g, " ");
-      const fullSelected = selectedSubsystems.has("full");
+      
+      // Sanitize function to remove null characters and other problematic Unicode
+      const sanitizeText = (text: string | null | undefined): string => {
+        if (!text) return "";
+        return String(text).replace(/\0/g, "");
+      };
+      
+      const sanitizeObject = (obj: unknown): unknown => {
+        if (obj === null || obj === undefined) return obj;
+        if (typeof obj === "string") return sanitizeText(obj);
+        if (Array.isArray(obj)) return obj.map(sanitizeObject);
+        if (typeof obj === "object") {
+          return Object.entries(obj).reduce((acc, [key, val]) => {
+            acc[key as keyof typeof acc] = sanitizeObject(val);
+            return acc;
+          }, {} as Record<string, unknown>);
+        }
+        return obj;
+      };
+      
       const subsystemDrafts = decomposition?.subsystemDrafts || [];
       const subsystemPdfs = decomposition?.subsystemPdfs || [];
-      const availableSubsystemNames = Array.from(new Set([
-        ...subsystemDrafts.map((draft) => draft.name),
-        ...subsystemPdfs.map((pdf) => pdf.name),
-      ]));
+      const mandatoryCriteriaTargets = mandatoryCriteria.targets.length > 0 ? mandatoryCriteria.targets : ["full"];
+      const saves: Promise<unknown>[] = [];
 
-      // Build the list of subsystem outputs from selected subsystem names first,
-      // then fall back to all available drafts/PDFs.
-      const selectedForSave = fullSelected
-        ? []
-        : (selectedSubsystemNames.length > 0 ? selectedSubsystemNames : availableSubsystemNames);
+      console.log("📋 Building save operations:");
+      console.log("  Mandatory criteria targets:", mandatoryCriteriaTargets);
+      console.log("  Subsystem drafts available:", subsystemDrafts.map(d => d.name));
+      console.log("  Subsystem PDFs available:", subsystemPdfs.map(p => p.name));
 
-      const subsystemOutputs = selectedForSave
-        .map((name) => {
-          const draft = subsystemDrafts.find((item) => normalizeName(item.name) === normalizeName(name));
-          const pdf = subsystemPdfs.find((item) => normalizeName(item.name) === normalizeName(name));
-          if (!draft && !pdf) return null;
-          return {
-            name: draft?.name || pdf?.name || name,
-            sections: draft?.sections || result.sections,
-            sectionLabels: draft?.sectionLabels || result.sectionLabels,
-            metadata: draft?.metadata || result.metadata,
-            template: draft?.template || result.template,
-            pdfBase64: draft?.pdfBase64 || pdf?.pdfBase64 || "",
-          };
-        })
-        .filter((item): item is {
-          name: string;
-          sections: Record<string, string>;
-          sectionLabels: Record<string, string>;
-          metadata: { organization_name: string; project_title: string; category: string; date: string };
-          template: string;
-          pdfBase64: string;
-        } => Boolean(item && item.name));
+      // Save full RFP if it's in the mandatory criteria targets
+      if (mandatoryCriteriaTargets.includes("full")) {
+        console.log("Adding full RFP to save queue");
+        saves.push(
+          (async () => {
+            const insertData = {
+              ...commonFields,
+              title: result.metadata.project_title,
+              description: Object.values(result.sections).find(Boolean)?.slice(0, 300) || result.metadata.project_title,
+              rfp_sections: result.sections,
+              rfp_section_labels: result.sectionLabels,
+              rfp_pdf_base64: pdfBase64 || "",
+              rfp_decomposition: null,
+              last_analysis_result: {
+                ...result.qa,
+                mandatory_criteria: buildMandatoryCriteriaPayload(mandatoryCriteria.criteriaByTarget, ["full"], 0),
+              },
+              rfp_metadata: {
+                ...commonFields.rfp_metadata,
+                mandatory_criteria: buildMandatoryCriteriaPayload(mandatoryCriteria.criteriaByTarget, ["full"], 0),
+              },
+            };
+            console.log("Inserting full RFP contract:", insertData.title);
+            const { error, data } = await supabase
+              .from("contracts")
+              .insert(sanitizeObject(insertData) as any)
+              .select();
+            if (error) {
+              console.error("Error saving full RFP:", error);
+              throw error;
+            }
+            console.log("Full RFP saved successfully:", data);
+          })()
+        );
+      }
 
-      const hasSubsystemOutputs = subsystemOutputs.length > 0;
-      const shouldSaveFull = fullSelected;
+      // Save each subsystem in mandatory criteria targets
+      const subsystemTargets = mandatoryCriteriaTargets.filter((target) => target !== "full");
+      console.log("Subsystem targets to save:", subsystemTargets);
+      
+      for (const targetName of subsystemTargets) {
+        // Try to find draft or PDF for this subsystem
+        const draft = subsystemDrafts.find((item) => normalizeName(item.name) === normalizeName(targetName));
+        const pdf = subsystemPdfs.find((item) => normalizeName(item.name) === normalizeName(targetName));
+
+        // Use draft if available (has full data), otherwise use result data with subsystem metadata
+        // PDF only has pdfBase64, so we extract that separately
+        const subsystemData = {
+          name: targetName,
+          sections: draft?.sections || result.sections,
+          sectionLabels: draft?.sectionLabels || result.sectionLabels,
+          metadata: draft?.metadata || result.metadata,
+          template: draft?.template || result.template,
+          pdfBase64: draft?.pdfBase64 || pdf?.pdfBase64 || "",
+        };
+
+        const subsystemCriteriaPayload = buildMandatoryCriteriaPayload(
+          mandatoryCriteria.criteriaByTarget,
+          [targetName],
+          0,
+        );
+
+        console.log("Adding subsystem to save queue:", targetName);
+        
+        saves.push(
+          (async () => {
+            const insertData = {
+              ...commonFields,
+              title: `${subsystemData.metadata.project_title} — ${targetName}`,
+              description: `Subsystem RFP for "${targetName}" decomposed from ${result.metadata.project_title}`.slice(0, 300),
+              rfp_sections: subsystemData.sections,
+              rfp_section_labels: subsystemData.sectionLabels,
+              rfp_pdf_base64: subsystemData.pdfBase64,
+              rfp_decomposition: decomposition ? {
+                subsystems: decomposition.subsystems,
+                inferredRequirements: decomposition.inferredRequirements,
+                needsDecomposition: true,
+                subsystemName: targetName,
+              } : null,
+              rfp_metadata: {
+                ...commonFields.rfp_metadata,
+                ...subsystemData.metadata,
+                mandatory_criteria: subsystemCriteriaPayload,
+              },
+              rfp_template: subsystemData.template,
+              last_analysis_result: {
+                ...result.qa,
+                mandatory_criteria: subsystemCriteriaPayload,
+              },
+            };
+            console.log("Inserting subsystem contract:", insertData.title);
+            const { error, data } = await supabase
+              .from("contracts")
+              .insert(sanitizeObject(insertData) as any)
+              .select();
+            if (error) {
+              console.error("Error saving subsystem:", targetName, error);
+              throw error;
+            }
+            console.log("Subsystem saved successfully:", targetName, data);
+          })()
+        );
+      }
 
       // If this is from v6 (embedded mode), call the callback instead of saving to database
       if (contractId && onRfpGenerated) {
+        console.log("Embedded mode: saving with callback");
+        if (saves.length > 0) {
+          // Still wait for the saves to complete
+          await Promise.all(saves);
+        }
         onRfpGenerated({
           title: result.metadata.project_title,
           sections: result.sections,
@@ -1037,85 +1281,38 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated }: RfpC
         return;
       }
 
-      // Otherwise, save to Supabase (standalone mode)
-      const saves: Promise<any>[] = [];
-
-      if (shouldSaveFull) {
-        saves.push(
-          (supabase.from("contracts").insert({
-            ...commonFields,
-            title: result.metadata.project_title,
-            description: Object.values(result.sections).find(Boolean)?.slice(0, 300) || result.metadata.project_title,
-            rfp_sections: result.sections,
-            rfp_section_labels: result.sectionLabels,
-            rfp_pdf_base64: pdfBase64 || "",
-            rfp_decomposition: null,
-            last_analysis_result: {
-              ...result.qa,
-              mandatory_criteria: buildMandatoryCriteriaPayload(mandatoryCriteria.criteriaByTarget, ["full"], 0),
-            },
-            rfp_metadata: {
-              ...commonFields.rfp_metadata,
-              mandatory_criteria: buildMandatoryCriteriaPayload(mandatoryCriteria.criteriaByTarget, ["full"], 0),
-            },
-          }).select()) as unknown as Promise<any>
-        );
+      // Save to Supabase (standalone mode)
+      if (saves.length === 0) {
+        console.error("✗ NO SYSTEMS TO SAVE - saves array is empty!");
+        console.error("  mandatoryCriteriaTargets:", mandatoryCriteriaTargets);
+        console.error("  mandatoryCriteria.targets:", mandatoryCriteria.targets);
+        console.error("  This means no systems were selected for saving");
+        setMessages((prev) => [...prev, { role: "bot", text: "❌ No systems to save. This shouldn't happen - please check console logs and try again." }]);
+        setSaving(false);
+        return;
       }
 
-      // Save each subsystem as a separate contract too
-      if (hasSubsystemOutputs) {
-        for (const sub of subsystemOutputs) {
-          const targetKey = mandatoryCriteria.targets.find((target) => normalizeName(target) === normalizeName(sub.name)) || sub.name;
-          const subsystemCriteriaPayload = buildMandatoryCriteriaPayload(
-            mandatoryCriteria.criteriaByTarget,
-            [targetKey],
-            0,
-          );
-
-          saves.push(
-            (supabase.from("contracts").insert({
-              ...commonFields,
-              title: `${sub.metadata.project_title} — ${sub.name}`,
-              description: `Subsystem RFP for "${sub.name}" decomposed from ${result.metadata.project_title}`.slice(0, 300),
-              rfp_sections: sub.sections,
-              rfp_section_labels: sub.sectionLabels,
-              rfp_pdf_base64: sub.pdfBase64 || "",
-              rfp_decomposition: {
-                subsystems: decomposition!.subsystems,
-                inferredRequirements: decomposition!.inferredRequirements,
-                needsDecomposition: true,
-                subsystemName: sub.name,
-              },
-              rfp_metadata: {
-                ...commonFields.rfp_metadata,
-                ...sub.metadata,
-                mandatory_criteria: subsystemCriteriaPayload,
-              },
-              rfp_template: sub.template,
-              last_analysis_result: {
-                ...result.qa,
-                mandatory_criteria: subsystemCriteriaPayload,
-              },
-            }).select()) as unknown as Promise<any>
-          );
-        }
-      }
-
+      console.log(`▶ Executing ${saves.length} save operation(s)...`);
       await Promise.all(saves);
       setSaved(true);
+      
+      console.log("✓ ALL SAVES COMPLETED SUCCESSFULLY");
+      console.log("  Targets saved - full:", mandatoryCriteriaTargets.includes("full"), "subsystems:", mandatoryCriteriaTargets.filter(t => t !== "full").length);
 
-      if (shouldSaveFull) {
-        setMessages((prev) => [...prev, { role: "bot", text: "Full RFP saved to My Contracts. Go to the **My Contracts** tab to approve and publish it." }]);
-      } else if (hasSubsystemOutputs) {
-        const total = subsystemOutputs.length;
-        setMessages((prev) => [...prev, { role: "bot", text: `All **${total} selected subsystem RFP${total > 1 ? "s" : ""}** saved to My Contracts. Go to the **My Contracts** tab to approve and publish.` }]);
-      } else {
-        setMessages((prev) => [...prev, { role: "bot", text: "No generated subsystem output found for the selected items, so nothing was saved." }]);
+      if (mandatoryCriteriaTargets.includes("full") && subsystemTargets.length === 0) {
+        setMessages((prev) => [...prev, { role: "bot", text: "✅ Full RFP contract saved to **My Contracts**. Go to the My Contracts tab to approve and publish it." }]);
+      } else if (subsystemTargets.length > 0) {
+        const total = subsystemTargets.length + (mandatoryCriteriaTargets.includes("full") ? 1 : 0);
+        setMessages((prev) => [...prev, { role: "bot", text: `✅ All **${total}** RFP contract${total > 1 ? "s" : ""} saved to **My Contracts** (full + subsystems). Go to the My Contracts tab to approve and publish.` }]);
       }
+      
       onSaved?.();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      setMessages((prev) => [...prev, { role: "bot", text: `Failed to save: ${msg}` }]);
+      console.error("✗ SAVE FAILED:", err);
+      console.error("  Error message:", msg);
+      console.error("  Stack:", err instanceof Error ? err.stack : "N/A");
+      setMessages((prev) => [...prev, { role: "bot", text: `❌ Failed to save: ${msg}` }]);
     }
     setSaving(false);
   };
@@ -1329,6 +1526,46 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated }: RfpC
                 <button className="btn-primary" onClick={startGeneration} disabled={!qaSuggestionsResolved || qaLoading || selectedSubsystems.size === 0}>
                   Generate RFP
                 </button>
+                {initialUploadAnalysis && (
+                  <button
+                    className="btn-outline"
+                    onClick={() => {
+                      // Skip generation and go directly to Mandatory Criteria using uploaded analysis
+                      let loadedPdfBase64 = null;
+                      
+                      if (initialUploadAnalysis) {
+                        // Try to get the uploaded PDF file from session storage
+                        const pdfFileName = sessionStorage.getItem("rfp-uploaded-pdf-name");
+                        if (pdfFileName) {
+                          const pdfDataKey = `rfp-uploaded-pdf:${pdfFileName}`;
+                          const pdfBase64String = sessionStorage.getItem(pdfDataKey);
+                          if (pdfBase64String) {
+                            setPdfBase64(pdfBase64String);
+                            loadedPdfBase64 = pdfBase64String;
+                            console.log("✓ Loaded uploaded PDF from session storage", { fileName: pdfFileName, size: pdfBase64String.length });
+                          } else {
+                            console.warn("⚠ PDF file not found in session storage for:", pdfFileName);
+                            setMessages((prev) => [...prev, { role: "bot", text: "⚠ Warning: Could not load original PDF file. You can still set mandatory criteria, but the PDF won't be saved." }]);
+                          }
+                        } else {
+                          console.warn("⚠ No PDF filename found in session storage");
+                        }
+                      }
+                      
+                      setFlowState("review");
+                      setWizardStep(4);
+                      setSelectedSubsystems(new Set(["full"]));
+                      setDownloadTarget("full");
+                      setEditTarget("full");
+                      const successMsg = loadedPdfBase64 
+                        ? "Continuing with uploaded RFP without changes. The PDF will be saved along with your mandatory criteria."
+                        : "Continuing with uploaded RFP analysis without changes. Setting up mandatory criteria...";
+                      setMessages((prev) => [...prev, { role: "bot", text: successMsg }]);
+                    }}
+                  >
+                    Continue without changes
+                  </button>
+                )}
                 <button className="btn-outline" onClick={() => setWizardStep(1)}>
                   Back to intake
                 </button>

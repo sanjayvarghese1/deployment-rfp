@@ -243,18 +243,43 @@ export default function MandatoryCriteriaPhase({
       </div>
 
       <div className={styles.footer}>
-        <button className="btn-outline" type="button" onClick={onBack}>
-          {activeTargetIndex === 0 ? "Back to Results" : "Back"}
-        </button>
+        {activeTargetIndex > 0 ? (
+          <button className="btn-outline" type="button" onClick={onBack}>
+            Back
+          </button>
+        ) : (
+          <div />
+        )}
         <div className={styles.footerActions}>
           {!isLastTarget ? (
             <button className="btn-primary" type="button" onClick={onNext} disabled={!ready}>
               Next
             </button>
           ) : (
-            <button className="btn-primary" type="button" onClick={onSaveAll} disabled={!canSaveAll}>
-              Save All
-            </button>
+            <>
+              <button 
+                className="btn-primary" 
+                type="button" 
+                onClick={() => {
+                  console.log("▶ SAVE ALL BUTTON CLICKED");
+                  console.log("  Button enabled state:", { canSaveAll, ready, currentTargetTotal, allTargetsValid });
+                  console.log("  Targets:", targets);
+                  console.log("  Calling onSaveAll callback...");
+                  onSaveAll();
+                }} 
+                disabled={!canSaveAll}
+                title={!canSaveAll ? `Button disabled. Ready: ${ready}, Current total: ${currentTargetTotal}%, All valid: ${allTargetsValid}` : ""}
+              >
+                Save All
+              </button>
+              {!canSaveAll && (
+                <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8, textAlign: "center" }}>
+                  {!ready && "Loading criteria..."}
+                  {ready && currentTargetTotal !== 100 && `Current: ${currentTargetTotal}% (need 100%)`}
+                  {ready && currentTargetTotal === 100 && !allTargetsValid && "Some targets don't sum to 100%"}
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

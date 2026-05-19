@@ -24,6 +24,18 @@ function recommendationClass(label: string): string {
   return "bg-[var(--danger-light)] text-[var(--danger)]";
 }
 
+function scoreBarClass(score: number, maxScore: number): string {
+  const ratio = maxScore > 0 ? score / maxScore : 0;
+  if (ratio >= 0.75) return "bg-[var(--success)]";
+  if (ratio >= 0.45) return "bg-[var(--warning)]";
+  return "bg-[var(--danger)]";
+}
+
+function scoreBarWidth(score: number, maxScore: number): string {
+  if (maxScore <= 0) return "0%";
+  return `${Math.max(4, Math.min(100, (score / maxScore) * 100))}%`;
+}
+
 function formatAnalysisPrice(analysis: ProposalAnalysis | null, proposal: any): string {
   const a: any = analysis;
   if (a?.price !== null && a?.price !== undefined && Number.isFinite(a.price)) {
@@ -100,19 +112,18 @@ export default function VendorReportPage() {
 
   const criterionRows = useMemo(() => {
     if (!analysis) return [];
-    const rows: Array<{ key: keyof ProposalAnalysis["criterion_scores"]; label: string; color: string }> = [
-      { key: "technical_fit", label: "Technical fit", color: "bg-[var(--primary)]" },
-      { key: "cost_efficiency", label: "Cost efficiency", color: "bg-[var(--success)]" },
-      { key: "relevant_experience", label: "Relevant experience", color: "bg-[var(--primary)]" },
-      { key: "timeline_fit", label: "Timeline fit", color: "bg-[var(--warning)]" },
-      { key: "compliance_completeness", label: "Compliance completeness", color: "bg-[var(--danger)]" },
-    ];
 
-    return rows.map((row) => ({
-      ...row,
-      score: analysis.criterion_scores[row.key]?.score ?? 0,
-      reason: analysis.criterion_scores[row.key]?.reason ?? "",
-    }));
+    if (Array.isArray(analysis.scoring_criteria) && analysis.scoring_criteria.length > 0) {
+      return analysis.scoring_criteria;
+    }
+
+    return [
+      { id: "technical_fit", label: "Technical fit", max_score: 30, score: analysis.criterion_scores?.technical_fit?.score ?? 0, reason: analysis.criterion_scores?.technical_fit?.reason ?? "" },
+      { id: "cost_efficiency", label: "Cost efficiency", max_score: 20, score: analysis.criterion_scores?.cost_efficiency?.score ?? 0, reason: analysis.criterion_scores?.cost_efficiency?.reason ?? "" },
+      { id: "relevant_experience", label: "Relevant experience", max_score: 20, score: analysis.criterion_scores?.relevant_experience?.score ?? 0, reason: analysis.criterion_scores?.relevant_experience?.reason ?? "" },
+      { id: "timeline_fit", label: "Timeline fit", max_score: 15, score: analysis.criterion_scores?.timeline_fit?.score ?? 0, reason: analysis.criterion_scores?.timeline_fit?.reason ?? "" },
+      { id: "compliance_completeness", label: "Compliance completeness", max_score: 15, score: analysis.criterion_scores?.compliance_completeness?.score ?? 0, reason: analysis.criterion_scores?.compliance_completeness?.reason ?? "" },
+    ];
   }, [analysis]);
 
   const recommendation = a?.recommendation || a?.independent_recommendation;
@@ -133,7 +144,7 @@ export default function VendorReportPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--background)] p-6 md:p-10">
+    <div className="min-h-screen bg-[linear-gradient(180deg,var(--background)_0%,rgba(244,240,229,0.72)_100%)] p-6 md:p-10">
       <div className="mx-auto max-w-5xl space-y-6">
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div>
@@ -147,18 +158,30 @@ export default function VendorReportPage() {
           </div>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">
-          <div className="rounded-xl border border-[var(--divider)] bg-white p-5 shadow-sm space-y-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs uppercase tracking-wide text-[var(--muted)]">Overall score</p>
-                <p className={`text-4xl font-semibold ${scoreClass(analysis.overall_score)}`}>{analysis.overall_score}/100</p>
-              </div>
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="rounded-xl border border-[var(--divider)] bg-white/90 p-4 shadow-sm backdrop-blur-sm">
+            <p className="text-xs uppercase tracking-wide text-[var(--muted)]">Overall score</p>
+            <div className="mt-2 flex items-end justify-between gap-3">
+              <p className={`text-4xl font-semibold ${scoreClass(analysis.overall_score)}`}>{analysis.overall_score}/100</p>
               <span className={`text-xs font-medium px-3 py-1 rounded-full ${recommendationClass(analysis.independent_recommendation)}`}>
                 {analysis.independent_recommendation}
               </span>
             </div>
+          </div>
+          <div className="rounded-xl border border-[var(--divider)] bg-white/90 p-4 shadow-sm backdrop-blur-sm">
+            <p className="text-xs uppercase tracking-wide text-[var(--muted)]">Mandatory criteria</p>
+            <p className="mt-2 text-3xl font-semibold text-[var(--foreground)]">{criterionRows.length}</p>
+            <p className="text-sm text-[var(--muted)]">criteria evaluated in this report</p>
+          </div>
+          <div className="rounded-xl border border-[var(--divider)] bg-white/90 p-4 shadow-sm backdrop-blur-sm">
+            <p className="text-xs uppercase tracking-wide text-[var(--muted)]">Risk posture</p>
+            <p className="mt-2 text-3xl font-semibold text-[var(--foreground)]">{analysis.risk_flags?.length || 0}</p>
+            <p className="text-sm text-[var(--muted)]">flag(s) requiring attention</p>
+          </div>
+        </div>
 
+        <div className="grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">
+          <div className="rounded-xl border border-[var(--divider)] bg-white p-5 shadow-sm space-y-5">
             <p className="text-sm text-[var(--muted)]">{analysis.analysis_summary}</p>
 
             {a.risk_summary && (
@@ -167,23 +190,64 @@ export default function VendorReportPage() {
               </div>
             )}
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              {criterionRows.map((row) => (
-                <div key={row.key} className="rounded-lg border border-[var(--divider)] p-3">
-                  <div className="flex items-center justify-between gap-2 text-xs mb-2">
-                    <span className="font-medium text-[var(--foreground)]">{row.label}</span>
-                    <span className={`font-semibold ${row.color === "bg-[var(--success)]" ? "text-[var(--success)]" : row.color === "bg-[var(--warning)]" ? "text-[var(--warning)]" : row.color === "bg-[var(--danger)]" ? "text-[var(--danger)]" : "text-[var(--primary)]"}`}>{row.score}/100</span>
-                  </div>
-                  <div className="h-2 rounded-full bg-[var(--surface)] overflow-hidden mb-2">
-                    <div className={`h-full rounded-full ${row.color}`} style={{ width: `${Math.max(6, row.score)}%` }} />
-                  </div>
-                  <p className="text-xs text-[var(--muted)]">{row.reason}</p>
+            <div className="overflow-hidden rounded-lg border border-[var(--divider)]">
+              <table className="w-full border-collapse text-sm">
+                <thead className="bg-[var(--surface)] text-left text-[var(--muted)]">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">Criterion</th>
+                    <th className="px-3 py-2 font-medium">Weight</th>
+                    <th className="px-3 py-2 font-medium">Vendor score</th>
+                    <th className="px-3 py-2 font-medium">Visual</th>
+                    <th className="px-3 py-2 font-medium">Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {criterionRows.map((row, index) => (
+                    <tr key={row.id || index} className={index % 2 === 0 ? "bg-white" : "bg-[var(--surface)]/40"}>
+                      <td className="px-3 py-2 align-top font-medium text-[var(--foreground)]">{row.label}</td>
+                      <td className="px-3 py-2 align-top text-[var(--muted)]">{row.max_score}/100</td>
+                      <td className="px-3 py-2 align-top text-[var(--foreground)]">{row.score}/{row.max_score}</td>
+                      <td className="px-3 py-2 align-top text-[var(--muted)]">{row.reason || "No reason provided"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="rounded-xl border border-[var(--divider)] bg-[var(--surface)]/40 p-4 space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-[var(--foreground)]">Mandatory score breakdown</p>
+                  <p className="text-xs text-[var(--muted)]">Bars compare the score earned against the maximum weight for each criterion.</p>
                 </div>
-              ))}
+                <span className="text-xs font-medium rounded-full bg-white px-3 py-1 text-[var(--muted)] border border-[var(--divider)]">
+                  Visual summary
+                </span>
+              </div>
+
+              <div className="space-y-3">
+                {criterionRows.map((row) => (
+                  <div key={`summary-${row.id}`} className="rounded-lg border border-[var(--divider)] bg-white p-3">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-[var(--foreground)]">{row.label}</p>
+                        <p className="text-xs text-[var(--muted)]">Mandatory {row.max_score} · Earned {row.score}</p>
+                      </div>
+                      <p className="text-sm font-semibold text-[var(--foreground)] whitespace-nowrap">{row.score}/{row.max_score}</p>
+                    </div>
+                    <div className="mt-3 h-3 overflow-hidden rounded-full bg-[var(--surface)] ring-1 ring-inset ring-[var(--divider)]">
+                      <div
+                        className={`h-full rounded-full ${scoreBarClass(row.score, row.max_score)}`}
+                        style={{ width: scoreBarWidth(row.score, row.max_score) }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 
-          <div className="rounded-xl border border-[var(--divider)] bg-white p-5 shadow-sm space-y-4">
+          <div className="rounded-xl border border-[var(--divider)] bg-white p-5 shadow-sm space-y-5 sticky top-6 self-start">
             <div>
               <p className="text-sm font-semibold text-[var(--foreground)] mb-2">Snapshot</p>
               <div className="space-y-2 text-sm">
