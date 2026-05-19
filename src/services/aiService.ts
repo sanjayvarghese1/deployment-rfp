@@ -1,4 +1,5 @@
 import { supabase } from "@/services/supabase";
+import type { MandatoryCriteriaPayload } from "@/lib/rfp/config";
 
 const AI_API_BASE = "/api/ai";
 
@@ -49,19 +50,30 @@ export async function generateRFP(input: RFPInput): Promise<string> {
 export interface CriterionScore {
   score: number;
   reason: string;
+  max_score?: number;
+  evidence?: string;
+  support_level?: "explicit" | "partial" | "inferred" | string;
+  confidence?: number;
+}
+
+export interface AnalysisScoringCriterion {
+  id: string;
+  label: string;
+  max_score: number;
+  score: number;
+  reason: string;
+  evidence?: string;
+  support_level?: "explicit" | "partial" | "inferred" | string;
+  confidence?: number;
 }
 
 export interface ProposalAnalysis {
   vendor_name: string;
   overall_score: number;
   independent_recommendation: string;
-  criterion_scores: {
-    technical_fit: CriterionScore;
-    cost_efficiency: CriterionScore;
-    relevant_experience: CriterionScore;
-    timeline_fit: CriterionScore;
-    compliance_completeness: CriterionScore;
-  };
+  criterion_scores: Record<string, CriterionScore>;
+  scoring_criteria?: AnalysisScoringCriterion[];
+  mandatory_criteria?: MandatoryCriteriaPayload;
   strengths: string[];
   weaknesses: string[];
   risk_flags: string[];
@@ -131,6 +143,10 @@ export interface SavedProposalAnalysisResult {
   analyses_by_proposal_id: Record<string, ProposalAnalysis>;
   judge_result: JudgeResult | null;
   vendor_count: number;
+  mandatory_criteria?: MandatoryCriteriaPayload;
+  rfp_extract?: string;
+  vendor_extracts?: Record<string, string>;
+  vendor_scores?: ProposalAnalysis[];
 }
 
 type PipelineContract = { title: string; description: string; budget: string; deadline?: string; certifications?: string };
