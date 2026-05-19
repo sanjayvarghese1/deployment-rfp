@@ -55,7 +55,7 @@ export default function RfpUploadReviewPage() {
 
   return (
     <div className="relative min-h-screen bg-[#EFECE3] px-4 py-6">
-      <div className="absolute left-4 top-24 z-40">
+      <div className="fixed left-4 top-2 z-40">
         <button
           type="button"
           onClick={() => router.push("/postrfp")}

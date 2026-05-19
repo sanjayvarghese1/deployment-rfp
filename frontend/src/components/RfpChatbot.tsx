@@ -449,6 +449,22 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     if (!initialUploadAnalysis || uploadInitRef.current) return;
     uploadInitRef.current = true;
 
+    let restoredDraft: EditorDraftSnapshot | null = null;
+    try {
+      const sessionRaw = window.sessionStorage.getItem(EDITOR_DRAFT_KEY) || window.sessionStorage.getItem("rfp-editor-draft");
+      const localRaw = window.localStorage.getItem(EDITOR_DRAFT_KEY);
+      const raw = sessionRaw || localRaw;
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<EditorDraftSnapshot>;
+        const hasSnapshot = !!parsed?.metadata && !!parsed?.sections && !!parsed?.sectionLabels && !!parsed?.template;
+        if (hasSnapshot) {
+          restoredDraft = parsed as EditorDraftSnapshot;
+        }
+      }
+    } catch {
+      restoredDraft = null;
+    }
+
     const nowDate = new Date().toISOString().slice(0, 10);
     const uploadSections = initialUploadAnalysis.analysis.sections || {};
     const hasDetectedSections = Object.keys(uploadSections).length > 0;
@@ -486,18 +502,20 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
       detailed_project_description: current.detailed_project_description || initialUploadAnalysis.analysis.extractedText.slice(0, 5000),
     }));
 
+    const initialMetadata = restoredDraft?.metadata || {
+      organization_name: profile?.company_name || "Organization",
+      project_title: projectTitle,
+      category,
+      date: nowDate,
+    };
+
     setResult({
-      sections,
-      sectionLabels,
-      metadata: {
-        organization_name: profile?.company_name || "Organization",
-        project_title: projectTitle,
-        category,
-        date: nowDate,
-      },
+      sections: restoredDraft?.sections || sections,
+      sectionLabels: restoredDraft?.sectionLabels || sectionLabels,
+      metadata: initialMetadata,
       qa: qaFromUpload,
-      template: selectedTemplate,
-      decomposition: {
+      template: (restoredDraft?.template as PdfTemplate) || selectedTemplate,
+      decomposition: restoredDraft?.decomposition || {
         subsystems: {},
         inferredRequirements: [],
         needsDecomposition: false,
@@ -505,10 +523,14 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
         subsystemDrafts: [],
       },
     });
+    if (restoredDraft?.pdfBase64) {
+      setPdfBase64(restoredDraft.pdfBase64);
+      setDecomposition(restoredDraft.decomposition || null);
+    }
     setQaReview(qaFromUpload);
     initializeQaSuggestionStates(qaFromUpload);
     setFlowState("review");
-    setWizardStep(2);
+    setWizardStep(restoredDraft ? 3 : 2);
     setMessages([]);
     setError(null);
     setSelectedSubsystems(new Set(["full"]));
