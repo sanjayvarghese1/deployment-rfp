@@ -1118,8 +1118,9 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     }
 
     try {
-      // If this chatbot was initialized from an upload analysis, return to the upload-review results page
-      const preferredReturn = initialUploadAnalysis ? "/rfp/upload-review" : window.location.pathname + window.location.search;
+      // Store current location as return point. For upload mode, this preserves the React state (wizard step).
+      // If no search params, browser history fallback will be used in the editor page.
+      const preferredReturn = window.location.pathname + window.location.search;
       const withReturn = { ...draft, returnTo: preferredReturn };
       window.localStorage.setItem(EDITOR_DRAFT_KEY, JSON.stringify(withReturn));
       try { window.localStorage.setItem(SELECTED_TARGET_KEY, target); } catch {}
