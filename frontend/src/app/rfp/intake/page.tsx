@@ -31,10 +31,26 @@ function RfpIntakeRouteContent() {
     router.push(`/rfp/intake?tab=${tab}`);
   };
 
+  const handleBackToOptions = () => {
+    router.push("/postrfp");
+  };
+
+  const handleBackToIntakeTabs = () => {
+    router.push("/postrfp");
+  };
+
   // Show upload intake if in upload mode
   if (mode === "upload") {
     return (
-      <div className="min-h-screen bg-[#EFECE3]">
+      <div className="relative min-h-screen bg-[#EFECE3]">
+        <button
+          type="button"
+          onClick={handleBackToIntakeTabs}
+          className="absolute left-4 top-2 z-40 inline-flex items-center gap-2 rounded-full border border-[var(--card-border)] bg-[var(--surface)] px-4 py-2 text-sm font-semibold text-[var(--foreground)] shadow-sm transition-colors hover:border-[var(--primary)] hover:text-[var(--primary)]"
+        >
+          <span aria-hidden="true">←</span>
+          Back
+        </button>
         <RfpUploadIntake />
       </div>
     );
@@ -55,8 +71,16 @@ function RfpIntakeRouteContent() {
   }
 
   return (
-    <div className="min-h-screen bg-[#EFECE3]">
-      <SubNavBar currentTab={mainTab === "generate" ? "generate" : mainTab === "blank" ? "contracts" : "responses"} />
+    <div className="relative min-h-screen bg-[#EFECE3]">
+      <button
+        type="button"
+        onClick={handleBackToOptions}
+        className="absolute left-4 top-2 z-40 inline-flex items-center gap-2 rounded-full border border-[var(--card-border)] bg-[var(--surface)] px-4 py-2 text-sm font-semibold text-[var(--foreground)] shadow-sm transition-colors hover:border-[var(--primary)] hover:text-[var(--primary)]"
+      >
+        <span aria-hidden="true">←</span>
+        Back
+      </button>
+      {mainTab !== "generate" && <SubNavBar currentTab={mainTab === "blank" ? "contracts" : "responses"} />}
       <div className="max-w-4xl mx-auto px-4 py-8">
         {mainTab === "generate" && <RfpTab onSaved={() => handleTabChange("blank")} />}
         {mainTab === "blank" && <MyContractsTab />}

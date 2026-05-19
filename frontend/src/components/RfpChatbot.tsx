@@ -5,7 +5,7 @@ import { RFP_QUESTIONS, FINAL_INTAKE_KEY, getFinalIntakeQuestionLabel, type Pipe
 import { useAuth } from "@/contexts/AuthContext";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/services/supabase";
-import { getBackgroundGenerationSnapshot, startBackgroundRfpGeneration, subscribeBackgroundGeneration } from "@/lib/rfp/background";
+import { getBackgroundGenerationSnapshot, resetBackgroundGeneration, startBackgroundRfpGeneration, subscribeBackgroundGeneration } from "@/lib/rfp/background";
 import { apiUrl } from "@/lib/api";
 import MandatoryCriteriaPhase from "@/components/MandatoryCriteriaPhase";
 import { addCriterionTarget, buildFallbackCriteria, buildMandatoryCriteriaPayload, normalizeRecommendation, removeCriterionTarget, updateCriterionTarget } from "@/lib/rfp/mandatoryCriteria";
@@ -19,6 +19,25 @@ const MAX_INTAKE_MESSAGE_CHARS = 1000;
 const EDITOR_DRAFT_KEY = "rfp-editor-draft";
 const EDITOR_SYNC_EVENT = "rfp-editor-draft-updated";
 const SELECTED_TARGET_KEY = "rfp-selected-target";
+
+function clearEditorDraftStorage() {
+  try {
+    window.localStorage.removeItem(EDITOR_DRAFT_KEY);
+    window.localStorage.removeItem(SELECTED_TARGET_KEY);
+    const keysToRemove: string[] = [];
+    for (let index = 0; index < window.localStorage.length; index++) {
+      const key = window.localStorage.key(index);
+      if (key && key.startsWith(`${EDITOR_DRAFT_KEY}:`)) {
+        keysToRemove.push(key);
+      }
+    }
+    for (const key of keysToRemove) {
+      window.localStorage.removeItem(key);
+    }
+  } catch {
+    // Ignore storage failures and continue with the reset.
+  }
+}
 
 const TEMPLATE_PREVIEWS: Record<PdfTemplate, { title: string; subtitle: string; accent: string; chips: string[] }> = {
   software: {
@@ -588,7 +607,11 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     : Array.from(selectedSubsystems).filter((name) => name !== "full" && Object.prototype.hasOwnProperty.call(decompositionAnalysis?.subsystems || {}, name));
   const availableFileTargets: TargetRfp[] = selectedSubsystems.has("full")
     ? ["full"]
-    : generatedSubsystemDrafts.map((draft) => draft.name);
+    : generatedSubsystemDrafts.length > 0
+      ? generatedSubsystemDrafts.map((draft) => draft.name)
+      : pdfBase64 || result
+        ? ["full"]
+        : [];
   const mandatoryTargets = selectedSubsystems.has("full")
     ? ["full"]
     : (selectedSubsystemNames.length > 0 ? selectedSubsystemNames : Array.from(selectedSubsystems).filter((name) => name !== "full"));
@@ -684,6 +707,56 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
       criteriaByTarget: removeCriterionTarget(current.criteriaByTarget, target, index),
     }));
   }, []);
+
+  const handleStartOver = useCallback(() => {
+    resetBackgroundGeneration();
+    try {
+      window.sessionStorage.removeItem("rfp-upload-analysis");
+    } catch {
+      // Ignore storage errors and continue reset.
+    }
+    clearEditorDraftStorage();
+
+    setFlowState("idle");
+    setWizardStep(1);
+    setAnswers({});
+    setSelectedTemplate("software");
+    setTemplateTouched(false);
+    setSelectedSubsystems(new Set());
+    setDecompositionAnalysis(null);
+    setDecompositionLoading(false);
+    setQaReview(null);
+    setQaSuggestionStates({});
+    setQaLoading(false);
+    setForcedQuestionKey(null);
+    setMandatoryCriteria({
+      loading: false,
+      ready: false,
+      targets: [],
+      activeTargetIndex: 0,
+      criteriaByTarget: {},
+      error: null,
+    });
+    setMessages([
+      { role: "bot", text: "Let's generate a new RFP. I will ask 19 questions one by one." },
+      { role: "bot", text: RFP_QUESTIONS[0].label },
+    ]);
+    setResult(null);
+    setPdfBase64(null);
+    setDecomposition(null);
+    setProgress(null);
+    setError(null);
+    setElapsed(0);
+    setSaved(false);
+    setSaving(false);
+    setInputValue("");
+    setIntaking(false);
+    setDownloadTarget("full");
+    setEditTarget("full");
+    uploadInitRef.current = false;
+
+    router.replace("/rfp/intake");
+  }, [router]);
 
   useEffect(() => {
     if (availableFileTargets.length === 0) return;
@@ -927,6 +1000,8 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
       detailed_project_description_length: input.detailed_project_description?.length || 0,
       additional_details_length: input.additional_details?.length || 0,
     });
+
+    clearEditorDraftStorage();
 
     try {
       await startBackgroundRfpGeneration(input, user?.id || profile?.company_name || "anonymous", {
@@ -1322,16 +1397,18 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
   return (
     <div className="card" style={{ maxWidth: 800, margin: "0 auto" }}>
       {/* Header */}
-      <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--card-border)", display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{ width: 36, height: 36, borderRadius: "50%", background: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <svg width="18" height="18" fill="#EFECE3" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z" /></svg>
-        </div>
-        <div>
-          <div style={{ fontWeight: 600, fontSize: 15 }}>RFP Generator</div>
-          <div style={{ fontSize: 12, color: "var(--muted)" }}>
-            {flowState === "idle" && "Intake in progress"}
-            {flowState === "generating" && `Generating... ${formatTime(elapsed)}`}
-            {flowState === "review" && "Complete"}
+      <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--card-border)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 36, height: 36, borderRadius: "50%", background: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <svg width="18" height="18" fill="#EFECE3" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z" /></svg>
+          </div>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 15 }}>RFP Generator</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>
+              {flowState === "idle" && "Intake in progress"}
+              {flowState === "generating" && `Generating... ${formatTime(elapsed)}`}
+              {flowState === "review" && "Complete"}
+            </div>
           </div>
         </div>
       </div>
@@ -1592,25 +1669,47 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
             </div>
 
             <div style={{ background: "var(--surface)", borderRadius: 16, padding: 16, border: "1px solid var(--card-border)", display: "grid", gap: 14 }}>
-              <div style={{ background: "rgba(239,236,227,0.65)", borderRadius: 14, padding: 14, border: "1px solid var(--card-border)" }}>
+              <div style={{ background: "rgba(239,236,227,0.65)", borderRadius: 14, padding: 14, border: "1px solid var(--card-border)", overflow: "visible" }}>
                 <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.16em", color: "var(--muted)", marginBottom: 8 }}>File selector</div>
                 <div style={{ fontSize: 13, color: "var(--foreground)", lineHeight: 1.6, marginBottom: 12 }}>Choose one generated file and use the same selector for download or edit.</div>
-                <div style={{ display: "grid", gap: 10 }}>
-                  <label style={{ display: "grid", gap: 4, fontSize: 12, color: "var(--muted)" }}>
-                    Select file
-                    <select className="input-field" value={downloadTarget} onChange={(event) => {
-                      const nextTarget = event.target.value as TargetRfp;
-                      setDownloadTarget(nextTarget);
-                      setEditTarget(nextTarget);
-                      try { window.localStorage.setItem(SELECTED_TARGET_KEY, nextTarget); } catch {}
-                    }}>
-                      {availableFileTargets.includes("full") && <option value="full">Common RFP</option>}
-                      {generatedSubsystemDrafts.map((draft) => (
-                        <option key={draft.name} value={draft.name}>{draft.name}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <div style={{ display: "grid", gap: 12 }}>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)" }}>Select file</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      {availableFileTargets.length > 0 ? availableFileTargets.map((target) => {
+                        const active = downloadTarget === target;
+                        const label = target === "full" ? "Common RFP" : target;
+                        return (
+                          <button
+                            key={target}
+                            type="button"
+                            onClick={() => {
+                              setDownloadTarget(target);
+                              setEditTarget(target);
+                              try { window.localStorage.setItem(SELECTED_TARGET_KEY, target); } catch {}
+                            }}
+                            style={{
+                              padding: "8px 12px",
+                              borderRadius: 999,
+                              border: active ? "1px solid var(--primary)" : "1px solid var(--card-border)",
+                              background: active ? "var(--primary)" : "#fff",
+                              color: active ? "#EFECE3" : "var(--foreground)",
+                              fontSize: 12,
+                              fontWeight: 600,
+                              cursor: "pointer",
+                              transition: "all 0.15s ease",
+                            }}
+                          >
+                            {label}
+                          </button>
+                        );
+                      }) : (
+                        <div style={{ fontSize: 12, color: "var(--muted)" }}>No generated files available yet.</div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 2 }}>
                     <button className="btn-primary" onClick={() => downloadSelectedRfp(downloadTarget)} style={{ gap: 6 }}>
                       <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM6 20V4h7v5h5v11H6z"/></svg>
                       Download Selected PDF
@@ -1637,39 +1736,7 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
 
               <button
                 className="btn-ghost"
-                onClick={() => {
-                  setFlowState("idle");
-                  setWizardStep(1);
-                  setAnswers({});
-                  setSelectedTemplate("software");
-                  setTemplateTouched(false);
-                  setSelectedSubsystems(new Set());
-                  setDecompositionAnalysis(null);
-                  setDecompositionLoading(false);
-                  setQaReview(null);
-                  setQaSuggestionStates({});
-                  setQaLoading(false);
-                  setForcedQuestionKey(null);
-                  setMandatoryCriteria({
-                    loading: false,
-                    ready: false,
-                    targets: [],
-                    activeTargetIndex: 0,
-                    criteriaByTarget: {},
-                    error: null,
-                  });
-                  setMessages([
-                    { role: "bot", text: "Let's generate a new RFP. I will ask 19 questions one by one." },
-                    { role: "bot", text: RFP_QUESTIONS[0].label },
-                  ]);
-                  setResult(null);
-                  setPdfBase64(null);
-                  setDecomposition(null);
-                  setProgress(null);
-                  setError(null);
-                  setElapsed(0);
-                  setSaved(false);
-                }}
+                onClick={handleStartOver}
               >
                 Start Over
               </button>

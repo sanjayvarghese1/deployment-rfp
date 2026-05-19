@@ -54,7 +54,17 @@ export default function RfpUploadReviewPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#EFECE3] px-4 py-8">
+    <div className="relative min-h-screen bg-[#EFECE3] px-4 py-6">
+      <div className="absolute left-4 top-24 z-40">
+        <button
+          type="button"
+          onClick={() => router.push("/postrfp")}
+          className="inline-flex items-center gap-2 rounded-full border border-[var(--card-border)] bg-[var(--surface)] px-4 py-2 text-sm font-semibold text-[var(--foreground)] shadow-sm transition-colors hover:border-[var(--primary)] hover:text-[var(--primary)]"
+        >
+          <span aria-hidden="true">←</span>
+          Back
+        </button>
+      </div>
       <RfpChatbot initialUploadAnalysis={uploadAnalysis} onSaved={handleSaved} />
     </div>
   );

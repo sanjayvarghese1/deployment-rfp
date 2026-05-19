@@ -187,7 +187,7 @@ export default function ApplyPage() {
   /* ─── core state ─── */
   const [contract, setContract] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(true);
-  const [step, setStep] = useState<Step>("upload_edit");
+  const [step, setStep] = useState<Step>("choice");
   const [submitting, setSubmitting] = useState(false);
 
   /* ─── RFP analysis ─── */
