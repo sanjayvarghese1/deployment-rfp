@@ -42,9 +42,9 @@ function downloadPdfFromBase64(base64: string, filename: string) {
 }
 
 export default function ContractDetailPage() {
-  const params = useParams();
+  const params = useParams<{ id?: string }>();
   const router = useRouter();
-  const contractId = params.id as string;
+  const contractId = params?.id;
   const { user, profile } = useAuth();
   const [contract, setContract] = useState<any>(null);
   const [proposals, setProposals] = useState<any[]>([]);
@@ -63,6 +63,8 @@ export default function ContractDetailPage() {
   const [restoredFromContract, setRestoredFromContract] = useState(false);
   const [referrer, setReferrer] = useState("");
   const [backgroundJobId, setBackgroundJobId] = useState<string | null>(null);
+
+  if (!contractId) return null;
   const savedAnalysis = contract?.last_analysis_result;
   const liveAnalysis = backgroundJobId || analyzing || judgeResult || Object.keys(analyses).length > 0 ? {
     analyses_by_proposal_id: analyses,

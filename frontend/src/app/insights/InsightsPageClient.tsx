@@ -14,7 +14,7 @@ export default function InsightsPageClient() {
   const [mainTab, setMainTab] = useState<"generate" | "blank" | "responses">("generate");
 
   useEffect(() => {
-    const tab = searchParams.get("tab");
+    const tab = searchParams?.get("tab");
     if (tab === "blank" || tab === "generate" || tab === "responses") {
       setMainTab(tab);
     }

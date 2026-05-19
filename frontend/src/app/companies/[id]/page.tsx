@@ -10,9 +10,9 @@ import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/services/supabase";
 
 export default function CompanyProfilePage() {
-  const params = useParams();
+  const params = useParams<{ id?: string }>();
   const router = useRouter();
-  const companyId = params.id as string;
+  const companyId = params?.id;
   const { user, profile } = useAuth();
   const [company, setCompany] = useState<Record<string, unknown> | null>(null);
   const [posts, setPosts] = useState<Record<string, unknown>[]>([]);
@@ -24,6 +24,8 @@ export default function CompanyProfilePage() {
   const [submittingReview, setSubmittingReview] = useState(false);
   const [showReviewForm, setShowReviewForm] = useState(false);
   const [referrer, setReferrer] = useState("");
+
+  if (!companyId) return null;
 
   useEffect(() => {
     if (typeof window !== "undefined") {

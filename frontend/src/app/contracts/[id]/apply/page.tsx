@@ -179,8 +179,8 @@ type Step = "rfp_analysis" | "choice" | "chat_build" | "upload_edit" | "editor" 
 
 /* ═══════════════════════════════════════════════════════════ */
 export default function ApplyPage() {
-  const params = useParams();
-  const contractId = params.id as string;
+  const params = useParams<{ id?: string }>();
+  const contractId = params?.id;
   const router = useRouter();
   const { user, profile } = useAuth();
 
@@ -201,6 +201,8 @@ export default function ApplyPage() {
   const [quickPdfUrl, setQuickPdfUrl] = useState<string | null>(null);
   const [quickPdfExtracted, setQuickPdfExtracted] = useState("");
   const [quickUploadSaved, setQuickUploadSaved] = useState(false);
+
+  if (!contractId) return null;
 
   /* ─── Chat builder ─── */
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);

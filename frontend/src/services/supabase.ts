@@ -1,8 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
 
 // Supabase client for browser/client-side
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder.supabase.co";
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "placeholder-anon-key";
 
 // Explicitly opt-in to session persistence and automatic token refresh
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {

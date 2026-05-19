@@ -66,6 +66,19 @@ export interface CriterionScore {
   reason: string;
   max_score?: number;
   evidence?: string;
+  support_level?: "explicit" | "partial" | "inferred" | string;
+  confidence?: number;
+}
+
+export interface AnalysisScoringCriterion {
+  id: string;
+  label: string;
+  max_score: number;
+  score: number;
+  reason: string;
+  evidence?: string;
+  support_level?: "explicit" | "partial" | "inferred" | string;
+  confidence?: number;
 }
 
 export interface ProposalAnalysis {

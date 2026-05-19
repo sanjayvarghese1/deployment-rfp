@@ -22,10 +22,11 @@ function LoginContent() {
     }
   }, [authLoading, router, user]);
 
-  const verificationMessage = searchParams.get("verified") === "1"
+  const emailQuery = searchParams?.get("email") || "";
+  const verificationMessage = searchParams?.get("verified") === "1"
     ? "Your account is ready. Sign in to continue."
-    : searchParams.get("email")
-      ? `Check ${searchParams.get("email")} for the verification link.`
+    : emailQuery
+      ? `Check ${emailQuery} for the verification link.`
       : "";
 
   const handleLogin = async (e: React.FormEvent) => {
