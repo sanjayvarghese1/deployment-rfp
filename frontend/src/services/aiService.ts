@@ -44,6 +44,8 @@ export interface AnalysisScoringCriterion {
   score: number;
   reason: string;
   evidence?: string;
+  support_level?: "explicit" | "inferred" | "none";
+  confidence?: number;
 }
 
 export async function generateRFP(input: RFPInput): Promise<string> {

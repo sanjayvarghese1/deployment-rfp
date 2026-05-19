@@ -139,7 +139,7 @@ export async function POST(req: NextRequest) {
         : getCategoryQuestionLabel(mergedBase.category, currentQuestionKey, QUESTION_LABELS[currentQuestionKey] || currentQuestionKey)
       : "";
 
-    let normalizedExtracted: Record<string, string> = {};
+    const normalizedExtracted: Record<string, string> = {};
     let clarifyingQuestion: string | null = null;
     let nextQuestionKey: string | null = currentQuestionKey;
     let summary = "";

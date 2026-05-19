@@ -239,7 +239,13 @@ export default function RfpEditorPage() {
       
       // Handle upload flow - clean up sessionStorage
       if (uploadMode) {
-        const destination = nextDraft.returnTo || (nextDraft as any).returnTo || "/rfp/upload-review";
+        let destination = nextDraft.returnTo || (nextDraft as any).returnTo || "/rfp/upload-review";
+        if (typeof destination === "string") {
+          const lower = destination.toLowerCase();
+          if (lower.includes("mandatory") || lower.includes("criteria") || lower.includes("targets")) {
+            destination = "/postrfp";
+          }
+        }
         try {
           window.sessionStorage.setItem("rfp-editor-draft", JSON.stringify(nextDraft));
         } catch {}
@@ -259,10 +265,27 @@ export default function RfpEditorPage() {
             returnTo: destination,
           }));
         } catch {}
+        // Prefer going back in history if available so user returns to exact previous view
+        if (typeof window !== "undefined" && window.history && window.history.length > 1) {
+          setTimeout(() => router.back(), 150);
+          return;
+        }
         setTimeout(() => router.push(destination), 250);
       } else {
         try {
-          const dest = nextDraft.returnTo || (nextDraft as any).returnTo;
+          // Prefer history back first
+          if (typeof window !== "undefined" && window.history && window.history.length > 1) {
+            router.back();
+            return;
+          }
+
+          let dest = nextDraft.returnTo || (nextDraft as any).returnTo;
+          if (typeof dest === "string") {
+            const lower = dest.toLowerCase();
+            if (lower.includes("mandatory") || lower.includes("criteria") || lower.includes("targets")) {
+              dest = "/postrfp";
+            }
+          }
           if (dest) {
             router.push(dest);
           } else {
@@ -327,11 +350,24 @@ export default function RfpEditorPage() {
             <div className="flex gap-2 flex-wrap justify-end">
             <button className="btn-outline" onClick={() => {
               try {
+                // Prefer going back in browser history so user returns to the exact previous page
+                if (typeof window !== "undefined" && window.history && window.history.length > 1) {
+                  router.back();
+                  return;
+                }
+
                 const sessionRaw = window.sessionStorage.getItem(STORAGE_KEY) || window.sessionStorage.getItem("rfp-editor-draft");
                 const raw = sessionRaw || window.localStorage.getItem(STORAGE_KEY);
                 if (raw) {
                   const parsed = JSON.parse(raw) as EditorDraft;
-                  const dest = parsed.returnTo || parsed.returnTo === "" ? parsed.returnTo : null;
+                  let dest = parsed.returnTo ?? null;
+                  // Normalize known undesired return targets (mandatory/criteria) to the Phase 3 results page
+                  if (typeof dest === "string") {
+                    const lower = dest.toLowerCase();
+                    if (lower.includes("mandatory") || lower.includes("criteria") || lower.includes("targets")) {
+                      dest = "/postrfp";
+                    }
+                  }
                   if (dest) {
                     router.push(dest);
                     return;

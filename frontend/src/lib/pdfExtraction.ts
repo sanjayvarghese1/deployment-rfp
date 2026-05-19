@@ -18,12 +18,12 @@ export async function extractPdfTextWithOcrFallback(
   try {
     // Use the internal parser entrypoint to avoid pdf-parse's package-level
     // example code that tries to read ./test/data/05-versions-space.pdf.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+     
     pdfParse = require("pdf-parse/lib/pdf-parse.js");
   } catch {
     try {
       // Fallback for environments where the internal path is unavailable.
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+       
       const pdfParseModule = require("pdf-parse");
       pdfParse = pdfParseModule?.default || pdfParseModule;
     } catch (error) {

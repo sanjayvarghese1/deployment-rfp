@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/services/supabase";
 import { runCachedFullPipeline, saveProposalAnalysisResult } from "@/services/aiService";
 import { createAnalysisJob, updateAnalysisJob } from "@/services/analysisJobs";
-import type { FullPipelineResult, ProposalAnalysis } from "@/services/aiService";
+import type { CachedFullPipelineResult, ProposalAnalysis } from "@/services/aiService";
 import type { MandatoryCriteriaPayload } from "@/lib/rfp/config";
 import { createClient } from "@supabase/supabase-js";
 
@@ -45,7 +45,7 @@ function isWeakProposalText(text: string | null | undefined): boolean {
       const source = String(parsed.source || "").trim();
       const sections = parsed.sections as Record<string, unknown> | undefined;
       const sectionTextLength = sections
-        ? Object.values(sections).reduce((sum, value) => sum + String(value || "").trim().length, 0)
+        ? Object.values(sections).reduce((sum: number, value: unknown) => sum + String(value || "").trim().length, 0)
         : 0;
 
       // JSON that only points to a file location is not evaluable proposal content.
@@ -156,7 +156,7 @@ async function processBackgroundAnalysis(jobId: string, origin: string, body: Ba
       });
     }
 
-    const data: FullPipelineResult = await runCachedFullPipeline(contract, hydratedVendors, origin, { fastMode: false });
+    const data: CachedFullPipelineResult = await runCachedFullPipeline(contract, hydratedVendors, origin, { fastMode: false });
 
     const vendorScores = Array.isArray(data?.vendor_scores) ? data.vendor_scores : [];
     const proposalUpdates: Promise<unknown>[] = [];
@@ -166,10 +166,16 @@ async function processBackgroundAnalysis(jobId: string, origin: string, body: Ba
       const score = vendorScores[index];
       if (!vendor || !score || !vendor.proposal_id) continue;
       proposalUpdates.push(
-        db.from("proposals").update({
-          ai_score: score.overall_score,
-          risk_level: score.risk_flags?.length > 0 ? "High" : "Low",
-        }).eq("id", vendor.proposal_id).eq("contract_id", contractId)
+        (async () => {
+          await db
+            .from("proposals")
+            .update({
+              ai_score: score.overall_score,
+              risk_level: score.risk_flags?.length > 0 ? "High" : "Low",
+            })
+            .eq("id", vendor.proposal_id)
+            .eq("contract_id", contractId);
+        })()
       );
     }
 

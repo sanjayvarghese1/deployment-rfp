@@ -26,7 +26,7 @@ function normalizeCurrencyWithSuffix(text: string){
 let pdfParse: any;
 try{
   // Try to import the library's internal module to avoid test-run side effects
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+   
   pdfParse = require('pdf-parse/lib/pdf-parse.js');
 }catch(e){
   try{ pdfParse = require('pdf-parse'); }catch(err){ pdfParse = null; }

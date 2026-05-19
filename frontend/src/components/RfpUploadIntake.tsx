@@ -39,25 +39,34 @@ export default function RfpUploadIntake() {
         sessionStorage.setItem("rfp-uploaded-pdf-name", file.name);
         sessionStorage.removeItem("rfp-upload-analysis");
 
-        setUploadProgress({ stage: "analyzing", progress: 70 });
+        // Convert PDF to base64 and store in session storage for later saving
+        const fileReader = new FileReader();
+        fileReader.onload = async (e) => {
+          const base64String = (e.target?.result as string)?.split(",")[1] || "";
+          sessionStorage.setItem(`rfp-uploaded-pdf:${file.name}`, base64String);
+          console.log("Stored PDF as base64 in session storage");
 
-        const formData = new FormData();
-        formData.append("file", file);
+          setUploadProgress({ stage: "analyzing", progress: 70 });
 
-        const analysisResponse = await fetch(apiUrl("/api/rfp/upload-analyze"), {
-          method: "POST",
-          body: formData,
-        });
+          const formData = new FormData();
+          formData.append("file", file);
 
-        if (!analysisResponse.ok) {
-          const errorData = await analysisResponse.json().catch(() => null);
-          throw new Error(errorData?.error || "Analysis failed");
-        }
+          const analysisResponse = await fetch(apiUrl("/api/rfp/upload-analyze"), {
+            method: "POST",
+            body: formData,
+          });
 
-        const analysisResult = await analysisResponse.json();
-        sessionStorage.setItem("rfp-upload-analysis", JSON.stringify(analysisResult));
-        setUploadProgress({ stage: "done", progress: 100 });
-        router.push("/rfp/upload-review");
+          if (!analysisResponse.ok) {
+            const errorData = await analysisResponse.json().catch(() => null);
+            throw new Error(errorData?.error || "Analysis failed");
+          }
+
+          const analysisResult = await analysisResponse.json();
+          sessionStorage.setItem("rfp-upload-analysis", JSON.stringify(analysisResult));
+          setUploadProgress({ stage: "done", progress: 100 });
+          router.push("/rfp/upload-review");
+        };
+        fileReader.readAsDataURL(file);
       } catch (error) {
         setUploadProgress({
           stage: "error",
@@ -115,11 +124,12 @@ export default function RfpUploadIntake() {
       </div>
 
       <div className="px-5 pt-3">
-        <div className="mb-3 grid grid-cols-3 gap-2">
+        <div className="mb-3 grid grid-cols-4 gap-2">
           {[
             { label: "1. Intake", active: true },
             { label: "2. QA Review", active: false },
             { label: "3. Results", active: false },
+            { label: "4. Mandatory Criteria", active: false },
           ].map((step) => (
             <div
               key={step.label}
