@@ -22,6 +22,13 @@ function isPendingApproval(status: string | undefined): boolean {
   return status === "draft" || status === "pending_approval";
 }
 
+function extractPdfBase64(value: unknown): string | null {
+  if (typeof value !== "string" || !value) return null;
+  if (!value.startsWith("data:")) return value;
+  const commaIndex = value.indexOf(",");
+  return commaIndex >= 0 ? value.slice(commaIndex + 1) : null;
+}
+
 function downloadPdfFromBase64(base64: string, filename: string) {
   const byteChars = atob(base64);
   const bytes = new Uint8Array(byteChars.length);
@@ -245,9 +252,9 @@ export default function ContractsPage() {
 
                       {/* Actions */}
                       <div className="flex items-center gap-2 shrink-0 sm:ml-4">
-                        {c.rfp_pdf_base64 && (
+                        {extractPdfBase64(c.rfp_pdf_base64) && (
                           <button
-                            onClick={() => downloadPdfFromBase64(c.rfp_pdf_base64, `${c.title || "RFP"}.pdf`)}
+                            onClick={() => downloadPdfFromBase64(extractPdfBase64(c.rfp_pdf_base64) as string, `${c.rfp_file_name || c.title || "RFP"}.pdf`)}
                             className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border border-[var(--divider)] text-[var(--muted)] hover:text-[var(--primary)] hover:border-[var(--primary)]/30 transition-all"
                             title="Download RFP PDF"
                           >

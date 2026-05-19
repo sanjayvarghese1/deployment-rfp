@@ -50,7 +50,9 @@ export default function RfpUploadReviewPage() {
   }
 
   const handleSaved = () => {
-    router.push("/postrfp");
+    // After saving an uploaded RFP, go to the intake page with the "blank" tab
+    // which shows the "My Contracts" view (matches build-from-scratch behavior)
+    router.push("/rfp/intake?tab=blank");
   };
 
   return (

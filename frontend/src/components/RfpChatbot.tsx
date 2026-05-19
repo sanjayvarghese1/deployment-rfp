@@ -1079,6 +1079,34 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     URL.revokeObjectURL(url);
   };
 
+  const resolveSavedPdf = () => {
+    if (pdfBase64) {
+      return {
+        base64: pdfBase64,
+        fileName: `${result?.metadata.project_title || "RFP"}.pdf`,
+      };
+    }
+
+    if (!initialUploadAnalysis) {
+      return null;
+    }
+
+    try {
+      const uploadedFileName = window.sessionStorage.getItem("rfp-uploaded-pdf-name") || "Uploaded RFP.pdf";
+      const uploadedPdfBase64 = window.sessionStorage.getItem(`rfp-uploaded-pdf:${uploadedFileName}`);
+      if (!uploadedPdfBase64) {
+        return null;
+      }
+
+      return {
+        base64: uploadedPdfBase64,
+        fileName: uploadedFileName,
+      };
+    } catch {
+      return null;
+    }
+  };
+
   const downloadPdf = useCallback(() => {
     if (!pdfBase64) return;
     downloadBlob(pdfBase64, `${result?.metadata.project_title || "RFP"}-Full.pdf`);
@@ -1254,6 +1282,10 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
       console.log("  Subsystem drafts available:", subsystemDrafts.map(d => d.name));
       console.log("  Subsystem PDFs available:", subsystemPdfs.map(p => p.name));
 
+      const savedPdf = resolveSavedPdf();
+      const savedPdfBase64 = savedPdf?.base64 || "";
+      const savedPdfFileName = savedPdf?.fileName || `${result.metadata.project_title}.pdf`;
+
       // Save full RFP if it's in the mandatory criteria targets
       if (mandatoryCriteriaTargets.includes("full")) {
         console.log("Adding full RFP to save queue");
@@ -1265,7 +1297,8 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
               description: Object.values(result.sections).find(Boolean)?.slice(0, 300) || result.metadata.project_title,
               rfp_sections: result.sections,
               rfp_section_labels: result.sectionLabels,
-              rfp_pdf_base64: pdfBase64 || "",
+              rfp_pdf_base64: savedPdfBase64,
+              rfp_file_name: savedPdfFileName,
               rfp_decomposition: null,
               last_analysis_result: {
                 ...result.qa,
@@ -1326,7 +1359,8 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
               description: `Subsystem RFP for "${targetName}" decomposed from ${result.metadata.project_title}`.slice(0, 300),
               rfp_sections: subsystemData.sections,
               rfp_section_labels: subsystemData.sectionLabels,
-              rfp_pdf_base64: subsystemData.pdfBase64,
+              rfp_pdf_base64: subsystemData.pdfBase64 || savedPdfBase64,
+              rfp_file_name: `${subsystemData.metadata.project_title || result.metadata.project_title} — ${targetName}.pdf`,
               rfp_decomposition: decomposition ? {
                 subsystems: decomposition.subsystems,
                 inferredRequirements: decomposition.inferredRequirements,
