@@ -85,8 +85,18 @@ export default function MyContractsTab() {
                   {isPendingApproval(c.status) && (
                     <button
                       onClick={async () => {
-                        const { error } = await supabase.from("contracts").update({ status: "open" }).eq("id", c.contract_id);
-                        if (error) throw error;
+                        // Optimistic UI: update status locally first
+                        const prev = myContracts;
+                        setMyContracts((current) => current.map((m) => (m.contract_id === c.contract_id ? { ...m, status: "open" } : m)));
+                        try {
+                          const { error } = await supabase.from("contracts").update({ status: "open" }).eq("id", c.contract_id);
+                          if (error) throw error;
+                        } catch (err) {
+                          console.error("Approve failed:", err);
+                          // Revert on error
+                          setMyContracts(prev);
+                          window.alert("Failed to approve contract. Please try again.");
+                        }
                       }}
                       className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full bg-[var(--success-light)] text-[var(--success)] hover:opacity-80 transition-colors"
                     >
@@ -100,11 +110,17 @@ export default function MyContractsTab() {
                       const confirmed = window.confirm(`Delete "${c.title}"? This cannot be undone.`);
                       if (!confirmed) return;
                       setDeletingId(c.contract_id);
+                      // Optimistic remove
+                      const prev = myContracts;
+                      setMyContracts((current) => current.filter((m) => m.contract_id !== c.contract_id));
                       try {
                         const { error } = await supabase.from("contracts").delete().eq("id", c.contract_id);
                         if (error) throw error;
                       } catch (err) {
                         console.error("Delete failed:", err);
+                        // Revert on error
+                        setMyContracts(prev);
+                        window.alert("Failed to delete contract. Please try again.");
                       }
                       setDeletingId(null);
                     }}
