@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 
 interface SubNavBarProps {
   currentTab?: "generate" | "contracts" | "responses";
@@ -9,7 +9,6 @@ interface SubNavBarProps {
 export default function SubNavBar({ currentTab = "generate" }: SubNavBarProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
 
   const handleNavigate = (tab: "generate" | "contracts" | "responses") => {
     if (pathname === "/rfp/intake") {
@@ -35,39 +34,49 @@ export default function SubNavBar({ currentTab = "generate" }: SubNavBarProps) {
     {
       id: "generate",
       label: "Generate RFP",
-      icon: "📋",
       onClick: () => handleNavigate("generate"),
     },
     {
       id: "contracts",
       label: "My Contracts",
-      icon: "📄",
       onClick: () => handleNavigate("contracts"),
     },
     {
       id: "responses",
       label: "Vendor Responses",
-      icon: "👥",
       onClick: () => handleNavigate("responses"),
     },
   ];
 
   return (
-    <div className="bg-[var(--surface)] border-b border-[var(--divider)] sticky top-[54px] z-30">
-      <div className="max-w-4xl mx-auto px-4">
-        <div className="flex items-center gap-2 overflow-x-auto">
+    <div
+      className="sticky top-[54px] z-30"
+      style={{
+        background: "rgba(239, 236, 227, 0.96)",
+        backdropFilter: "blur(18px) saturate(1.3)",
+        WebkitBackdropFilter: "blur(18px) saturate(1.3)",
+        borderBottom: "1px solid #D4D1C8",
+      }}
+    >
+      <div className="mx-auto max-w-4xl px-4">
+        <div className="flex items-center gap-1 overflow-x-auto py-1.5">
           {navItems.map((item) => (
             <button
               key={item.id}
               onClick={item.onClick}
-              className={`flex items-center gap-2 px-4 py-3 whitespace-nowrap font-medium transition-colors border-b-2 ${
+              className={`relative flex items-center px-3.5 py-2 whitespace-nowrap text-[13px] font-medium transition-colors duration-200 ${
                 currentTab === item.id
-                  ? "border-[var(--primary)] text-[var(--primary)]"
-                  : "border-transparent text-[var(--muted)] hover:text-[var(--foreground)]"
+                  ? "text-[var(--foreground)]"
+                  : "text-[var(--muted)] hover:text-[var(--foreground)]"
               }`}
             >
-              <span>{item.icon}</span>
               <span>{item.label}</span>
+              {currentTab === item.id ? (
+                <span
+                  className="absolute inset-x-3 bottom-0 h-px"
+                  style={{ background: "var(--primary)" }}
+                />
+              ) : null}
             </button>
           ))}
         </div>

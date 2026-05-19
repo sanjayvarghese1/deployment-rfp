@@ -8,7 +8,7 @@ export default function RfpWorkflowPage() {
   const [hoveredCard, setHoveredCard] = useState<string | null>(null);
 
   const handleBuildFromScratch = () => {
-    router.push("/rfp/intake");
+    router.push("/rfp/intake?tab=generate");
   };
 
   const handleUploadExisting = () => {

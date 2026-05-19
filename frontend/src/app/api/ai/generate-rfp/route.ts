@@ -3,7 +3,7 @@ import { openRouterChat, AGENT_MODEL } from "@/lib/openrouter";
 import { langfuse } from "@/config/langfuse";
 
 const MAX_FIELD_CHARS = 15000;
-const REQUIRED_FIELDS = ["project_title", "organization_name"];
+const REQUIRED_FIELDS = ["project_title"];
 
 function sanitizeField(input: any): string {
   if (input === null || input === undefined) return "";
@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
 
     // Accept ALL intake fields (both metadata and sections)
     const metadata = {
-      organization_name: sanitizeField(body.organization_name),
+      organization_name: sanitizeField(body.organization_name || "Organization"),
       project_title: sanitizeField(body.project_title),
       category: sanitizeField(body.category || "other"),
     };
@@ -151,6 +151,8 @@ Start writing all 25 sections now:`;
     });
 
     console.log("[RFP-Gen] RFP content generated, length:", rfpContent?.length || 0);
+
+    return NextResponse.json({ rfp: rfpContent });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Failed to generate RFP";
     console.error("RFP generation error:", message);

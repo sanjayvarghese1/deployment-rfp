@@ -109,16 +109,18 @@ export default function RfpUploadIntake() {
   return (
     <div className="card mx-auto max-w-[800px] overflow-hidden">
       <div className="flex items-center gap-3 border-b border-[var(--card-border)] px-5 py-4">
-        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--primary)]">
-          <svg width="18" height="18" fill="#EFECE3" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z" /></svg>
-        </div>
-        <div>
-          <div className="text-[15px] font-semibold text-[var(--foreground)]">RFP Generator</div>
-          <div className="text-xs text-[var(--muted)]">
-            {uploadProgress.stage === "idle" && "Intake in progress"}
-            {uploadProgress.stage === "uploading" && "Uploading..."}
-            {uploadProgress.stage === "done" && "Complete"}
-            {uploadProgress.stage === "error" && "Upload failed"}
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--primary)]">
+            <svg width="18" height="18" fill="#EFECE3" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z" /></svg>
+          </div>
+          <div>
+            <div className="text-[15px] font-semibold text-[var(--foreground)]">RFP Generator</div>
+            <div className="text-xs text-[var(--muted)]">
+              {uploadProgress.stage === "idle" && "Intake in progress"}
+              {uploadProgress.stage === "uploading" && "Uploading..."}
+              {uploadProgress.stage === "done" && "Complete"}
+              {uploadProgress.stage === "error" && "Upload failed"}
+            </div>
           </div>
         </div>
       </div>

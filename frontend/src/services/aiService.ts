@@ -37,17 +37,6 @@ export interface ProposalInput {
   mandatoryCriteria?: MandatoryCriteriaPayload;
 }
 
-export interface AnalysisScoringCriterion {
-  id: string;
-  label: string;
-  max_score: number;
-  score: number;
-  reason: string;
-  evidence?: string;
-  support_level?: "explicit" | "inferred" | "none";
-  confidence?: number;
-}
-
 export async function generateRFP(input: RFPInput): Promise<string> {
   const res = await fetch(buildAIEndpoint("/generate-rfp"), {
     method: "POST",

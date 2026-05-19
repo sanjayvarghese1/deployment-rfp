@@ -1,21 +1,35 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import MyContractsTab from "@/app/insights/MyContractsTab";
 import VendorResponsesTab from "@/app/insights/VendorResponsesTab";
 
 export default function PostRfpPage() {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<"rfp" | "contracts" | "responses">("contracts");
+  const pathname = usePathname();
+  const [activeTab, setActiveTab] = useState<"rfp" | "contracts" | "responses">("rfp");
   const [hoveredCard, setHoveredCard] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (pathname === "/postrfp") {
+      setActiveTab("rfp");
+    }
+  }, [pathname]);
+
+  useEffect(() => {
+    const resetToRfp = () => setActiveTab("rfp");
+
+    window.addEventListener("pageshow", resetToRfp);
+    return () => window.removeEventListener("pageshow", resetToRfp);
+  }, []);
 
   const handleTabClick = (tab: "rfp" | "contracts" | "responses") => {
     setActiveTab(tab);
   };
 
   const handleBuildFromScratch = () => {
-    router.push("/rfp/intake");
+    router.push("/rfp/intake?tab=generate");
   };
 
   const handleUploadExisting = () => {
@@ -26,38 +40,48 @@ export default function PostRfpPage() {
     {
       id: "rfp",
       label: "RFP",
-      icon: "📋",
     },
     {
       id: "contracts",
       label: "My Contracts",
-      icon: "📄",
     },
     {
       id: "responses",
       label: "Vendor Response",
-      icon: "👥",
     },
   ];
 
   return (
     <div className="min-h-screen bg-[#EFECE3]">
       {/* Sub Navigation Bar */}
-      <div className="bg-[var(--surface)] border-b border-[var(--divider)] sticky top-[54px] z-30">
+      <div
+        className="sticky top-[54px] z-30"
+        style={{
+          background: "rgba(239, 236, 227, 0.96)",
+          backdropFilter: "blur(18px) saturate(1.3)",
+          WebkitBackdropFilter: "blur(18px) saturate(1.3)",
+          borderBottom: "1px solid #D4D1C8",
+        }}
+      >
         <div className="max-w-6xl mx-auto px-4">
-          <div className="flex items-center gap-2 overflow-x-auto">
+          <div className="flex items-center gap-1 overflow-x-auto py-1.5">
             {navItems.map((item) => (
               <button
                 key={item.id}
                 onClick={() => handleTabClick(item.id as "rfp" | "contracts" | "responses")}
-                className={`flex items-center gap-2 px-4 py-3 whitespace-nowrap font-medium transition-colors border-b-2 cursor-pointer ${
+                className={`relative px-3.5 py-2 whitespace-nowrap text-[13px] font-medium transition-colors duration-200 cursor-pointer ${
                   activeTab === item.id
-                    ? "border-[var(--primary)] text-[var(--primary)]"
-                    : "border-transparent text-[var(--muted)] hover:text-[var(--foreground)]"
+                    ? "text-[var(--foreground)]"
+                    : "text-[var(--muted)] hover:text-[var(--foreground)]"
                 }`}
               >
-                <span>{item.icon}</span>
                 <span>{item.label}</span>
+                {activeTab === item.id ? (
+                  <span
+                    className="absolute inset-x-3 bottom-0 h-px"
+                    style={{ background: "var(--primary)" }}
+                  />
+                ) : null}
               </button>
             ))}
           </div>
