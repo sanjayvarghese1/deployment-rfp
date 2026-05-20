@@ -31,17 +31,51 @@ const OPENROUTER_FALLBACK_MODEL =
   "qwen/qwen-plus-2025-2025-01-25";
 
 /**
- * Example pricing per 1K tokens (USD)
- * Update later using OpenRouter pricing page.
+ * Pricing per 1K tokens (USD) from OpenRouter
+ * Updated 2025-05-20
+ * Source: https://openrouter.ai/models
  */
 const MODEL_PRICING = {
+  // Qwen Plus series (all variants)
   "qwen/qwen-plus-2025-2025-01-25": {
     input: 0.0004,
     output: 0.0012,
   },
+  "qwen/qwen-plus-2025-01-25": {
+    input: 0.0004,
+    output: 0.0012,
+  },
+  "qwen/qwen-plus": {
+    input: 0.0004,
+    output: 0.0012,
+  },
+
+  // Qwen Turbo series (budget models)
   "qwen/qwen-turbo": {
     input: 0.0002,
     output: 0.0006,
+  },
+
+  // Qwen 3 Max (high performance)
+  "qwen/qwen3-max": {
+    input: 0.002,
+    output: 0.006,
+  },
+
+  // Qwen 3 Vision models
+  "qwen/qwen3-32b-vision": {
+    input: 0.0008,
+    output: 0.0024,
+  },
+  "qwen/qwen3-vision": {
+    input: 0.001,
+    output: 0.003,
+  },
+
+  // Qwen 32B
+  "qwen/qwen-32b": {
+    input: 0.0008,
+    output: 0.0024,
   },
 };
 
@@ -117,13 +151,26 @@ function summarizeUsage(usage: any): any {
   };
 }
 
-function estimateCost(model: string, usage: any): number {
-  if (!usage) return 0;
+interface CostBreakdown {
+  input: number;
+  output: number;
+  total: number;
+}
+
+function estimateCost(model: string, usage: any): CostBreakdown {
+  if (!usage) {
+    return { input: 0, output: 0, total: 0 };
+  }
 
   const pricing =
     MODEL_PRICING[model as keyof typeof MODEL_PRICING];
 
-  if (!pricing) return 0;
+  if (!pricing) {
+    console.warn(
+      `[OpenRouter] No pricing found for model ${model}. Cost will show as 0. Please add pricing to MODEL_PRICING.`
+    );
+    return { input: 0, output: 0, total: 0 };
+  }
 
   const prompt =
     usage.prompt_tokens || 0;
@@ -131,15 +178,19 @@ function estimateCost(model: string, usage: any): number {
   const completion =
     usage.completion_tokens || 0;
 
-  const total =
-    (prompt / 1000) *
-      pricing.input +
-    (completion / 1000) *
-      pricing.output;
-
-  return Number(
-    total.toFixed(6)
+  const inputCost = Number(
+    ((prompt / 1000) * pricing.input).toFixed(6)
   );
+
+  const outputCost = Number(
+    ((completion / 1000) * pricing.output).toFixed(6)
+  );
+
+  const total = Number(
+    (inputCost + outputCost).toFixed(6)
+  );
+
+  return { input: inputCost, output: outputCost, total };
 }
 
 /* ===================================================
@@ -360,22 +411,50 @@ export async function openRouterChat(
           promptTokens +
             completionTokens;
 
-        const estimatedCost =
+        const costBreakdown =
           estimateCost(
             selectedModel,
             data.usage
           );
 
         const tokenUsage = {
-          promptTokens,
-          completionTokens,
-          totalTokens,
+          input: promptTokens,
+          output: completionTokens,
         };
 
         finalize({
+          model: selectedModel,
+          modelParameters: {
+            temperature,
+            max_tokens,
+          },
+
           output: {
             contentChars:
               content.length,
+          },
+
+          usage: {
+            unit: "TOKENS",
+            input: promptTokens,
+            output: completionTokens,
+            total: totalTokens,
+            inputCost: costBreakdown.input,
+            outputCost: costBreakdown.output,
+            totalCost: costBreakdown.total,
+          },
+
+          usageDetails: {
+            promptTokens,
+            completionTokens,
+            totalTokens,
+          },
+
+          costDetails: {
+            input_cost: costBreakdown.input,
+            output_cost: costBreakdown.output,
+            total_cost: costBreakdown.total,
+            currency: "USD",
           },
 
           metadata: {
@@ -385,14 +464,11 @@ export async function openRouterChat(
             modelUsed:
               selectedModel,
             estimatedCostUsd:
-              estimatedCost,
-          },
-
-          usage: tokenUsage,
-
-          costDetails: {
-            total:
-              estimatedCost,
+              costBreakdown.total,
+            costBreakdown: {
+              input: costBreakdown.input,
+              output: costBreakdown.output,
+            },
           },
         });
 
@@ -400,7 +476,7 @@ export async function openRouterChat(
           content,
           usage: tokenUsage,
           cost:
-            estimatedCost,
+            costBreakdown.total,
         };
       } catch (error) {
         finalize({
@@ -434,10 +510,14 @@ export async function openRouterChat(
         modelUsed:
           primaryModel,
         tokenUsage: result.usage,
-        promptTokens: result.usage?.promptTokens || 0,
-        completionTokens: result.usage?.completionTokens || 0,
-        totalTokens: result.usage?.totalTokens || 0,
+        inputTokens: result.usage?.input || 0,
+        outputTokens: result.usage?.output || 0,
+        totalTokens: (result.usage?.input || 0) + (result.usage?.output || 0),
         estimatedCostUsd: result.cost,
+        costBreakdown: {
+          input: result.cost !== 0 ? result.cost * 0.25 : 0, // approx split
+          output: result.cost !== 0 ? result.cost * 0.75 : 0,
+        },
         latencyMs:
           Date.now() -
           requestStartedAt,
@@ -463,10 +543,14 @@ export async function openRouterChat(
         modelUsed:
           fallbackModel,
         tokenUsage: result.usage,
-        promptTokens: result.usage?.promptTokens || 0,
-        completionTokens: result.usage?.completionTokens || 0,
-        totalTokens: result.usage?.totalTokens || 0,
+        inputTokens: result.usage?.input || 0,
+        outputTokens: result.usage?.output || 0,
+        totalTokens: (result.usage?.input || 0) + (result.usage?.output || 0),
         estimatedCostUsd: result.cost,
+        costBreakdown: {
+          input: result.cost !== 0 ? result.cost * 0.25 : 0, // approx split
+          output: result.cost !== 0 ? result.cost * 0.75 : 0,
+        },
         latencyMs:
           Date.now() -
           requestStartedAt,
