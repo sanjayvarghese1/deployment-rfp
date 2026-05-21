@@ -128,6 +128,13 @@ export async function updateUserProfile(userId: string, profile: Partial<UserPro
   return data?.[0];
 }
 
+// Lookup helpers
+export async function getEmailByUsername(username: string): Promise<string | null> {
+  const { data, error } = await supabase.from("profiles").select("email").eq("username", username).maybeSingle();
+  if (error && error.code !== "PGRST116") throw error;
+  return data?.email || null;
+}
+
 // Storage operations
 export async function uploadFile(bucket: string, path: string, file: File) {
   const { data, error } = await supabase.storage.from(bucket).upload(path, file, { upsert: true });

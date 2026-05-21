@@ -4,11 +4,11 @@ import { Suspense } from "react";
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { supabase } from "@/services/supabase";
+import { supabase, getEmailByUsername } from "@/services/supabase";
 import { useAuth } from "@/contexts/AuthContext";
 
 function LoginContent() {
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -34,8 +34,20 @@ function LoginContent() {
     setError("");
     setLoading(true);
     try {
+      const rawIdentifier = identifier.trim();
+      if (!rawIdentifier) {
+        throw new Error("Enter a username or email");
+      }
+
+      let loginEmail = rawIdentifier;
+      if (!rawIdentifier.includes("@")) {
+        const lookedUp = await getEmailByUsername(rawIdentifier.toLowerCase());
+        if (!lookedUp) throw new Error("No account found for that username");
+        loginEmail = lookedUp;
+      }
+
       const { data, error: signInError } = await supabase.auth.signInWithPassword({
-        email,
+        email: loginEmail,
         password,
       });
 
@@ -71,8 +83,15 @@ function LoginContent() {
           {error && <div className="bg-[var(--danger-light)] text-[var(--danger)] text-sm p-3 rounded-lg mb-4">{error}</div>}
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-[var(--foreground)] mb-1.5">Email</label>
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required className="input-field w-full" />
+              <label className="block text-sm font-medium text-[var(--foreground)] mb-1.5">Username or Email</label>
+              <input
+                type="text"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
+                required
+                placeholder="username or you@example.com"
+                className="input-field w-full"
+              />
             </div>
             <div>
               <label className="block text-sm font-medium text-[var(--foreground)] mb-1.5">Password</label>
