@@ -108,6 +108,14 @@ export async function updateUserProfile(userId: string, profile: Partial<UserPro
   return data?.[0];
 }
 
+// Lookup helpers
+export async function getEmailByUsername(username: string): Promise<string | null> {
+  const normalized = username.trim().toLowerCase();
+  const { data, error } = await supabase.rpc("get_email_by_username", { p_username: normalized });
+  if (error) throw error;
+  return (data as string | null) || null;
+}
+
 // Storage operations
 export async function uploadFile(bucket: string, path: string, file: File) {
   const { data, error } = await supabase.storage.from(bucket).upload(path, file, { upsert: true });

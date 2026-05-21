@@ -58,10 +58,26 @@ export default function SignupPage() {
       if (!userId) {
         throw new Error("Signup succeeded but no user id was returned");
       }
+      // derive a login username from company_name: trim, lowercase, replace spaces with hyphens
+      const normalizeUsername = (s: string) => s.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9\-_.]/g, "");
+      let baseUsername = normalizeUsername(form.company_name || form.email.split('@')[0]);
+
+      // ensure username uniqueness by checking profiles; append numeric suffixes if needed
+      let username = baseUsername;
+      let counter = 1;
+      while (true) {
+        const { data: existing, error: existingErr } = await supabase.from("profiles").select("id").ilike("username", username).maybeSingle();
+        if (existingErr) {
+          throw existingErr;
+        }
+        if (!existing) break;
+        username = `${baseUsername}-${counter++}`;
+      }
 
       const profilePayload = {
         id: userId,
         company_name: form.company_name,
+        username,
         email: form.email,
         industry: form.industry,
         location: form.location,
@@ -81,7 +97,7 @@ export default function SignupPage() {
       };
 
       if (signUpData.session) {
-        const { error: profileError } = await supabase.from("users").upsert(profilePayload, {
+        const { error: profileError } = await supabase.from("profiles").upsert(profilePayload, {
           onConflict: "id",
         });
 
