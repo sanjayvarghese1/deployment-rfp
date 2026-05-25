@@ -11,6 +11,7 @@ type ScoringCriterion = {
   id: string;
   label: string;
   max_score: number;
+  notes?: string;
 };
 
 type OpenRouterCriterionResponse = {
@@ -61,6 +62,7 @@ function normalizeRubric(mandatoryCriteria?: MandatoryCriteriaPayload | null): S
         id: normalizeCriterionLabel(item.id || label || `criterion_${index + 1}`),
         label,
         max_score: Math.max(1, Math.round(Number(item.value ?? item.recommendedValue ?? 0))),
+        notes: typeof item.notes === "string" ? item.notes : undefined,
       };
     })
     .filter((item) => item.max_score > 0);
@@ -88,9 +90,250 @@ function normalizeRubric(mandatoryCriteria?: MandatoryCriteriaPayload | null): S
   return scaled;
 }
 
+function normalizeSearchText(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function buildCriterionSignalPhrases(criterion: ScoringCriterion): string[] {
+  const labels = [criterion.label, criterion.notes || ""].join(" ").toLowerCase();
+  const seeds = new Set<string>([
+    criterion.label,
+    criterion.notes || "",
+    ...buildCriterionHints(criterion.label),
+  ]);
+
+  const normalized = normalizeCriterionLabel(labels);
+  for (const token of normalized.split("_")) {
+    if (token.length >= 4) seeds.add(token);
+  }
+
+  if (labels.includes("compliance")) {
+    ["compliance", "mandatory", "required", "shall", "must", "certification", "certificate", "policy", "security", "privacy", "sla", "deadline"].forEach((token) => seeds.add(token));
+  }
+
+  if (labels.includes("technical") || labels.includes("fit")) {
+    ["architecture", "implementation", "integration", "deployment", "configuration", "compatibility", "performance", "scalability", "workflow", "solution"].forEach((token) => seeds.add(token));
+  }
+
+  if (labels.includes("timeline") || labels.includes("schedule") || labels.includes("delivery")) {
+    ["timeline", "schedule", "milestone", "weeks", "months", "delivery", "go live", "implementation"].forEach((token) => seeds.add(token));
+  }
+
+  if (labels.includes("experience")) {
+    ["experience", "project", "client", "case study", "reference", "similar", "past work", "implemented"].forEach((token) => seeds.add(token));
+  }
+
+  if (criterion.notes) {
+    criterion.notes
+      .toLowerCase()
+      .split(/[^a-z0-9]+/g)
+      .filter((token) => token.length >= 4)
+      .forEach((token) => seeds.add(token));
+  }
+
+  return [...seeds]
+    .map((item) => item.trim().toLowerCase())
+    .filter((item) => item.length >= 4)
+    .sort((left, right) => right.length - left.length);
+}
+
+function evaluateCriterionEvidence(input: {
+  criterion: ScoringCriterion;
+  rfpMarkdown: string;
+  vendorMarkdown: string;
+  vendorText: string;
+}): { explicitSupport: boolean; partialSupport: boolean; matchedSignals: string[]; strongestSignal?: string } {
+  const vendorRaw = normalizeSearchText(input.vendorText);
+  const vendorExtract = normalizeSearchText(input.vendorMarkdown);
+  const rfpText = normalizeSearchText(input.rfpMarkdown);
+  const signals = buildCriterionSignalPhrases(input.criterion);
+
+  const matchedSignals = signals.filter((signal) => signal && (vendorRaw.includes(signal) || vendorExtract.includes(signal)));
+  const rfpSignals = signals.filter((signal) => signal && rfpText.includes(signal));
+  const strongestSignal = matchedSignals.find((signal) => signal.includes(" ")) || matchedSignals[0];
+
+  const explicitSupport = Boolean(strongestSignal) && rfpSignals.length > 0 && (
+    vendorRaw.includes(strongestSignal) || vendorExtract.includes(strongestSignal)
+  );
+
+  const partialSupport = matchedSignals.length > 0 || rfpSignals.length > 0;
+
+  return { explicitSupport, partialSupport, matchedSignals, strongestSignal };
+}
+
+function tightenCriterionScore(input: {
+  criterion: ScoringCriterion;
+  vendorText: string;
+  vendorMarkdown: string;
+  rfpMarkdown: string;
+  score: CriterionScore;
+  mandatoryCriteriaPresent: boolean;
+}): CriterionScore {
+  const evidence = evaluateCriterionEvidence({
+    criterion: input.criterion,
+    rfpMarkdown: input.rfpMarkdown,
+    vendorMarkdown: input.vendorMarkdown,
+    vendorText: input.vendorText,
+  });
+
+  const confidence = Number.isFinite(Number(input.score.confidence)) ? Number(input.score.confidence) : undefined;
+  const rawScore = clampScore(input.score.score, input.criterion.max_score);
+  let score = rawScore;
+
+  if (!evidence.partialSupport) {
+    score = 0;
+  } else if (input.mandatoryCriteriaPresent && !evidence.explicitSupport) {
+    score = Math.min(score, Math.max(0, Math.round(input.criterion.max_score * 0.35)));
+  } else if (!evidence.explicitSupport) {
+    score = Math.min(score, Math.max(0, Math.round(input.criterion.max_score * (confidence && confidence >= 0.75 ? 0.55 : 0.25))));
+  }
+
+  if (score === 0) {
+    return {
+      ...input.score,
+      score: 0,
+      reason: `No concrete evidence found for ${input.criterion.label}.`,
+      evidence: evidence.matchedSignals.slice(0, 3).join(", "),
+      support_level: "inferred",
+      confidence: 0,
+    } as unknown as CriterionScore;
+  }
+
+  return {
+    ...input.score,
+    score,
+    reason: (evidence.explicitSupport ? input.score.reason : `Partial evidence only for ${input.criterion.label}; score capped to avoid over-crediting vague matches.`).slice(0, 220),
+    evidence: evidence.matchedSignals.slice(0, 3).join(", ") || input.score.evidence,
+    support_level: evidence.explicitSupport ? "explicit" : "partial",
+    confidence: evidence.explicitSupport ? Math.max(Number(input.score.confidence || 0), 0.8) : Math.min(Number(input.score.confidence || 0.55), 0.65),
+  } as unknown as CriterionScore;
+}
+
 function isContentRich(text: string): boolean {
   const normalized = text.replace(/\s+/g, " ").trim();
   return normalized.length > 120;
+}
+
+function guessDocumentType(text: string, fileName?: string): "RFP" | "Vendor Proposal" {
+  const normalized = (String(fileName || "") + " " + String(text || "")).toLowerCase();
+  const vendorSignals = [
+    "vendor proposal",
+    "proposed solution",
+    "proposed timeline",
+    "proposed price",
+    "vendor name",
+    "references",
+    "case study",
+    "we propose",
+    "our approach",
+    "team members",
+    "cost breakdown",
+    "relevant experience",
+    "deliverables mentioned",
+    "our proposal",
+    "statement of work",
+    "pricing",
+    "quote",
+  ];
+  const rfpSignals = [
+    "request for proposal",
+    "request for quotations",
+    "invitation to tender",
+    "scope of work",
+    "submission deadline",
+    "evaluation criteria",
+    "proposal due",
+    "instructions to bidders",
+    "rfp",
+    "rfq",
+    "tender",
+    "contract title",
+    "budget:",
+    "required deliverables",
+    "mandatory requirements",
+    "submission",
+  ];
+
+  const vendorHits = vendorSignals.filter((sig) => normalized.includes(sig));
+  const rfpHits = rfpSignals.filter((sig) => normalized.includes(sig));
+  const fileNameText = String(fileName || "").toLowerCase();
+  const hasVendorPrice = Boolean(extractPriceFromText(text) || extractPriceFromText(fileName || ""));
+  const hasStrongRfpOpening = /request for proposal|request for quotations|invitation to tender/i.test(normalized);
+  const hasStrongRfpStructure = /submission deadline|evaluation criteria|instructions to bidders|mandatory requirements|required deliverables/i.test(normalized);
+
+  if (hasVendorPrice || vendorHits.length > 0) {
+    return "Vendor Proposal";
+  }
+
+  if (hasStrongRfpOpening || (hasStrongRfpStructure && rfpHits.length >= 2)) {
+    return "RFP";
+  }
+
+  if (fileNameText.includes("rfp") && !/proposal|vendor|quote|pricing/i.test(fileNameText)) {
+    return "RFP";
+  }
+
+  return "Vendor Proposal";
+}
+
+function extractMonetaryToken(text: string): string | null {
+  if (!text) return null;
+  const lines = String(text).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  for (const line of lines) {
+    const hasMoneyCue = /(budget|price|cost|investment|estimate|fee|amount|total)/i.test(line);
+    const amountMatch = line.match(/(?:\$|usd|gbp|eur)?\s*([0-9][0-9,]*(?:\.[0-9]+)?(?:\s?(?:k|m|bn))?)/i);
+    const token = amountMatch?.[1]?.trim();
+    if (hasMoneyCue && token && /[0-9]/.test(token)) return token;
+  }
+
+  const moneyMatch = String(text).match(/(?:\$|usd|gbp|eur)\s*[0-9][0-9,]*(?:\.[0-9]+)?(?:\s?(?:k|m|bn))?/i);
+  if (moneyMatch) {
+    const digits = moneyMatch[0].match(/[0-9][0-9,]*(?:\.[0-9]+)?(?:\s?(?:k|m|bn))?/i)?.[0];
+    if (digits) return digits.trim();
+  }
+
+  return null;
+}
+
+function extractBudgetFromText(text: string): string | null {
+  if (!text) return null;
+  const budgetKeywords = ["budget", "project budget", "estimated budget", "total budget", "budget range", "available budget"];
+  const token = extractMonetaryToken(text);
+  if (token) {
+    const lines = String(text).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    for (const line of lines) {
+      if (budgetKeywords.some((keyword) => line.toLowerCase().includes(keyword)) && line.includes(token)) {
+        return token;
+      }
+    }
+  }
+
+  const lines = String(text).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  for (const line of lines) {
+    if (budgetKeywords.some((keyword) => line.toLowerCase().includes(keyword))) {
+      const amountMatch = line.match(/(?:\$|usd|gbp|eur)?\s*([0-9][0-9,]*(?:\.[0-9]+)?(?:\s?(?:k|m|bn))?)/i);
+      const candidate = amountMatch?.[1]?.trim();
+      if (candidate && /[0-9]/.test(candidate)) return candidate;
+    }
+  }
+
+  if (!text) return null;
+  return null;
+}
+
+function extractPriceFromText(text: string): string | null {
+  if (!text) return null;
+  const priceKeywords = ["proposed price", "total price", "price", "cost", "total investment", "bid", "quote", "quoted"];
+  const lines = String(text).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  for (const line of lines) {
+    if (!priceKeywords.some((keyword) => line.toLowerCase().includes(keyword))) continue;
+    const amountMatch = line.match(/(?:\$|usd|gbp|eur)?\s*([0-9][0-9,]*(?:\.[0-9]+)?(?:\s?(?:k|m|bn))?)/i);
+    const candidate = amountMatch?.[1]?.trim();
+    if (candidate && /[0-9]/.test(candidate)) return candidate;
+  }
+
+  const moneyMatch = extractMonetaryToken(text);
+  return moneyMatch;
 }
 
 function getScoringStrictness(): ScoringStrictness {
@@ -266,22 +509,21 @@ function buildCriterionEvidencePrompt(input: {
       ? "- LENIENT MODE: when capability is reasonably implied by concrete context, award partial credit instead of defaulting to zero."
       : "- BALANCED MODE: prioritize explicit evidence, but award partial credit for credible indirect evidence.";
   return `You are Agent 2: The Scorer.
-Score exactly ONE criterion for one vendor proposal using evidence from the provided text.
+Score exactly ONE mandatory criterion for one vendor proposal using evidence from the provided text.
 
 CRITERION
 ${criterion.label}
 Maximum score: ${criterion.max_score}
+${criterion.notes ? `Criterion notes: ${criterion.notes}` : ""}
 
 SCORING RULES
 - Inspect the vendor proposal and the RFP carefully.
-- Use 0 only if there is genuinely no evidence for this criterion.
-- If there is partial evidence, assign a partial score above 0.
-- Do not skip the criterion because another one is weak.
-- Do not return 0 just because the wording is indirect.
-- Match concepts semantically. Do not require the exact criterion label to appear in the proposal.
-- If the proposal uses related language, synonyms, or functional equivalents, treat that as evidence.
-- If you see any relevant partial match, give a non-zero score rather than collapsing to zero.
-- Quote the clearest evidence you used.
+- Treat this as a mandatory requirement, not a style preference.
+- Use 0 when the vendor does not explicitly show the capability, document, deliverable, or commitment.
+- If the proposal only mentions related buzzwords or generic marketing claims, cap the score low.
+- Do not award high scores for vague, inferred, or paraphrased support.
+- Prefer raw vendor text evidence over extracted summaries.
+- Quote the clearest concrete evidence you used.
 - Keep the reason short and factual.
 ${strictnessNote}
 ${retry ? "- This is a retry because the first pass came back with an all-zero result. Re-read the text and be less conservative if evidence is present." : ""}
@@ -517,6 +759,7 @@ async function runScorer(
   vendorMarkdown: string,
   vendorName: string,
   vendorText: string,
+  budget: string,
   mandatoryCriteria?: MandatoryCriteriaPayload,
   options?: { llmOnly?: boolean },
 ): Promise<ProposalAnalysis> {
@@ -532,15 +775,23 @@ async function runScorer(
       vendorText,
       strictness,
     });
+    const tightened = tightenCriterionScore({
+      criterion,
+      vendorText,
+      vendorMarkdown,
+      rfpMarkdown,
+      score: scored,
+      mandatoryCriteriaPresent: Boolean(mandatoryCriteria),
+    });
     criterionScores.push({
       id: criterion.id,
       label: criterion.label,
       max_score: criterion.max_score,
-      score: scored.score,
-      reason: scored.reason,
-      evidence: scored.evidence,
-      support_level: (scored as any).support_level,
-      confidence: (scored as any).confidence,
+      score: tightened.score,
+      reason: tightened.reason,
+      evidence: tightened.evidence,
+      support_level: (tightened as any).support_level,
+      confidence: (tightened as any).confidence,
     });
   }
 
@@ -561,13 +812,21 @@ async function runScorer(
         strictness,
       });
       if (heuristic.score > 0) {
+        const tightened = tightenCriterionScore({
+          criterion,
+          vendorText,
+          vendorMarkdown,
+          rfpMarkdown,
+          score: heuristic,
+          mandatoryCriteriaPresent: Boolean(mandatoryCriteria),
+        });
         criterionScores[i] = {
           ...current,
-          score: heuristic.score,
-          reason: `${current.reason} Heuristic assist: ${heuristic.reason}`.slice(0, 220),
-          evidence: heuristic.evidence || current.evidence,
-          support_level: (heuristic as any).support_level || (current as any).support_level,
-          confidence: (heuristic as any).confidence || (current as any).confidence,
+          score: tightened.score,
+          reason: `${current.reason} Heuristic assist: ${tightened.reason}`.slice(0, 220),
+          evidence: tightened.evidence || current.evidence,
+          support_level: (tightened as any).support_level || (current as any).support_level,
+          confidence: (tightened as any).confidence || (current as any).confidence,
         };
       }
     }
@@ -584,15 +843,23 @@ async function runScorer(
         retry: true,
         strictness,
       });
+      const tightened = tightenCriterionScore({
+        criterion,
+        vendorText,
+        vendorMarkdown,
+        rfpMarkdown,
+        score: scored,
+        mandatoryCriteriaPresent: Boolean(mandatoryCriteria),
+      });
       criterionScores.push({
         id: criterion.id,
         label: criterion.label,
         max_score: criterion.max_score,
-        score: scored.score,
-        reason: scored.reason,
-        evidence: scored.evidence,
-        support_level: (scored as any).support_level,
-        confidence: (scored as any).confidence,
+        score: tightened.score,
+        reason: tightened.reason,
+        evidence: tightened.evidence,
+        support_level: (tightened as any).support_level,
+        confidence: (tightened as any).confidence,
       });
     }
   }
@@ -607,15 +874,23 @@ async function runScorer(
         vendorMarkdown,
         strictness,
       });
+      const tightened = tightenCriterionScore({
+        criterion,
+        vendorText,
+        vendorMarkdown,
+        rfpMarkdown,
+        score: scored,
+        mandatoryCriteriaPresent: Boolean(mandatoryCriteria),
+      });
       criterionScores.push({
         id: criterion.id,
         label: criterion.label,
         max_score: criterion.max_score,
-        score: scored.score,
-        reason: scored.reason,
-        evidence: scored.evidence,
-        support_level: (scored as any).support_level,
-        confidence: (scored as any).confidence,
+        score: tightened.score,
+        reason: tightened.reason,
+        evidence: tightened.evidence,
+        support_level: (tightened as any).support_level,
+        confidence: (tightened as any).confidence,
       });
     }
   }
@@ -632,15 +907,23 @@ async function runScorer(
         lenient: true,
         strictness,
       });
+      const tightened = tightenCriterionScore({
+        criterion,
+        vendorText,
+        vendorMarkdown,
+        rfpMarkdown,
+        score: scored,
+        mandatoryCriteriaPresent: Boolean(mandatoryCriteria),
+      });
       criterionScores.push({
         id: criterion.id,
         label: criterion.label,
         max_score: criterion.max_score,
-        score: scored.score,
-        reason: scored.reason,
-        evidence: scored.evidence,
-        support_level: (scored as any).support_level,
-        confidence: (scored as any).confidence,
+        score: tightened.score,
+        reason: tightened.reason,
+        evidence: tightened.evidence,
+        support_level: (tightened as any).support_level,
+        confidence: (tightened as any).confidence,
       });
     }
   }
@@ -658,15 +941,23 @@ async function runScorer(
         lenient: true,
         strictness,
       });
+      const tightened = tightenCriterionScore({
+        criterion,
+        vendorText,
+        vendorMarkdown,
+        rfpMarkdown,
+        score: scored,
+        mandatoryCriteriaPresent: Boolean(mandatoryCriteria),
+      });
       criterionScores.push({
         id: criterion.id,
         label: criterion.label,
         max_score: criterion.max_score,
-        score: scored.score,
-        reason: scored.reason,
-        evidence: scored.evidence,
-        support_level: (scored as any).support_level,
-        confidence: (scored as any).confidence,
+        score: tightened.score,
+        reason: tightened.reason,
+        evidence: tightened.evidence,
+        support_level: (tightened as any).support_level,
+        confidence: (tightened as any).confidence,
       });
     }
   }
@@ -688,6 +979,8 @@ async function runScorer(
     ))
     .map((item) => `${item.label}: ${item.reason || "Insufficient or indirect evidence"}`).slice(0, 5);
 
+  const mandatoryGaps = criterionScores.filter((item) => item.score === 0).map((item) => item.label).slice(0, 5);
+
   // Risk flags for inferred evidence or low confidence
   const risk_flags = criterionScores
     .filter((item) => ((item as any).support_level === "inferred") || ((item as any).confidence !== undefined && (item as any).confidence < 0.6) || item.score === 0)
@@ -707,6 +1000,7 @@ async function runScorer(
         : overall_score >= 55 ? "Consider"
         : overall_score >= 40 ? "Risky"
         : "Not Recommended",
+    budget: budget || "Not provided",
     criterion_scores,
     scoring_criteria: criterionScores,
     mandatory_criteria: criteriaToMandatoryCriteria(scoringCriteria),
@@ -715,7 +1009,7 @@ async function runScorer(
     risk_flags,
     analysis_summary: overall_score === 0
       ? "The proposal did not contain enough evidence to score any criterion."
-      : `Weighted score based on ${criterionScores.length} criteria and vendor evidence. ${weaknesses.length} identified weaknesses.`,
+      : `Weighted score based on ${criterionScores.length} mandatory criteria and vendor evidence. ${mandatoryGaps.length} mandatory gaps remain.`,
   };
 }
 
@@ -877,10 +1171,17 @@ function buildVendorText(input: {
   const base = [
     `## Vendor Information`,
     `Vendor Name: ${input.vendorName || "Unknown"}`,
-    `Proposed Price: $${input.price || "N/A"}`,
-    `Proposed Timeline: ${input.timeline || "N/A"}`,
-    `Vendor Experience: ${input.experience || "N/A"}`,
   ];
+
+  if (input.price) {
+    base.push(`Proposed Price: ${input.price}`);
+  }
+  if (input.timeline) {
+    base.push(`Proposed Timeline: ${input.timeline}`);
+  }
+  if (input.experience) {
+    base.push(`Vendor Experience: ${input.experience}`);
+  }
 
   if (!input.proposalData) {
     return base.join("\n");
@@ -901,14 +1202,14 @@ function buildVendorText(input: {
       return [
         `## Vendor Information`,
         `Vendor Name: ${input.vendorName || (parsed.vendorName as string) || "Unknown"}`,
-        `Proposed Price: $${input.price || (parsed.totalPrice as string) || "N/A"}`,
-        `Proposed Timeline: ${input.timeline || (parsed.timeline as string) || "N/A"}`,
         "",
+        ...(input.price || parsed.totalPrice ? [`Proposed Price: ${input.price || (parsed.totalPrice as string)}`] : []),
+        ...(input.timeline || parsed.timeline ? [`Proposed Timeline: ${input.timeline || (parsed.timeline as string)}`] : []),
         ...sectionEntries.map(([key, value]) => `## ${String(sectionLabels[key] || key)}\n${String(value || "")}`),
       ].join("\n");
     }
 
-    return [...base, "", "## Vendor Proposal Details (Extracted from PDF):", raw].join("\n");
+      return [...base, "", "## Vendor Proposal Details (Extracted from PDF):", raw].join("\n");
   } catch {
     // Raw extracted PDF text: format as structured vendor proposal for analysis
     return [
@@ -1071,10 +1372,18 @@ export async function POST(req: NextRequest) {
       });
 
       // Agent 1: Extract both documents
-      const [rfpMarkdown, vendorMarkdown] = await Promise.all([
+      const [rfpMarkdown, vendorMarkdownRaw] = await Promise.all([
         runExtractor("RFP", rfpText),
         runExtractor("Vendor Proposal", vendorText),
       ]);
+
+      const resolvedBudget = contract_budget || extractBudgetFromText(rfpMarkdown) || extractBudgetFromText(rfpText);
+
+      // If vendor provided no explicit price, try to pull price from extracted vendor text
+      const extractedPriceForVendor = extractPriceFromText(vendorMarkdownRaw) || extractPriceFromText(String(proposal_file || ""));
+
+      let vendorMarkdown = vendorMarkdownRaw;
+      const vendorDocType = extractedPriceForVendor ? "Vendor Proposal" : guessDocumentType(vendorMarkdownRaw, proposal_file);
 
       readRfpSpan.end({
         output: {
@@ -1098,7 +1407,31 @@ export async function POST(req: NextRequest) {
       });
 
       // Agent 2: Score
-      const scorerResult = await runScorer(rfpMarkdown, vendorMarkdown, vendor_name || "Unknown", vendorText, mandatoryCriteria, { llmOnly: !!body.llmOnly });
+      let scorerResult: ProposalAnalysis;
+      if (vendorDocType === "RFP") {
+        scorerResult = {
+          vendor_name: vendor_name || "Unknown",
+          overall_score: 0,
+          independent_recommendation: "Not Recommended",
+          budget: resolvedBudget || undefined,
+          criterion_scores: {},
+          scoring_criteria: [],
+          mandatory_criteria: mandatoryCriteria || undefined,
+          strengths: [],
+          weaknesses: [],
+          risk_flags: [],
+          analysis_summary: "Uploaded document appears to be an RFP rather than a vendor proposal; scoring skipped.",
+          price: extractedPriceForVendor || undefined,
+          price_confidence: extractedPriceForVendor ? "extracted" : "unknown",
+        } as ProposalAnalysis & any;
+      } else {
+        scorerResult = await runScorer(rfpMarkdown, vendorMarkdown, vendor_name || "Unknown", vendorText, resolvedBudget || "", mandatoryCriteria, { llmOnly: !!body.llmOnly });
+        // If the analysis didn't return a price, attach heuristic extraction
+        if (!((scorerResult as any).price) && extractedPriceForVendor) {
+          (scorerResult as any).price = extractedPriceForVendor;
+          (scorerResult as any).price_confidence = "extracted";
+        }
+      }
 
       extractRequirementsSpan.end({
         output: {
@@ -1193,6 +1526,7 @@ export async function POST(req: NextRequest) {
       console.log(`[AI:POST:full_pipeline] Calling runExtractor for RFP`);
       const rfpMarkdown = await runExtractor("RFP", rfpText);
       console.log(`[AI:POST:full_pipeline] runExtractor completed. rfpMarkdown length=${rfpMarkdown.length}`);
+      const resolvedBudget = contract_budget || extractBudgetFromText(rfpMarkdown) || extractBudgetFromText(rfpText);
 
       trace = langfuse.trace({
         name: `Vendor Analysis - ${contract_title || "Unknown Contract"}`,
@@ -1230,7 +1564,7 @@ export async function POST(req: NextRequest) {
             vendorName: v.vendor_name || "Unknown",
             fileNames: v.proposal_data ? ["proposal_data_json"] : [],
             vendorPrice: v.price || null,
-            contractBudget: contract_budget || null,
+            contractBudget: resolvedBudget || null,
             modelUsed: AGENT_MODEL.DOCUMENT_ANALYSIS,
             tokenUsage: null,
             latency: null,
@@ -1256,9 +1590,15 @@ export async function POST(req: NextRequest) {
         });
 
         try {
-          const vendorMarkdown = await runExtractor("Vendor Proposal", vendorText);
-          readVendorSpan.end({ output: { vendorExtractChars: vendorMarkdown.length } });
+          const vendorMarkdownRaw = await runExtractor("Vendor Proposal", vendorText);
+          readVendorSpan.end({ output: { vendorExtractChars: vendorMarkdownRaw.length } });
 
+          // Try to extract price from the vendor markdown
+          const extractedPrice = extractPriceFromText(vendorMarkdownRaw) || extractPriceFromText(String(v.proposal_file || ""));
+          // Detect if vendor file is actually an RFP and extract budget if so
+          const vendorDocType = extractedPrice ? "Vendor Proposal" : guessDocumentType(vendorMarkdownRaw, v.proposal_file);
+          let vendorMarkdown = vendorMarkdownRaw;
+          let scoreResult: ProposalAnalysis & any;
           const extractRequirementsSpan = vendorTrace.span({
             name: "Extract Requirements",
             input: {
@@ -1268,9 +1608,32 @@ export async function POST(req: NextRequest) {
             },
           });
 
-          console.log(`[AI:POST:full_pipeline] Calling runScorer for vendor=${v.vendor_name}`);
-          const scoreResult = await runScorer(rfpMarkdown, vendorMarkdown, v.vendor_name || "Unknown", vendorText, mandatoryCriteria);
-          console.log(`[AI:POST:full_pipeline] runScorer completed for vendor=${v.vendor_name} score=${scoreResult.overall_score}`);
+          if (vendorDocType === "RFP") {
+            scoreResult = {
+              vendor_name: v.vendor_name || "Unknown",
+              overall_score: 0,
+              independent_recommendation: "Not Recommended",
+              budget: resolvedBudget || undefined,
+              criterion_scores: {},
+              scoring_criteria: [],
+              mandatory_criteria: mandatoryCriteria || undefined,
+              strengths: [],
+              weaknesses: [],
+              risk_flags: [],
+              analysis_summary: "Uploaded document appears to be an RFP rather than a vendor proposal; scoring skipped.",
+              price: extractedPrice || undefined,
+              price_confidence: extractedPrice ? "extracted" : "unknown",
+            } as ProposalAnalysis & any;
+          } else {
+            console.log(`[AI:POST:full_pipeline] Calling runScorer for vendor=${v.vendor_name}`);
+            scoreResult = await runScorer(rfpMarkdown, vendorMarkdown, v.vendor_name || "Unknown", vendorText, resolvedBudget || "", mandatoryCriteria);
+            console.log(`[AI:POST:full_pipeline] runScorer completed for vendor=${v.vendor_name} score=${scoreResult.overall_score}`);
+            // If scorer did not include price, attach heuristic extraction
+            if (!scoreResult?.price && extractedPrice) {
+              scoreResult.price = extractedPrice;
+              scoreResult.price_confidence = "extracted";
+            }
+          }
           extractRequirementsSpan.end({ output: { scoreChars: JSON.stringify(scoreResult).length } });
 
           const scoreVendorSpan = vendorTrace.span({
