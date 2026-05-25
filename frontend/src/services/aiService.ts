@@ -74,6 +74,7 @@ export interface ProposalAnalysis {
   vendor_name: string;
   overall_score: number;
   independent_recommendation: string;
+  budget?: string;
   criterion_scores: Record<string, CriterionScore>;
   scoring_criteria?: AnalysisScoringCriterion[];
   mandatory_criteria?: MandatoryCriteriaPayload;
@@ -154,7 +155,7 @@ export interface SavedProposalAnalysisResult {
 
 type PipelineContract = { title: string; description: string; budget: string; deadline?: string; certifications?: string; mandatoryCriteria?: MandatoryCriteriaPayload };
 
-const ANALYSIS_CACHE_VERSION = 5;
+const ANALYSIS_CACHE_VERSION = 6;
 
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);

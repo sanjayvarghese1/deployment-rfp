@@ -136,6 +136,18 @@ export default function VendorResponsesTab() {
   }, [selectedContract]);
 
   useEffect(() => {
+    if (!selectedContract || !selectedContractData || allProposals.length === 0) return;
+    if (selectedContractData.last_analysis_result?.analyses_by_proposal_id) return;
+    if (backgroundJobId || analyzing) return;
+
+    const autoKey = `analysis-auto-started:${selectedContract}`;
+    if (window.localStorage.getItem(autoKey) === "1") return;
+
+    window.localStorage.setItem(autoKey, "1");
+    void runAIAnalysis();
+  }, [selectedContract, selectedContractData, allProposals, backgroundJobId, analyzing]);
+
+  useEffect(() => {
     if (!backgroundJobId || !selectedContract) return;
 
     let active = true;
@@ -253,13 +265,19 @@ export default function VendorResponsesTab() {
         if (p.proposal_type === "uploaded_pdf" && (!proposalData || proposalData.trim() === "")) {
           setAnalysisProgress(`Extracting PDF for "${p.vendor_name}"...`);
           proposalData = await extractPdfText(p.proposal_file || "", p.vendor_name);
-          const { error: updateErr } = await (supabase.from("proposals").update({ extracted_text: proposalData }).eq("id", p.proposal_id) as any);
+          const extractedPriceMatch = extractCurrencyLikeText(proposalData);
+          const extractedPriceValue = parseNumber(extractedPriceMatch);
+          const updatePayload: Record<string, unknown> = { extracted_text: proposalData };
+          if (extractedPriceValue > 0 && !p.price) {
+            updatePayload.price = formatCurrency(extractedPriceValue);
+          }
+          const { error: updateErr } = await (supabase.from("proposals").update(updatePayload).eq("id", p.proposal_id) as any);
           if (updateErr) console.warn(`Failed to save extracted text for ${p.vendor_name}:`, updateErr);
         }
         return {
           proposal_id: p.proposal_id,
           vendor_name: p.vendor_name,
-          price: p.price || "",
+          price: p.price || (typeof proposalData === "string" ? formatCurrency(parseNumber(extractCurrencyLikeText(proposalData))) : "") || "",
           timeline: p.timeline || "",
           experience: p.experience || "",
           proposal_data: proposalData,
