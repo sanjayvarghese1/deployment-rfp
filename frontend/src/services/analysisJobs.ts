@@ -45,7 +45,7 @@ function isMissingAnalysisJobsTable(error: unknown): boolean {
 function requireSupabaseAdmin() {
   if (!supabaseAdmin) {
     throw new Error(
-      "Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY for analysis_jobs persistence"
+      "Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY for analysis_jobs persistence. Check frontend/.env.local and restart the dev server."
     );
   }
 

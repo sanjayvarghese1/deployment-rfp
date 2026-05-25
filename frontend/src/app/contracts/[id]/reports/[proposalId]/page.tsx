@@ -64,6 +64,18 @@ function formatAnalysisTimeline(analysis: ProposalAnalysis | null, proposal: any
   return extractedTimeline && extractedTimeline.length < 80 ? extractedTimeline : "Not provided";
 }
 
+function formatAnalysisBudget(analysis: ProposalAnalysis | null, contract: any): string {
+  const budgetValue = analysis?.budget || contract?.budget || contract?.budget_range || contract?.budget_framework;
+  if (!budgetValue) return "Not provided";
+
+  const numericBudget = parseNumber(extractCurrencyLikeText(String(budgetValue)));
+  if (numericBudget > 0) {
+    return formatCurrency(numericBudget);
+  }
+
+  return String(budgetValue);
+}
+
 export default function VendorReportPage() {
   const params = useParams<{ id?: string; proposalId?: string }>();
   const router = useRouter();
@@ -158,7 +170,7 @@ export default function VendorReportPage() {
           </div>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-4">
           <div className="rounded-xl border border-[var(--divider)] bg-white/90 p-4 shadow-sm backdrop-blur-sm">
             <p className="text-xs uppercase tracking-wide text-[var(--muted)]">Overall score</p>
             <div className="mt-2 flex items-end justify-between gap-3">
@@ -167,6 +179,11 @@ export default function VendorReportPage() {
                 {analysis.independent_recommendation}
               </span>
             </div>
+          </div>
+          <div className="rounded-xl border border-[var(--divider)] bg-white/90 p-4 shadow-sm backdrop-blur-sm">
+            <p className="text-xs uppercase tracking-wide text-[var(--muted)]">Budget</p>
+            <p className="mt-2 text-3xl font-semibold text-[var(--foreground)]">{formatAnalysisBudget(analysis, contract)}</p>
+            <p className="text-sm text-[var(--muted)]">Budget returned with the AI analysis</p>
           </div>
           <div className="rounded-xl border border-[var(--divider)] bg-white/90 p-4 shadow-sm backdrop-blur-sm">
             <p className="text-xs uppercase tracking-wide text-[var(--muted)]">Mandatory criteria</p>
@@ -252,6 +269,7 @@ export default function VendorReportPage() {
               <p className="text-sm font-semibold text-[var(--foreground)] mb-2">Snapshot</p>
               <div className="space-y-2 text-sm">
                 <p><span className="text-[var(--muted)]">Recommendation:</span> {recommendation || "Not provided"}</p>
+                <p><span className="text-[var(--muted)]">Budget:</span> {formatAnalysisBudget(analysis, contract)}</p>
                 <p><span className="text-[var(--muted)]">Price:</span> {formatAnalysisPrice(analysis, proposal)} <span className="text-[var(--muted)]">({priceConfidence})</span></p>
                 {a?.price_estimation_reasoning && priceConfidence !== "exact" && <p className="text-xs text-[var(--muted)]">{a.price_estimation_reasoning}</p>}
                 <p><span className="text-[var(--muted)]">Timeline:</span> {formatAnalysisTimeline(analysis, proposal)} <span className="text-[var(--muted)]">({timelineConfidence})</span></p>

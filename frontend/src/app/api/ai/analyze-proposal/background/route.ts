@@ -167,14 +167,21 @@ async function processBackgroundAnalysis(jobId: string, origin: string, body: Ba
       if (!vendor || !score || !vendor.proposal_id) continue;
       proposalUpdates.push(
         (async () => {
-          await db
-            .from("proposals")
-            .update({
-              ai_score: score.overall_score,
-              risk_level: score.risk_flags?.length > 0 ? "High" : "Low",
-            })
-            .eq("id", vendor.proposal_id)
-            .eq("contract_id", contractId);
+          const updatePayload: any = {
+            ai_score: score.overall_score,
+            risk_level: score.risk_flags?.length > 0 ? "High" : "Low",
+          };
+          // Persist extracted price if the proposal doesn't already have a price
+          try {
+            const { data: existing } = await db.from("proposals").select("price").eq("id", vendor.proposal_id).maybeSingle();
+            if ((!existing || !existing.price) && (score as any)?.price) {
+              updatePayload.price = (score as any).price;
+            }
+          } catch (err) {
+            // ignore read errors and proceed with minimal payload
+          }
+
+          await db.from("proposals").update(updatePayload).eq("id", vendor.proposal_id).eq("contract_id", contractId);
         })()
       );
     }
