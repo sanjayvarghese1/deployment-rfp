@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { openRouterChat, openRouterChatJSON, AGENT_MODEL } from "@/lib/openrouter";
+import { guardedOpenRouterChat, guardedOpenRouterChatJSON } from "@/lib/llmGuard";
 import { geminiChat, geminiChatJSON, isGeminiAvailable } from "@/lib/gemini";
 import { langfuse } from "@/config/langfuse";
 
@@ -43,7 +44,7 @@ Parse and return ONLY valid JSON in this exact format, no markdown:
 Map the content to the closest matching section. If a section isn't found, leave it as an empty string.`;
 
       // Agent: Requirement Extraction → Mistral (parse uploaded doc → JSON)
-      const parsed = await openRouterChatJSON({
+      const parsed = await guardedOpenRouterChatJSON({
         model: AGENT_MODEL.REQUIREMENT_EXTRACTION,
         messages: [
           { role: "system", content: "You are a JSON-only API. You MUST respond with raw valid JSON only. No explanations, no markdown, no text before or after the JSON object." },
@@ -113,7 +114,7 @@ Return ONLY the expanded section text. No JSON, no markdown code blocks.`;
 
       let expanded = "";
       try {
-          expanded = await openRouterChat({
+          expanded = await guardedOpenRouterChat({
           model: AGENT_MODEL.RFP_WRITING,
           messages: [
             { role: "system", content: "You are a professional proposal writer. Expand sections into detailed chapters with sub-headings, tables, and cross-references. Preserve all existing data." },
@@ -337,7 +338,7 @@ RULES:
 - If a field wasn't discussed, use "" or [].
 - "other_details" should capture anything that doesn't fit the above categories.`;
 
-    const extractedData = await openRouterChatJSON({
+    const extractedData = await guardedOpenRouterChatJSON({
       model: AGENT_MODEL.REQUIREMENT_EXTRACTION,
       messages: [
         { role: "system", content: "You are a precise data extraction engine. Extract every fact, number, name, and detail from the interview. Return ONLY raw JSON." },
@@ -394,7 +395,7 @@ RULES:
 
     try {
       // Agent: RFP Writing → Llama 3 (full proposal generation)
-      const proposal = await openRouterChatJSON({
+      const proposal = await guardedOpenRouterChatJSON({
         model: AGENT_MODEL.RFP_WRITING,
         messages: [
           { role: "system", content: "You are a JSON-only API. Respond with ONLY valid JSON. Every section must have a short string value with key facts. No markdown fences." },

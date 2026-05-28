@@ -3,6 +3,7 @@
 /* ═══════════════════════════════════════════════════════════ */
 
 import { openRouterChat, openRouterChatJSON } from "@/lib/openrouter";
+import { guardedOpenRouterChat, guardedOpenRouterChatJSON } from "@/lib/llmGuard";
 import {
   RFP_SECTIONS,
   type SectionKey,
@@ -114,7 +115,7 @@ async function sendPrompt(
   system?: string,
   overrides?: { temperature?: number; num_predict?: number },
 ): Promise<string> {
-  return openRouterChat({
+  return guardedOpenRouterChat({
     model,
     messages: [
       ...(system ? [{ role: "system" as const, content: system }] : []),
@@ -315,7 +316,7 @@ async function reviewQA(
     .join("\n");
 
   try {
-    return await openRouterChatJSON<QAResult>({
+    return await guardedOpenRouterChatJSON<QAResult>({
       model: PIPELINE_MODELS.qualityAssurance,
       messages: [
         {
@@ -457,7 +458,7 @@ ${input.additional_details ? `\nAdditional Details: ${input.additional_details}`
 Provide your comprehensive analysis and decomposition as a JSON object.`;
 
   try {
-    const result = await openRouterChatJSON<DecompositionAnalysis>({
+    const result = await guardedOpenRouterChatJSON<DecompositionAnalysis>({
       model: PIPELINE_MODELS.documentAnalysis,
       messages: [
         { role: "system", content: DECOMPOSITION_SYSTEM_PROMPT },

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { openRouterChat, openRouterChatJSON, AGENT_MODEL } from "@/lib/openrouter";
+import { guardedOpenRouterChat, guardedOpenRouterChatJSON } from "@/lib/llmGuard";
 import { langfuse } from "@/config/langfuse";
 import type { ProposalAnalysis, JudgeResult } from "@/services/aiService";
 
@@ -183,7 +184,7 @@ RETURN STRICT JSON:
 }`;
 
   try {
-    return await openRouterChatJSON({
+    return await guardedOpenRouterChatJSON({
       model: AGENT_MODEL.REQUIREMENT_EXTRACTION,
       messages: [
         { role: "system", content: "You are a JSON-only API. You MUST respond with raw valid JSON only. No explanations, no markdown, no text before or after the JSON object. Keep all string values concise (under 30 words each)." },
@@ -212,7 +213,7 @@ RETURN STRICT JSON:
       // Re-prompt a JSON fixer: convert the raw analysis into strict JSON matching the schema.
       const fixerPrompt = `You are a JSON fixer. Convert the following analysis output into strict JSON matching this schema:\n${JSON.stringify({ vendor_name: "", overall_score: 0, independent_recommendation: "", criterion_scores: { technical_fit: { score: 0, reason: "" }, cost_efficiency: { score: 0, reason: "" }, relevant_experience: { score: 0, reason: "" }, timeline_fit: { score: 0, reason: "" }, compliance_completeness: { score: 0, reason: "" } }, strengths: [], weaknesses: [], risk_flags: [], analysis_summary: "" }, null, 2)}\n\nHere is the raw analysis:\n\n${raw}`;
 
-      return await openRouterChatJSON({
+      return await guardedOpenRouterChatJSON({
         model: AGENT_MODEL.REQUIREMENT_EXTRACTION,
         messages: [
           { role: "system", content: "You are a JSON-only API. Extract valid JSON only, no surrounding text." },
@@ -362,7 +363,7 @@ RETURN STRICT JSON:
 }`;
 
   try {
-    return await openRouterChatJSON({
+    return await guardedOpenRouterChatJSON({
       model: AGENT_MODEL.QUALITY_ASSURANCE,
       messages: [
         { role: "system", content: "You are a JSON-only API. You MUST respond with raw valid JSON only. No explanations, no markdown, no text before or after the JSON object. Keep all string values concise." },
