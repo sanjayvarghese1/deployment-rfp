@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { openRouterChatJSON, AGENT_MODEL } from "@/lib/openrouter";
+import { guardedOpenRouterChatJSON } from "@/lib/llmGuard";
 import { langfuse } from "@/config/langfuse";
 
 export async function POST(req: NextRequest) {
@@ -39,7 +40,7 @@ Extract and return ONLY valid JSON (no markdown) in this exact format:
 Parse real numbers from the text. If a cost says "$45,000" parse as 45000. If timeline says "3 months" parse as 12 weeks. Use professional hex colors (blues, greens, violets). If data isn't available for a chart, return an empty array for that field.`;
 
       // Agent: Requirement Extraction → Mistral (structured data extraction)
-      const chartData = await openRouterChatJSON({
+      const chartData = await guardedOpenRouterChatJSON({
         model: AGENT_MODEL.REQUIREMENT_EXTRACTION,
         messages: [
           { role: "system", content: "You are a JSON-only API. You MUST respond with raw valid JSON only. No explanations, no markdown, no text before or after the JSON object." },
@@ -95,7 +96,7 @@ Evaluate each section and return ONLY valid JSON (no markdown):
 Be specific, actionable, and honest. Score empty sections as 0. Consider RFP alignment, professionalism, completeness, and persuasiveness.`;
 
       // Agent: Quality Assurance → Llama 3 (critique & scoring)
-      const critique = await openRouterChatJSON({
+      const critique = await guardedOpenRouterChatJSON({
         model: AGENT_MODEL.QUALITY_ASSURANCE,
         messages: [
           { role: "system", content: "You are a JSON-only API. You MUST respond with raw valid JSON only. No explanations, no markdown, no text before or after the JSON object." },
@@ -135,7 +136,7 @@ Improve ONLY the 3 sections identified in "top_improvements". Return ONLY valid 
 Make improvements specific, professional, and aligned with the RFP requirements. Add detail where lacking, improve structure, and make the proposal more compelling.`;
 
       // Agent: RFP Writing → Llama 3 (proposal refinement)
-      const refined = await openRouterChatJSON({
+      const refined = await guardedOpenRouterChatJSON({
         model: AGENT_MODEL.RFP_WRITING,
         messages: [
           { role: "system", content: "You are a JSON-only API. You MUST respond with raw valid JSON only. No explanations, no markdown, no text before or after the JSON object." },

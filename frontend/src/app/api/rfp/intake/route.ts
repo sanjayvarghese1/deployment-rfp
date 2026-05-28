@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { openRouterChatJSON, AGENT_MODEL } from "@/lib/openrouter";
+import { AGENT_MODEL } from "@/lib/openrouter";
+import { guardedOpenRouterChatJSON } from "@/lib/llmGuard";
 import { RFP_QUESTIONS, FINAL_INTAKE_KEY, RFP_SECTIONS, SECTION_LABELS, getCategoryQuestionLabel, getFinalIntakeQuestionLabel } from "@/lib/rfp/config";
 
 const REQUIRED_KEYS = RFP_QUESTIONS.map((question) => question.key);
@@ -183,15 +184,17 @@ Rules:
 - Make summary one sentence that reflects what you understood from the message.
 - Do not invent facts.`;
 
-      const extracted = await openRouterChatJSON<any>({
-        model: AGENT_MODEL.INTAKE_EXTRACTION,
-        messages: [
-          { role: "system", content: extractPrompt },
-          { role: "user", content: `Current known answers: ${JSON.stringify(mergedBase)}\n\nLatest user message: ${message}` },
-        ],
-        temperature: 0.1,
-        max_tokens: 600,
-      });
+      const extracted = await guardedOpenRouterChatJSON<any>(
+        {
+          model: AGENT_MODEL.INTAKE_EXTRACTION,
+          messages: [
+            { role: "system", content: extractPrompt },
+            { role: "user", content: `Current known answers: ${JSON.stringify(mergedBase)}\n\nLatest user message: ${message}` },
+          ],
+          temperature: 0.1,
+          max_tokens: 600,
+        }
+      );
 
       const rawValue = extracted && typeof extracted === "object" ? extracted.value : null;
       const rawSummary = extracted && typeof extracted === "object" ? extracted.summary : "";
