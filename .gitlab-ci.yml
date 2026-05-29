@@ -36,6 +36,22 @@ default:
     - curl -fsSL -o /tmp/terraform.zip "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
     - unzip -o /tmp/terraform.zip -d /usr/local/bin
     - terraform version
+    - |
+      export TF_VAR_vercel_api_token="${TF_VAR_vercel_api_token:-${VERCEL_API_TOKEN:-}}"
+      export TF_VAR_vercel_git_repository="${TF_VAR_vercel_git_repository:-${VERCEL_GIT_REPOSITORY:-}}"
+      export TF_VAR_vercel_backend_url="${TF_VAR_vercel_backend_url:-${VERCEL_BACKEND_URL:-}}"
+      export TF_VAR_next_public_supabase_url="${TF_VAR_next_public_supabase_url:-${NEXT_PUBLIC_SUPABASE_URL:-}}"
+      export TF_VAR_next_public_supabase_anon_key="${TF_VAR_next_public_supabase_anon_key:-${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}}"
+      export TF_VAR_supabase_service_role_key="${TF_VAR_supabase_service_role_key:-${SUPABASE_SERVICE_ROLE_KEY:-}}"
+      export TF_VAR_openrouter_api_key="${TF_VAR_openrouter_api_key:-${OPENROUTER_API_KEY:-}}"
+      export TF_VAR_vercel_team_id="${TF_VAR_vercel_team_id:-${VERCEL_TEAM_ID:-}}"
+      export TF_VAR_vercel_custom_domain="${TF_VAR_vercel_custom_domain:-${VERCEL_CUSTOM_DOMAIN:-}}"
+      export TF_VAR_pdfshift_api_key="${TF_VAR_pdfshift_api_key:-${PDFSHIFT_API_KEY:-}}"
+      export TF_VAR_extractor_webhook_secret="${TF_VAR_extractor_webhook_secret:-${EXTRACTOR_WEBHOOK_SECRET:-}}"
+      export TF_VAR_langfuse_secret_key="${TF_VAR_langfuse_secret_key:-${LANGFUSE_SECRET_KEY:-}}"
+      export TF_VAR_langfuse_public_key="${TF_VAR_langfuse_public_key:-${LANGFUSE_PUBLIC_KEY:-}}"
+      export TF_VAR_email_user="${TF_VAR_email_user:-${EMAIL_USER:-}}"
+      export TF_VAR_email_pass="${TF_VAR_email_pass:-${EMAIL_PASS:-}}"
 
 frontend:validate:
   stage: validate
