@@ -16,6 +16,15 @@ GitLab CI usage:
 
 GitLab CI no longer runs Terraform jobs automatically. Terraform is left here for manual use when you intentionally want to manage the Vercel project configuration yourself.
 
+When Terraform runs in GitLab CI, it uses GitLab-managed HTTP state with these runtime variables:
+
+- `TF_STATE_NAME` (defaults to `deployment-rfp`)
+- `TF_HTTP_ADDRESS`
+- `TF_HTTP_LOCK_ADDRESS`
+- `TF_HTTP_UNLOCK_ADDRESS`
+- `TF_HTTP_USERNAME`
+- `TF_HTTP_PASSWORD`
+
 Run locally if needed:
 
 ```bash
