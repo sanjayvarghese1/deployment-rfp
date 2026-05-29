@@ -80,7 +80,7 @@ terraform:validate:
   image: hashicorp/terraform:1.11.3
   script:
     - cd terraform
-    - terraform init -backend=false
+    - terraform init -backend=false -input=false
     - terraform validate
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "main"'
@@ -96,8 +96,8 @@ terraform:plan:
     - export TF_HTTP_UNLOCK_ADDRESS="${TF_HTTP_ADDRESS}/lock"
     - export TF_HTTP_USERNAME="gitlab-ci-token"
     - export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
-    - terraform init -reconfigure
-    - terraform plan -out=tfplan
+    - terraform init -reconfigure -input=false
+    - terraform plan -input=false -out=tfplan
   artifacts:
     paths:
       - terraform/tfplan
@@ -118,7 +118,7 @@ terraform:apply:
     - export TF_HTTP_UNLOCK_ADDRESS="${TF_HTTP_ADDRESS}/lock"
     - export TF_HTTP_USERNAME="gitlab-ci-token"
     - export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
-    - terraform init -reconfigure
+    - terraform init -reconfigure -input=false
     - terraform apply -auto-approve tfplan
   when: manual
   allow_failure: false
