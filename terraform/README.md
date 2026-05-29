@@ -35,6 +35,13 @@ terraform validate
 terraform plan
 ```
 
+If the Vercel project already exists, import it into Terraform state once before applying:
+
+```bash
+cd terraform
+terraform import vercel_project.frontend prj_KAMfDTWuibMhTjj9Jo2i2F6Muehu
+```
+
 Required GitLab CI/CD variables:
 
 - `vercel_api_token`
