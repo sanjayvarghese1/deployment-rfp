@@ -11,6 +11,7 @@ stages:
   - iac
   - integration
   - render
+  - mirror
   - deploy
   - deploy_verify
 
@@ -217,6 +218,20 @@ frontend:render:
     - node tests/wait-for-http.mjs http://127.0.0.1:3000/companies
     - node tests/route-and-api-smoke.mjs http://127.0.0.1:3000
     - node tests/pdf-render-smoke.mjs http://127.0.0.1:3000
+
+mirror:github:
+  stage: mirror
+  image: alpine/git:2.49.0
+  script:
+    - |
+      if [ -z "${GITHUB_MIRROR_TOKEN:-}" ] || [ -z "${GITHUB_MIRROR_REPOSITORY:-}" ]; then
+        echo "Missing GITHUB_MIRROR_TOKEN or GITHUB_MIRROR_REPOSITORY. Configure GitHub mirroring in GitLab CI/CD variables."
+        exit 1
+      fi
+    - git remote add github "https://x-access-token:${GITHUB_MIRROR_TOKEN}@github.com/${GITHUB_MIRROR_REPOSITORY}.git"
+    - git push github HEAD:main
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
 
 vercel:deploy:
   stage: deploy
