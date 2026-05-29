@@ -966,28 +966,17 @@ export async function runGeneratePipeline(
 
   // 6. PDF Generation (main RFP)
   progress("PDF Generation", "Generating PDF document...");
-  const { generateRfpPdf, generateFallbackPdf } = await import("./pdf");
+  const { generateRfpPdf } = await import("./pdf");
   const dateStr = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
   
   // Enhance sections with visual elements before PDF generation
   const enhancedSections = enhanceWithVisuals(allSections);
   
-  let pdfBuffer: Uint8Array;
-  try {
-    pdfBuffer = await generateRfpPdf(
-      { ...metadata, date: dateStr },
-      enhancedSections,
-      template as "software" | "manufacturing" | "consulting" | "government",
-    );
-  } catch (pdfErr) {
-    console.warn("PDF generation via PDFShift failed, falling back to local jsPDF (caught in pipeline):", pdfErr);
-    try {
-      pdfBuffer = await generateFallbackPdf({ ...metadata, date: dateStr }, enhancedSections, template as "software" | "manufacturing" | "consulting" | "government");
-    } catch (fallbackErr) {
-      console.error("Fallback PDF generation also failed:", fallbackErr);
-      throw fallbackErr;
-    }
-  }
+  const pdfBuffer: Uint8Array = await generateRfpPdf(
+    { ...metadata, date: dateStr },
+    enhancedSections,
+    template as "software" | "manufacturing" | "consulting" | "government",
+  );
   const pdfBase64 = Buffer.from(pdfBuffer).toString("base64");
 
   // 7. Subsystem RFP generation (only when decomposition is needed AND user selected subsystems)
@@ -1073,26 +1062,11 @@ export async function runGeneratePipeline(
             date: dateStr,
           };
 
-          let subPdfBuffer: Uint8Array;
-          try {
-            subPdfBuffer = await generateRfpPdf(
-              subsystemMetadata,
-              enhancedSubsystemSections,
-              template as "software" | "manufacturing" | "consulting" | "government",
-            );
-          } catch (subPdfErr) {
-            console.warn(`Subsystem PDF generation via PDFShift failed for "${subsystemName}", falling back to local jsPDF:`, subPdfErr);
-            try {
-              subPdfBuffer = await generateFallbackPdf(
-                subsystemMetadata,
-                enhancedSubsystemSections,
-                template as "software" | "manufacturing" | "consulting" | "government",
-              );
-            } catch (subFallbackErr) {
-              console.error(`Subsystem fallback PDF also failed for "${subsystemName}":`, subFallbackErr);
-              throw subFallbackErr;
-            }
-          }
+          const subPdfBuffer: Uint8Array = await generateRfpPdf(
+            subsystemMetadata,
+            enhancedSubsystemSections,
+            template as "software" | "manufacturing" | "consulting" | "government",
+          );
 
           decompositionData.subsystemDrafts.push({
             name: subsystemName,
@@ -1126,26 +1100,11 @@ export async function runGeneratePipeline(
               date: dateStr,
             };
 
-            let subPdfBuffer: Uint8Array;
-            try {
-              subPdfBuffer = await generateRfpPdf(
-                fallbackMetadata,
-                enhancedFallbackSections,
-                template as "software" | "manufacturing" | "consulting" | "government",
-              );
-            } catch (subPdfErr) {
-              console.warn(`Fallback subsystem PDF via PDFShift failed for "${subsystemName}", trying local jsPDF:`, subPdfErr);
-              try {
-                subPdfBuffer = await generateFallbackPdf(
-                  fallbackMetadata,
-                  enhancedFallbackSections,
-                  template as "software" | "manufacturing" | "consulting" | "government",
-                );
-              } catch (subFallbackErr) {
-                console.error(`Fallback subsystem PDF generation also failed for "${subsystemName}":`, subFallbackErr);
-                throw subFallbackErr;
-              }
-            }
+            const subPdfBuffer: Uint8Array = await generateRfpPdf(
+              fallbackMetadata,
+              enhancedFallbackSections,
+              template as "software" | "manufacturing" | "consulting" | "government",
+            );
 
             decompositionData.subsystemDrafts.push({
               name: subsystemName,
