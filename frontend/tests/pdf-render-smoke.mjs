@@ -27,4 +27,5 @@ const response = await fetch(new URL("/api/rfp/render-pdf", baseUrl), {
 assert.equal(response.status, 200, "/api/rfp/render-pdf should return 200");
 
 const payload = await response.json();
-assert.ok(typeof payload.pdfBase64 === "string" && payload.pdfBase64.length > 0, "pdfBase64 should be present");
+// Require a reasonably-sized PDF to detect fallback/no-op generators
+assert.ok(typeof payload.pdfBase64 === "string" && payload.pdfBase64.length > 1000, "pdfBase64 should be present and reasonably large");

@@ -6,6 +6,7 @@ workflow:
 
 stages:
   - validate
+  - iac
   - unit
   - build
   - integration
@@ -36,21 +37,32 @@ default:
     - unzip -o /tmp/terraform.zip -d /usr/local/bin
     - terraform version
     - |
-      export TF_VAR_vercel_api_token="${TF_VAR_vercel_api_token:-${VERCEL_API_TOKEN:-}}"
-      export TF_VAR_vercel_git_repository="${TF_VAR_vercel_git_repository:-${VERCEL_GIT_REPOSITORY:-}}"
-      export TF_VAR_vercel_backend_url="${TF_VAR_vercel_backend_url:-${VERCEL_BACKEND_URL:-}}"
-      export TF_VAR_next_public_supabase_url="${TF_VAR_next_public_supabase_url:-${NEXT_PUBLIC_SUPABASE_URL:-}}"
-      export TF_VAR_next_public_supabase_anon_key="${TF_VAR_next_public_supabase_anon_key:-${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}}"
-      export TF_VAR_supabase_service_role_key="${TF_VAR_supabase_service_role_key:-${SUPABASE_SERVICE_ROLE_KEY:-}}"
-      export TF_VAR_openrouter_api_key="${TF_VAR_openrouter_api_key:-${OPENROUTER_API_KEY:-}}"
-      export TF_VAR_vercel_team_id="${TF_VAR_vercel_team_id:-${VERCEL_TEAM_ID:-}}"
-      export TF_VAR_vercel_custom_domain="${TF_VAR_vercel_custom_domain:-${VERCEL_CUSTOM_DOMAIN:-}}"
-      export TF_VAR_pdfshift_api_key="${TF_VAR_pdfshift_api_key:-${PDFSHIFT_API_KEY:-}}"
-      export TF_VAR_extractor_webhook_secret="${TF_VAR_extractor_webhook_secret:-${EXTRACTOR_WEBHOOK_SECRET:-}}"
-      export TF_VAR_langfuse_secret_key="${TF_VAR_langfuse_secret_key:-${LANGFUSE_SECRET_KEY:-}}"
-      export TF_VAR_langfuse_public_key="${TF_VAR_langfuse_public_key:-${LANGFUSE_PUBLIC_KEY:-}}"
-      export TF_VAR_email_user="${TF_VAR_email_user:-${EMAIL_USER:-}}"
-      export TF_VAR_email_pass="${TF_VAR_email_pass:-${EMAIL_PASS:-}}"
+      # Map the lowercase GitLab variables into Terraform's required TF_VAR_* names.
+      export TF_VAR_vercel_api_token="${vercel_api_token:-}"
+      export TF_VAR_vercel_git_repository="${vercel_git_repository:-}"
+      export TF_VAR_vercel_backend_url="${vercel_backend_url:-}"
+      export TF_VAR_next_public_supabase_url="${next_public_supabase_url:-}"
+      export TF_VAR_next_public_supabase_anon_key="${next_public_supabase_anon_key:-}"
+      export TF_VAR_next_public_supabase_storage_bucket="${next_public_supabase_storage_bucket:-}"
+      export TF_VAR_supabase_service_role_key="${supabase_service_role_key:-}"
+      export TF_VAR_openrouter_api_key="${openrouter_api_key:-}"
+      export TF_VAR_openrouter_base_url="${openrouter_base_url:-}"
+      export TF_VAR_openrouter_primary_model="${openrouter_primary_model:-}"
+      export TF_VAR_openrouter_fallback_model="${openrouter_fallback_model:-}"
+      export TF_VAR_openrouter_analysis_model="${openrouter_analysis_model:-}"
+      export TF_VAR_vercel_team_id="${vercel_team_id:-}"
+      export TF_VAR_vercel_custom_domain="${vercel_custom_domain:-}"
+      export TF_VAR_pdfshift_api_key="${pdfshift_api_key:-}"
+      export TF_VAR_pdfshift_sandbox="${pdfshift_sandbox:-}"
+      export TF_VAR_extractor_webhook_secret="${extractor_webhook_secret:-}"
+      export TF_VAR_langfuse_secret_key="${langfuse_secret_key:-}"
+      export TF_VAR_langfuse_public_key="${langfuse_public_key:-}"
+      export TF_VAR_langfuse_base_url="${langfuse_base_url:-}"
+      export TF_VAR_email_user="${email_user:-}"
+      export TF_VAR_email_pass="${email_pass:-}"
+      export TF_VAR_llm_guard_enable="${llm_guard_enable:-}"
+      export TF_VAR_analysis_full_score_confidence="${analysis_full_score_confidence:-}"
+      export TF_VAR_analysis_scoring_strictness="${analysis_scoring_strictness:-}"
 
 frontend:validate:
   stage: validate
@@ -99,14 +111,54 @@ frontend:build:
         printf '%s=%s\n' "$key" "$value" >> .env.local
       }
       : > .env.local
-      write_env NEXT_PUBLIC_SUPABASE_URL "${NEXT_PUBLIC_SUPABASE_URL:-$TF_VAR_next_public_supabase_url}" "https://example.invalid"
-      write_env NEXT_PUBLIC_SUPABASE_ANON_KEY "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-$TF_VAR_next_public_supabase_anon_key}" "placeholder-anon-key"
-      write_env NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET "${NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET:-$TF_VAR_next_public_supabase_storage_bucket}" "proposals"
-      write_env NEXT_PUBLIC_BACKEND_URL "${NEXT_PUBLIC_BACKEND_URL:-$TF_VAR_vercel_backend_url}" "http://127.0.0.1:8000"
-      write_env NEXT_PUBLIC_APP_URL "${NEXT_PUBLIC_APP_URL:-$TF_VAR_vercel_frontend_url}" "http://localhost:3000"
-      write_env PDFSHIFT_API_KEY "${PDFSHIFT_API_KEY:-$TF_VAR_pdfshift_api_key}" ""
+      write_env NEXT_PUBLIC_SUPABASE_URL "${NEXT_PUBLIC_SUPABASE_URL:-${next_public_supabase_url:-}}" "https://example.invalid"
+      write_env NEXT_PUBLIC_SUPABASE_ANON_KEY "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-${next_public_supabase_anon_key:-}}" "placeholder-anon-key"
+      write_env NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET "${NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET:-${next_public_supabase_storage_bucket:-}}" "proposals"
+      write_env NEXT_PUBLIC_BACKEND_URL "${NEXT_PUBLIC_BACKEND_URL:-${vercel_backend_url:-}}" "http://127.0.0.1:8000"
+      write_env NEXT_PUBLIC_APP_URL "${NEXT_PUBLIC_APP_URL:-${vercel_frontend_url:-}}" "http://localhost:3000"
+      write_env PDFSHIFT_API_KEY "${PDFSHIFT_API_KEY:-${pdfshift_api_key:-}}" ""
     - npm ci
     - npm run build
+
+ci:precheck:
+  stage: validate
+  image: node:20-bookworm
+  script:
+    - |
+      # Only run precheck on main to avoid blocking MR pipelines that lack protected secrets
+      if [ "$CI_COMMIT_BRANCH" != "main" ]; then
+        echo "ci:precheck skipped (not main)."
+        exit 0
+      fi
+      missing=0
+      check_any() {
+        found=0
+        for n in "$@"; do
+          if printenv "$n" >/dev/null 2>&1; then
+            echo "Found required env: $n"
+            found=1
+            break
+          fi
+        done
+        if [ "$found" -ne 1 ]; then
+          echo "Missing any of: $*"
+          missing=1
+        fi
+      }
+      check_any next_public_supabase_url NEXT_PUBLIC_SUPABASE_URL
+      check_any next_public_supabase_anon_key NEXT_PUBLIC_SUPABASE_ANON_KEY
+      check_any next_public_supabase_storage_bucket NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET
+      check_any langfuse_secret_key LANGFUSE_SECRET_KEY
+      check_any langfuse_public_key LANGFUSE_PUBLIC_KEY
+      check_any langfuse_base_url LANGFUSE_BASE_URL
+      check_any openrouter_api_key OPENROUTER_API_KEY
+      check_any pdfshift_api_key PDFSHIFT_API_KEY
+      check_any supabase_service_role_key SUPABASE_SERVICE_ROLE_KEY
+      check_any vercel_api_token VERCEL_API_TOKEN
+      if [ "$missing" -ne 0 ]; then
+        echo "One or more required env vars are missing for main pipeline. Set protected CI variables using the lowercase names from GitLab."
+        exit 1
+      fi
 backend:integration:
   stage: integration
   image: python:3.12-slim
@@ -140,11 +192,15 @@ frontend:render:
     - npm run start -- --hostname 127.0.0.1 --port 3000 &
     - node tests/wait-for-http.mjs http://127.0.0.1:3000/companies
     - node tests/route-and-api-smoke.mjs http://127.0.0.1:3000
+    - node tests/analysis-smoke.mjs http://127.0.0.1:3000
+    - node tests/rfp-generate-smoke.mjs http://127.0.0.1:3000
     - node tests/pdf-render-smoke.mjs http://127.0.0.1:3000
 
 mirror:github:
   stage: mirror
-  image: alpine/git:2.49.0
+  image:
+    name: alpine/git:2.49.0
+    entrypoint: ["/bin/sh", "-lc"]
   script:
     - |
       if [ -z "${GITHUB_MIRROR_TOKEN:-}" ] || [ -z "${GITHUB_MIRROR_REPOSITORY:-}" ]; then
@@ -153,5 +209,51 @@ mirror:github:
       fi
     - git remote add github "https://x-access-token:${GITHUB_MIRROR_TOKEN}@github.com/${GITHUB_MIRROR_REPOSITORY}.git"
     - git push github HEAD:main
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+terraform:fmt:
+  stage: validate
+  extends: .terraform_base
+  script:
+    - cd terraform
+    - terraform fmt -check -diff || (echo "terraform fmt failed" && exit 1)
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+terraform:validate:
+  stage: validate
+  extends: .terraform_base
+  script:
+    - cd terraform
+    - terraform init -backend=false
+    - terraform validate
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+terraform:plan:
+  stage: iac
+  extends: .terraform_base
+  script:
+    - cd terraform
+    - terraform init -input=false
+    - terraform plan -no-color -out=tfplan
+    - terraform show -no-color tfplan
+  when: manual
+  allow_failure: false
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+terraform:apply:
+  stage: iac
+  extends: .terraform_base
+  script:
+    - cd terraform
+    - terraform init -input=false
+    - terraform apply -auto-approve tfplan
+  when: manual
+  allow_failure: false
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
