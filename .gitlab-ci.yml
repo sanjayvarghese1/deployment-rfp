@@ -101,12 +101,12 @@ frontend:build:
         printf '%s=%s\n' "$key" "$value" >> .env.local
       }
       : > .env.local
-      write_env NEXT_PUBLIC_SUPABASE_URL "${NEXT_PUBLIC_SUPABASE_URL:-$TF_VAR_next_public_supabase_url}" "https://example.invalid"
-      write_env NEXT_PUBLIC_SUPABASE_ANON_KEY "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-$TF_VAR_next_public_supabase_anon_key}" "placeholder-anon-key"
-      write_env NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET "${NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET:-$TF_VAR_next_public_supabase_storage_bucket}" "proposals"
-      write_env NEXT_PUBLIC_BACKEND_URL "${NEXT_PUBLIC_BACKEND_URL:-$TF_VAR_vercel_backend_url}" "http://127.0.0.1:8000"
-      write_env NEXT_PUBLIC_APP_URL "${NEXT_PUBLIC_APP_URL:-$TF_VAR_vercel_frontend_url}" "http://localhost:3000"
-      write_env PDFSHIFT_API_KEY "${PDFSHIFT_API_KEY:-$TF_VAR_pdfshift_api_key}" ""
+      write_env NEXT_PUBLIC_SUPABASE_URL "${NEXT_PUBLIC_SUPABASE_URL:-${TF_VAR_next_public_supabase_url:-${TL_VAR_next_public_supabase_url:-}}}" "https://example.invalid"
+      write_env NEXT_PUBLIC_SUPABASE_ANON_KEY "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-${TF_VAR_next_public_supabase_anon_key:-${TL_VAR_next_public_supabase_anon_key:-}}}" "placeholder-anon-key"
+      write_env NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET "${NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET:-${TF_VAR_next_public_supabase_storage_bucket:-${TL_VAR_next_public_supabase_storage_bucket:-}}}" "proposals"
+      write_env NEXT_PUBLIC_BACKEND_URL "${NEXT_PUBLIC_BACKEND_URL:-${TF_VAR_vercel_backend_url:-${TL_VAR_vercel_backend_url:-}}}" "http://127.0.0.1:8000"
+      write_env NEXT_PUBLIC_APP_URL "${NEXT_PUBLIC_APP_URL:-${TF_VAR_vercel_frontend_url:-${TL_VAR_vercel_frontend_url:-}}}" "http://localhost:3000"
+      write_env PDFSHIFT_API_KEY "${PDFSHIFT_API_KEY:-${TF_VAR_pdfshift_api_key:-${TL_VAR_pdfshift_api_key:-}}}" ""
     - npm ci
     - npm run build
 
@@ -121,20 +121,27 @@ ci:precheck:
         exit 0
       fi
       missing=0
-      check() {
-        if [ -z "${!1:-}" ]; then
-          echo "Missing required env: $1"
+      check_any() {
+        names="$@"
+        found=0
+        for n in $names; do
+          if [ -n "${!n:-}" ]; then
+            echo "Found required env: $n"
+            found=1
+            break
+          fi
+        done
+        if [ "$found" -ne 1 ]; then
+          echo "Missing any of: $names"
           missing=1
-        else
-          echo "Found required env: $1"
         fi
       }
-      check NEXT_PUBLIC_SUPABASE_URL
-      check NEXT_PUBLIC_SUPABASE_ANON_KEY
-      check LANGFUSE_SECRET_KEY
-      check LANGFUSE_PUBLIC_KEY
+      check_any NEXT_PUBLIC_SUPABASE_URL TF_VAR_next_public_supabase_url TL_VAR_next_public_supabase_url
+      check_any NEXT_PUBLIC_SUPABASE_ANON_KEY TF_VAR_next_public_supabase_anon_key TL_VAR_next_public_supabase_anon_key
+      check_any LANGFUSE_SECRET_KEY TF_VAR_langfuse_secret_key TL_VAR_langfuse_secret_key
+      check_any LANGFUSE_PUBLIC_KEY TF_VAR_langfuse_public_key TL_VAR_langfuse_public_key
       if [ "$missing" -ne 0 ]; then
-        echo "One or more required env vars are missing for main pipeline. Set protected CI variables."
+        echo "One or more required env vars are missing for main pipeline. Set protected CI variables (NEXT_PUBLIC_*, TF_VAR_*, or TL_VAR_*)."
         exit 1
       fi
 backend:integration:
