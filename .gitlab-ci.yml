@@ -192,6 +192,8 @@ frontend:render:
     - npm run start -- --hostname 127.0.0.1 --port 3000 &
     - node tests/wait-for-http.mjs http://127.0.0.1:3000/companies
     - node tests/route-and-api-smoke.mjs http://127.0.0.1:3000
+    - node tests/analysis-smoke.mjs http://127.0.0.1:3000
+    - node tests/rfp-generate-smoke.mjs http://127.0.0.1:3000
     - node tests/pdf-render-smoke.mjs http://127.0.0.1:3000
 
 mirror:github:
