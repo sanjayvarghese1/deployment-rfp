@@ -160,6 +160,7 @@ ci:precheck:
       check_any NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET
       check_any DEPLOYED_BACKEND_URL
       check_any DEPLOYED_FRONTEND_URL
+      check_any vercel_git_repository
       check_any langfuse_secret_key
       check_any langfuse_public_key
       check_any langfuse_base_url
@@ -173,7 +174,6 @@ ci:precheck:
       check_any pdfshift_sandbox
       check_any supabase_service_role_key
       check_any vercel_api_token
-      check_any vercel_git_repository
       if [ "$missing" -ne 0 ]; then
         echo "One or more required env vars are missing for main pipeline. Set the protected GitLab variables listed in the docs."
         exit 1
