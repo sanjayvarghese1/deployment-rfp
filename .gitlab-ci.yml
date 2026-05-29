@@ -255,10 +255,11 @@ terraform:validate:
 terraform:plan:
   stage: iac
   extends: .terraform_base
+  resource_group: terraform-state
   script:
     - cd terraform
     - terraform init -input=false
-    - terraform plan -no-color -out=tfplan
+    - terraform plan -lock-timeout=5m -no-color -out=tfplan
     - terraform show -no-color tfplan
   when: manual
   allow_failure: false
@@ -272,16 +273,17 @@ terraform:plan:
 terraform:apply:
   stage: iac
   extends: .terraform_base
+  resource_group: terraform-state
   script:
     - cd terraform
     - terraform init -input=false
     - |
       if [ ! -f tfplan ]; then
         echo "tfplan not found; generating a fresh plan in the apply job."
-        terraform plan -no-color -out=tfplan
+        terraform plan -lock-timeout=5m -no-color -out=tfplan
       fi
     - terraform show -no-color tfplan
-    - terraform apply -auto-approve tfplan
+    - terraform apply -lock-timeout=5m -auto-approve tfplan
   when: manual
   allow_failure: false
   dependencies:
