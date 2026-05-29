@@ -262,6 +262,10 @@ terraform:plan:
     - terraform show -no-color tfplan
   when: manual
   allow_failure: false
+  artifacts:
+    when: always
+    paths:
+      - terraform/tfplan
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
 
@@ -271,8 +275,16 @@ terraform:apply:
   script:
     - cd terraform
     - terraform init -input=false
+    - |
+      if [ ! -f tfplan ]; then
+        echo "tfplan not found; generating a fresh plan in the apply job."
+        terraform plan -no-color -out=tfplan
+      fi
+    - terraform show -no-color tfplan
     - terraform apply -auto-approve tfplan
   when: manual
   allow_failure: false
+  dependencies:
+    - terraform:plan
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
