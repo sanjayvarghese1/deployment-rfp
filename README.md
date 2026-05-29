@@ -71,6 +71,7 @@ Terraform is now scaffolded in [terraform/](terraform/) and can be executed from
 - GitLab CI runs `terraform fmt`, `terraform validate`, `terraform plan`, and a manual `terraform apply` using GitLab remote state.
 
 Recommended GitLab variables for Terraform are documented in [terraform/README.md](terraform/README.md).
+For a deeper explanation of the CI/CD and IaC design, see [docs/CI_CD_IAC.md](docs/CI_CD_IAC.md).
 
 ## GitLab CI/CD
 
