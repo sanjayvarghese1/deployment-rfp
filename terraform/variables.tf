@@ -74,92 +74,92 @@ variable "openrouter_base_url" {
 }
 
 variable "openrouter_primary_model" {
-  type        = string
-  default     = "minimax/minimax-m2.7"
+  type    = string
+  default = "minimax/minimax-m2.7"
 }
 
 variable "openrouter_intake_model" {
-  type        = string
-  default     = "minimax/minimax-m2.7"
+  type    = string
+  default = "minimax/minimax-m2.7"
 }
 
 variable "openrouter_fallback_model" {
-  type        = string
-  default     = "minimax/minimax-m2.5"
+  type    = string
+  default = "minimax/minimax-m2.5"
 }
 
 variable "openrouter_analysis_model" {
-  type        = string
-  default     = "minimax/minimax-m2.7"
+  type    = string
+  default = "minimax/minimax-m2.7"
 }
 
 variable "langfuse_secret_key" {
-  type        = string
-  default     = ""
-  sensitive   = true
+  type      = string
+  default   = ""
+  sensitive = true
 }
 
 variable "langfuse_public_key" {
-  type        = string
-  default     = ""
-  sensitive   = true
+  type      = string
+  default   = ""
+  sensitive = true
 }
 
 variable "langfuse_base_url" {
-  type        = string
-  default     = "https://cloud.langfuse.com"
+  type    = string
+  default = "https://cloud.langfuse.com"
 }
 
 variable "pdfshift_api_key" {
-  type        = string
-  default     = ""
-  sensitive   = true
+  type      = string
+  default   = ""
+  sensitive = true
 }
 
 variable "pdfshift_sandbox" {
-  type        = string
-  default     = "false"
+  type    = string
+  default = "false"
 }
 
 variable "email_service" {
-  type        = string
-  default     = "gmail"
+  type    = string
+  default = "gmail"
 }
 
 variable "email_user" {
-  type        = string
-  default     = ""
-  sensitive   = true
+  type      = string
+  default   = ""
+  sensitive = true
 }
 
 variable "email_pass" {
-  type        = string
-  default     = ""
-  sensitive   = true
+  type      = string
+  default   = ""
+  sensitive = true
 }
 
 variable "extractor_webhook_secret" {
-  type        = string
-  default     = ""
-  sensitive   = true
+  type      = string
+  default   = ""
+  sensitive = true
 }
 
 variable "analysis_scoring_strictness" {
-  type        = string
-  default     = "balanced"
+  type    = string
+  default = "balanced"
 }
 
 variable "analysis_full_score_confidence" {
-  type        = string
-  default     = "0.9"
+  type    = string
+  default = "0.9"
 }
 
 variable "llm_guard_enable" {
-  type        = string
-  default     = "true"
+  type    = string
+  default = "true"
 }
 
 variable "ollama_base_url" {
-  type        = string
-  default     = "http://localhost:11434"
+  type    = string
+  default = "http://localhost:11434"
 }

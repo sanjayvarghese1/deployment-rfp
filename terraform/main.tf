@@ -22,7 +22,7 @@ locals {
     EMAIL_PASS                          = { value = var.email_pass, sensitive = true }
     EXTRACTOR_WEBHOOK_SECRET            = { value = var.extractor_webhook_secret, sensitive = true }
     ANALYSIS_SCORING_STRICTNESS         = { value = var.analysis_scoring_strictness, sensitive = true }
-    ANALYSIS_FULL_SCORE_CONFIDENCE       = { value = var.analysis_full_score_confidence, sensitive = true }
+    ANALYSIS_FULL_SCORE_CONFIDENCE      = { value = var.analysis_full_score_confidence, sensitive = true }
     LLM_GUARD_ENABLE                    = { value = var.llm_guard_enable, sensitive = true }
     OLLAMA_BASE_URL                     = { value = var.ollama_base_url, sensitive = true }
   }
@@ -34,7 +34,7 @@ resource "vercel_project" "frontend" {
   root_directory   = "frontend"
   install_command  = "npm ci"
   build_command    = "npm run build"
-  output_directory  = ".next"
+  output_directory = ".next"
 
   git_repository = {
     type              = "gitlab"
