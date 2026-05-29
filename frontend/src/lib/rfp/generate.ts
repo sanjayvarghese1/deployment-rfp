@@ -972,7 +972,7 @@ export async function runGeneratePipeline(
   // Enhance sections with visual elements before PDF generation
   const enhancedSections = enhanceWithVisuals(allSections);
   
-  const pdfBuffer = await generateRfpPdf(
+  const pdfBuffer: Uint8Array = await generateRfpPdf(
     { ...metadata, date: dateStr },
     enhancedSections,
     template as "software" | "manufacturing" | "consulting" | "government",
@@ -1062,7 +1062,7 @@ export async function runGeneratePipeline(
             date: dateStr,
           };
 
-          const subPdfBuffer = await generateRfpPdf(
+          const subPdfBuffer: Uint8Array = await generateRfpPdf(
             subsystemMetadata,
             enhancedSubsystemSections,
             template as "software" | "manufacturing" | "consulting" | "government",
@@ -1100,7 +1100,7 @@ export async function runGeneratePipeline(
               date: dateStr,
             };
 
-            const subPdfBuffer = await generateRfpPdf(
+            const subPdfBuffer: Uint8Array = await generateRfpPdf(
               fallbackMetadata,
               enhancedFallbackSections,
               template as "software" | "manufacturing" | "consulting" | "government",
