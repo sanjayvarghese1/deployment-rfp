@@ -41,8 +41,9 @@ assert.ok(typeof aiHealthBody.ok === "boolean");
 
 const langfuseResponse = await expectStatus("/api/debug/langfuse-health", [200]);
 const langfuseBody = await langfuseResponse.json();
-assert.ok(langfuseBody.envVarsPresent);
-assert.ok(langfuseBody.traceTest);
+// Require real Langfuse keys and a successful trace; reject mock/fallbacks
+assert.equal(langfuseBody.envVarsPresent.secretKey, true, "Langfuse secret key must be present");
+assert.equal(langfuseBody.traceTest.success, true, "Langfuse trace must succeed (no mock)");
 
 const generateValidationResponse = await expectStatus("/api/rfp/generate", [400], {
   method: "POST",

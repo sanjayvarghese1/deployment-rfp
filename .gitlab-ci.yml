@@ -6,6 +6,7 @@ workflow:
 
 stages:
   - validate
+  - iac
   - unit
   - build
   - integration
@@ -107,6 +108,34 @@ frontend:build:
       write_env PDFSHIFT_API_KEY "${PDFSHIFT_API_KEY:-$TF_VAR_pdfshift_api_key}" ""
     - npm ci
     - npm run build
+
+ci:precheck:
+  stage: validate
+  image: node:20-bookworm
+  script:
+    - |
+      # Only run precheck on main to avoid blocking MR pipelines that lack protected secrets
+      if [ "$CI_COMMIT_BRANCH" != "main" ]; then
+        echo "ci:precheck skipped (not main)."
+        exit 0
+      fi
+      missing=0
+      check() {
+        if [ -z "${!1:-}" ]; then
+          echo "Missing required env: $1"
+          missing=1
+        else
+          echo "Found required env: $1"
+        fi
+      }
+      check NEXT_PUBLIC_SUPABASE_URL
+      check NEXT_PUBLIC_SUPABASE_ANON_KEY
+      check LANGFUSE_SECRET_KEY
+      check LANGFUSE_PUBLIC_KEY
+      if [ "$missing" -ne 0 ]; then
+        echo "One or more required env vars are missing for main pipeline. Set protected CI variables."
+        exit 1
+      fi
 backend:integration:
   stage: integration
   image: python:3.12-slim
@@ -153,5 +182,51 @@ mirror:github:
       fi
     - git remote add github "https://x-access-token:${GITHUB_MIRROR_TOKEN}@github.com/${GITHUB_MIRROR_REPOSITORY}.git"
     - git push github HEAD:main
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+terraform:fmt:
+  stage: validate
+  extends: .terraform_base
+  script:
+    - cd terraform
+    - terraform fmt -check -diff || (echo "terraform fmt failed" && exit 1)
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+terraform:validate:
+  stage: validate
+  extends: .terraform_base
+  script:
+    - cd terraform
+    - terraform init -backend=false
+    - terraform validate
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+terraform:plan:
+  stage: iac
+  extends: .terraform_base
+  script:
+    - cd terraform
+    - terraform init -input=false
+    - terraform plan -no-color -out=tfplan
+    - terraform show -no-color tfplan
+  when: manual
+  allow_failure: false
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+terraform:apply:
+  stage: iac
+  extends: .terraform_base
+  script:
+    - cd terraform
+    - terraform init -input=false
+    - terraform apply -auto-approve tfplan
+  when: manual
+  allow_failure: false
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'

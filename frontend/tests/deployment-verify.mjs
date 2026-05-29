@@ -50,8 +50,8 @@ if (frontendUrl) {
   const langfuseResponse = await fetch(new URL("/api/debug/langfuse-health", frontendUrl));
   assert.equal(langfuseResponse.status, 200, "/api/debug/langfuse-health should return 200");
   const langfuseBody = await langfuseResponse.json();
-  assert.ok(langfuseBody.envVarsPresent);
-  assert.ok(langfuseBody.traceTest);
+  assert.equal(langfuseBody.envVarsPresent.secretKey, true, "Langfuse secret key must be present");
+  assert.equal(langfuseBody.traceTest.success, true, "Langfuse trace must succeed (no mock)");
 
   const generateValidationResponse = await fetch(new URL("/api/rfp/generate", frontendUrl), {
     method: "POST",
@@ -87,5 +87,5 @@ if (frontendUrl) {
 
   assert.equal(renderResponse.status, 200, "/api/rfp/render-pdf should return 200");
   const renderBody = await renderResponse.json();
-  assert.ok(typeof renderBody.pdfBase64 === "string" && renderBody.pdfBase64.length > 0, "pdfBase64 should be returned");
+  assert.ok(typeof renderBody.pdfBase64 === "string" && renderBody.pdfBase64.length > 1000, "pdfBase64 should be returned and reasonably large");
 }
