@@ -102,7 +102,7 @@ terraform:fmt:
     - cd terraform
     - terraform fmt -check -recursive
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "main"'
 
 terraform:validate:
   extends: .terraform_base
@@ -112,7 +112,7 @@ terraform:validate:
     - terraform init -backend=false -input=false
     - terraform validate
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "main"'
 
 # Keep Terraform on main so Vercel project settings and env vars stay in sync.
 terraform:plan:

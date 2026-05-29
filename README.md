@@ -88,7 +88,7 @@ The repository now includes a GitLab pipeline in [`.gitlab-ci.yml`](.gitlab-ci.y
 Set these variables in GitLab CI/CD settings when you want GitLab to mirror to GitHub, drive Vercel/CD, or run live deployment verification:
 
 - `GITHUB_MIRROR_REPOSITORY` in `owner/repo` form
-- `GITHUB_MIRROR_TOKEN` with permission to push to the GitHub repo
+- `GITHUB_MIRROR_TOKEN`, a GitHub personal access token or fine-grained token with write access to the repo
 - `VERCEL_DEPLOY_HOOK_URL` for the Vercel production deploy hook
 - `DEPLOYED_FRONTEND_URL` for the Vercel site
 - `DEPLOYED_BACKEND_URL` for the Render backend
