@@ -129,8 +129,12 @@ resource "vercel_project_environment_variable" "frontend" {
   project_id = vercel_project.frontend.id
   key        = each.key
   value      = each.value.value
-  target     = ["production"]
+  target     = ["production", "preview"]
   sensitive  = each.value.sensitive
+
+  lifecycle {
+    ignore_changes = [value]
+  }
 }
 
 resource "vercel_project_domain" "frontend" {
