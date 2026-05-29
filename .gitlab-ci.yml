@@ -46,13 +46,14 @@ default:
     - export TF_HTTP_USERNAME="gitlab-ci-token"
     - export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
     - |
-      # Map the lowercase GitLab variables into Terraform's required TF_VAR_* names.
+      # Map the GitLab variables you configured into Terraform's required TF_VAR_* names.
       export TF_VAR_vercel_api_token="${vercel_api_token:-}"
       export TF_VAR_vercel_git_repository="${vercel_git_repository:-}"
-      export TF_VAR_vercel_backend_url="${vercel_backend_url:-}"
-      export TF_VAR_next_public_supabase_url="${next_public_supabase_url:-}"
-      export TF_VAR_next_public_supabase_anon_key="${next_public_supabase_anon_key:-}"
-      export TF_VAR_next_public_supabase_storage_bucket="${next_public_supabase_storage_bucket:-}"
+      export TF_VAR_vercel_backend_url="${DEPLOYED_BACKEND_URL:-}"
+      export TF_VAR_vercel_frontend_url="${DEPLOYED_FRONTEND_URL:-}"
+      export TF_VAR_next_public_supabase_url="${NEXT_PUBLIC_SUPABASE_URL:-}"
+      export TF_VAR_next_public_supabase_anon_key="${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}"
+      export TF_VAR_next_public_supabase_storage_bucket="${NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET:-}"
       export TF_VAR_supabase_service_role_key="${supabase_service_role_key:-}"
       export TF_VAR_openrouter_api_key="${openrouter_api_key:-}"
       export TF_VAR_openrouter_base_url="${openrouter_base_url:-}"
@@ -120,12 +121,12 @@ frontend:build:
         printf '%s=%s\n' "$key" "$value" >> .env.local
       }
       : > .env.local
-      write_env NEXT_PUBLIC_SUPABASE_URL "${NEXT_PUBLIC_SUPABASE_URL:-${next_public_supabase_url:-}}" "https://example.invalid"
-      write_env NEXT_PUBLIC_SUPABASE_ANON_KEY "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-${next_public_supabase_anon_key:-}}" "placeholder-anon-key"
-      write_env NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET "${NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET:-${next_public_supabase_storage_bucket:-}}" "proposals"
-      write_env NEXT_PUBLIC_BACKEND_URL "${NEXT_PUBLIC_BACKEND_URL:-${vercel_backend_url:-}}" "http://127.0.0.1:8000"
-      write_env NEXT_PUBLIC_APP_URL "${NEXT_PUBLIC_APP_URL:-${vercel_frontend_url:-}}" "http://localhost:3000"
-      write_env PDFSHIFT_API_KEY "${PDFSHIFT_API_KEY:-${pdfshift_api_key:-}}" ""
+      write_env NEXT_PUBLIC_SUPABASE_URL "${NEXT_PUBLIC_SUPABASE_URL:-}" "https://example.invalid"
+      write_env NEXT_PUBLIC_SUPABASE_ANON_KEY "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}" "placeholder-anon-key"
+      write_env NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET "${NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET:-}" "proposals"
+      write_env NEXT_PUBLIC_BACKEND_URL "${DEPLOYED_BACKEND_URL:-}" "http://127.0.0.1:8000"
+      write_env NEXT_PUBLIC_APP_URL "${DEPLOYED_FRONTEND_URL:-}" "http://localhost:3000"
+      write_env PDFSHIFT_API_KEY "${pdfshift_api_key:-}" ""
     - npm ci
     - npm run build
 
@@ -154,18 +155,27 @@ ci:precheck:
           missing=1
         fi
       }
-      check_any next_public_supabase_url NEXT_PUBLIC_SUPABASE_URL
-      check_any next_public_supabase_anon_key NEXT_PUBLIC_SUPABASE_ANON_KEY
-      check_any next_public_supabase_storage_bucket NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET
-      check_any langfuse_secret_key LANGFUSE_SECRET_KEY
-      check_any langfuse_public_key LANGFUSE_PUBLIC_KEY
-      check_any langfuse_base_url LANGFUSE_BASE_URL
-      check_any openrouter_api_key OPENROUTER_API_KEY
-      check_any pdfshift_api_key PDFSHIFT_API_KEY
-      check_any supabase_service_role_key SUPABASE_SERVICE_ROLE_KEY
-      check_any vercel_api_token VERCEL_API_TOKEN
+      check_any NEXT_PUBLIC_SUPABASE_URL
+      check_any NEXT_PUBLIC_SUPABASE_ANON_KEY
+      check_any NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET
+      check_any DEPLOYED_BACKEND_URL
+      check_any DEPLOYED_FRONTEND_URL
+      check_any langfuse_secret_key
+      check_any langfuse_public_key
+      check_any langfuse_base_url
+      check_any openrouter_api_key
+      check_any openrouter_base_url
+      check_any openrouter_primary_model
+      check_any openrouter_intake_model
+      check_any openrouter_fallback_model
+      check_any openrouter_analysis_model
+      check_any pdfshift_api_key
+      check_any pdfshift_sandbox
+      check_any supabase_service_role_key
+      check_any vercel_api_token
+      check_any vercel_git_repository
       if [ "$missing" -ne 0 ]; then
-        echo "One or more required env vars are missing for main pipeline. Set protected CI variables using the lowercase names from GitLab."
+        echo "One or more required env vars are missing for main pipeline. Set the protected GitLab variables listed in the docs."
         exit 1
       fi
 backend:integration:
