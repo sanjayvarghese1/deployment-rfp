@@ -68,6 +68,14 @@ export async function GET(req: NextRequest) {
     console.error("[Debug] Langfuse test failed:", errMsg);
   }
 
+  // If env vars are missing, the SDK may use a mock client that appears to 'succeed'.
+  // Treat missing critical config as a test failure so CI detects mock usage.
+  if (!hasSecretKey || !hasPublicKey || !hasBaseUrl) {
+    testResults.traceTest.success = false;
+    testResults.traceTest.error = testResults.traceTest.error || "Missing Langfuse configuration (using mock client)";
+    console.warn("[Debug] Langfuse config incomplete — marking traceTest.success = false");
+  }
+
   console.log("[Debug] Health check complete", testResults);
 
   return NextResponse.json(testResults, { status: 200 });
