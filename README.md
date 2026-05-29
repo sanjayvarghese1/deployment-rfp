@@ -1,6 +1,6 @@
-# Procurement Link
+# Procurenet
 
-Procurement Link is a procurement and RFP platform with a Next.js frontend, a FastAPI backend boundary, and Supabase-powered data and authentication.
+Procurnet is a procurement and RFP platform with a Next.js frontend, a FastAPI backend boundary, and Supabase-powered data and authentication.
 
 ## Website
 
