@@ -81,12 +81,16 @@ The repository now includes a GitLab pipeline in [`.gitlab-ci.yml`](.gitlab-ci.y
 - build: frontend production build
 - integration: local backend and frontend smoke tests
 - render: frontend PDF generation smoke test against the hosted PDF route
+- deploy: triggers the Vercel production deploy hook from GitLab on `main`
 - deploy verification: optional checks against the live Vercel and Render URLs
 
-Set these variables in GitLab CI/CD settings when you want live deployment verification:
+Set these variables in GitLab CI/CD settings when you want GitLab to drive Vercel/CD or live deployment verification:
 
+- `VERCEL_DEPLOY_HOOK_URL` for the Vercel production deploy hook
 - `DEPLOYED_FRONTEND_URL` for the Vercel site
 - `DEPLOYED_BACKEND_URL` for the Render backend
+
+GitLab and GitHub do not sync automatically just because both remotes exist in the local clone. If you want both hosting platforms to receive the same commits, push to both remotes or configure repository mirroring. The GitLab deploy job only runs when the commit reaches GitLab.
 
 The deploy verification job checks the backend health endpoint, the frontend redirect, and the PDF generation route end to end.
 

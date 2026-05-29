@@ -14,6 +14,7 @@ What is already managed separately:
 
 GitLab CI usage:
 
+- All Terraform jobs run on `main` so the Vercel project configuration and environment variables stay aligned with the production branch.
 - `terraform:fmt` checks formatting
 - `terraform:validate` validates the configuration
 - `terraform:plan` creates a remote-state-backed plan in GitLab

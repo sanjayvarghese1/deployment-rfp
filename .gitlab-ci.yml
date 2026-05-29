@@ -11,6 +11,7 @@ stages:
   - iac
   - integration
   - render
+  - deploy
   - deploy_verify
 
 variables:
@@ -100,7 +101,7 @@ terraform:fmt:
     - cd terraform
     - terraform fmt -check -recursive
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
 
 terraform:validate:
   extends: .terraform_base
@@ -110,8 +111,9 @@ terraform:validate:
     - terraform init -backend=false -input=false
     - terraform validate
   rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
 
+# Keep Terraform on main so Vercel project settings and env vars stay in sync.
 terraform:plan:
   extends: .terraform_base
   stage: iac
@@ -215,6 +217,19 @@ frontend:render:
     - node tests/wait-for-http.mjs http://127.0.0.1:3000/companies
     - node tests/route-and-api-smoke.mjs http://127.0.0.1:3000
     - node tests/pdf-render-smoke.mjs http://127.0.0.1:3000
+
+vercel:deploy:
+  stage: deploy
+  image: curlimages/curl:8.8.0
+  script:
+    - |
+      if [ -z "${VERCEL_DEPLOY_HOOK_URL:-}" ]; then
+        echo "Missing VERCEL_DEPLOY_HOOK_URL. Configure a Vercel production deploy hook in GitLab CI/CD variables."
+        exit 1
+      fi
+    - curl --fail --show-error --request POST "$VERCEL_DEPLOY_HOOK_URL"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
 
 deploy:verify:
   stage: deploy_verify
