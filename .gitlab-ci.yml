@@ -91,6 +91,18 @@ terraform:validate:
   stage: iac
   script:
     - cd terraform
+    - |
+      missing_vars=""
+      for required_var in TF_VAR_vercel_api_token TF_VAR_vercel_git_repository TF_VAR_vercel_backend_url TF_VAR_next_public_supabase_url TF_VAR_next_public_supabase_anon_key TF_VAR_supabase_service_role_key TF_VAR_openrouter_api_key; do
+        eval "value=\${$required_var:-}"
+        if [ -z "$value" ]; then
+          missing_vars="$missing_vars $required_var"
+        fi
+      done
+      if [ -n "$missing_vars" ]; then
+        echo "Skipping terraform:validate because required CI variables are missing:$missing_vars"
+        exit 0
+      fi
     - terraform init -backend=false -input=false
     - terraform validate
   rules:
@@ -101,6 +113,18 @@ terraform:plan:
   stage: iac
   script:
     - cd terraform
+    - |
+      missing_vars=""
+      for required_var in TF_VAR_vercel_api_token TF_VAR_vercel_git_repository TF_VAR_vercel_backend_url TF_VAR_next_public_supabase_url TF_VAR_next_public_supabase_anon_key TF_VAR_supabase_service_role_key TF_VAR_openrouter_api_key; do
+        eval "value=\${$required_var:-}"
+        if [ -z "$value" ]; then
+          missing_vars="$missing_vars $required_var"
+        fi
+      done
+      if [ -n "$missing_vars" ]; then
+        echo "Skipping terraform:plan because required CI variables are missing:$missing_vars"
+        exit 0
+      fi
     - export TF_STATE_NAME="deployment-rfp-vercel"
     - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}"
     - export TF_HTTP_LOCK_ADDRESS="${TF_HTTP_ADDRESS}/lock"
@@ -125,6 +149,18 @@ terraform:apply:
     - terraform:plan
   script:
     - cd terraform
+    - |
+      missing_vars=""
+      for required_var in TF_VAR_vercel_api_token TF_VAR_vercel_git_repository TF_VAR_vercel_backend_url TF_VAR_next_public_supabase_url TF_VAR_next_public_supabase_anon_key TF_VAR_supabase_service_role_key TF_VAR_openrouter_api_key; do
+        eval "value=\${$required_var:-}"
+        if [ -z "$value" ]; then
+          missing_vars="$missing_vars $required_var"
+        fi
+      done
+      if [ -n "$missing_vars" ]; then
+        echo "Skipping terraform:apply because required CI variables are missing:$missing_vars"
+        exit 0
+      fi
     - export TF_STATE_NAME="deployment-rfp-vercel"
     - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}"
     - export TF_HTTP_LOCK_ADDRESS="${TF_HTTP_ADDRESS}/lock"
