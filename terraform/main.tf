@@ -43,6 +43,11 @@ resource "vercel_project" "frontend" {
   }
 }
 
+import {
+  to = vercel_project.frontend
+  id = "prj_KAMfDTWuibMhTjj9Jo2i2F6Muehu"
+}
+
 resource "vercel_project_environment_variable" "frontend" {
   for_each = local.environment_variables
 
