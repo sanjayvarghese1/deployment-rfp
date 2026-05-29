@@ -232,7 +232,6 @@ terraform:apply:
     - export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
     - terraform init -reconfigure -input=false
     - terraform apply -auto-approve tfplan
-  when: manual
   allow_failure: false
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
