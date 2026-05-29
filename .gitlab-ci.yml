@@ -17,6 +17,7 @@ variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   npm_config_cache: "$CI_PROJECT_DIR/.cache/npm"
   NEXT_TELEMETRY_DISABLED: "1"
+  TF_STATE_NAME: "deployment-rfp"
 
 cache:
   paths:
@@ -36,6 +37,14 @@ default:
     - curl -fsSL -o /tmp/terraform.zip "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
     - unzip -o /tmp/terraform.zip -d /usr/local/bin
     - terraform version
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}"
+    - export TF_HTTP_LOCK_ADDRESS="${TF_HTTP_ADDRESS}/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${TF_HTTP_ADDRESS}/lock"
+    - export TF_HTTP_LOCK_METHOD="POST"
+    - export TF_HTTP_UNLOCK_METHOD="DELETE"
+    - export TF_HTTP_RETRY_WAIT_MIN="5"
+    - export TF_HTTP_USERNAME="gitlab-ci-token"
+    - export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
     - |
       # Map the lowercase GitLab variables into Terraform's required TF_VAR_* names.
       export TF_VAR_vercel_api_token="${vercel_api_token:-}"
@@ -227,7 +236,7 @@ terraform:validate:
   extends: .terraform_base
   script:
     - cd terraform
-    - terraform init -backend=false
+    - terraform init -input=false -reconfigure
     - terraform validate
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
