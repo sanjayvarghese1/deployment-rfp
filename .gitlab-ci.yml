@@ -265,7 +265,7 @@ terraform:plan:
   artifacts:
     when: always
     paths:
-      - terraform/tfplan
+      - tfplan
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
 

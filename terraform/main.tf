@@ -48,6 +48,81 @@ import {
   id = "prj_KAMfDTWuibMhTjj9Jo2i2F6Muehu"
 }
 
+import {
+  to = vercel_project_environment_variable.frontend["NEXT_PUBLIC_SUPABASE_ANON_KEY"]
+  id = "prj_KAMfDTWuibMhTjj9Jo2i2F6Muehu/8BuITgTMDHgQfO9A"
+}
+
+import {
+  to = vercel_project_environment_variable.frontend["NEXT_PUBLIC_BACKEND_URL"]
+  id = "prj_KAMfDTWuibMhTjj9Jo2i2F6Muehu/K8hxE6XaqlnJCwUK"
+}
+
+import {
+  to = vercel_project_environment_variable.frontend["NEXT_PUBLIC_APP_URL"]
+  id = "prj_KAMfDTWuibMhTjj9Jo2i2F6Muehu/zi4HN8TumiWVdgxF"
+}
+
+import {
+  to = vercel_project_environment_variable.frontend["PDFSHIFT_API_KEY"]
+  id = "prj_KAMfDTWuibMhTjj9Jo2i2F6Muehu/XBpAklbTV9cZ3vAU"
+}
+
+import {
+  to = vercel_project_environment_variable.frontend["NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET"]
+  id = "prj_KAMfDTWuibMhTjj9Jo2i2F6Muehu/HEvDnTrCISiiB4pa"
+}
+
+import {
+  to = vercel_project_environment_variable.frontend["NEXT_PUBLIC_SUPABASE_URL"]
+  id = "prj_KAMfDTWuibMhTjj9Jo2i2F6Muehu/VoWzlYx7LSsJlfKk"
+}
+
+import {
+  to = vercel_project_environment_variable.frontend["LANGFUSE_PUBLIC_KEY"]
+  id = "prj_KAMfDTWuibMhTjj9Jo2i2F6Muehu/F1GKsZgF2fUKNrV3"
+}
+
+import {
+  to = vercel_project_environment_variable.frontend["LANGFUSE_SECRET_KEY"]
+  id = "prj_KAMfDTWuibMhTjj9Jo2i2F6Muehu/lUZGQMNvGsBW72SP"
+}
+
+import {
+  to = vercel_project_environment_variable.frontend["OPENROUTER_PRIMARY_MODEL"]
+  id = "prj_KAMfDTWuibMhTjj9Jo2i2F6Muehu/i2DWHcxBFtmxRRPp"
+}
+
+import {
+  to = vercel_project_environment_variable.frontend["OPENROUTER_FALLBACK_MODEL"]
+  id = "prj_KAMfDTWuibMhTjj9Jo2i2F6Muehu/NQfLVwamnK3QAX6b"
+}
+
+import {
+  to = vercel_project_environment_variable.frontend["OPENROUTER_INTAKE_MODEL"]
+  id = "prj_KAMfDTWuibMhTjj9Jo2i2F6Muehu/o2OJ1BBKqtw1k2Rm"
+}
+
+import {
+  to = vercel_project_environment_variable.frontend["LANGFUSE_BASE_URL"]
+  id = "prj_KAMfDTWuibMhTjj9Jo2i2F6Muehu/CYl3nofESnLAfhvk"
+}
+
+import {
+  to = vercel_project_environment_variable.frontend["OPENROUTER_BASE_URL"]
+  id = "prj_KAMfDTWuibMhTjj9Jo2i2F6Muehu/96gZXSP2bQSLYKGV"
+}
+
+import {
+  to = vercel_project_environment_variable.frontend["SUPABASE_SERVICE_ROLE_KEY"]
+  id = "prj_KAMfDTWuibMhTjj9Jo2i2F6Muehu/CoBE0v8UQqPWBC5a"
+}
+
+import {
+  to = vercel_project_environment_variable.frontend["OPENROUTER_API_KEY"]
+  id = "prj_KAMfDTWuibMhTjj9Jo2i2F6Muehu/KuKOXxVTVWBsDeZh"
+}
+
 resource "vercel_project_environment_variable" "frontend" {
   for_each = local.environment_variables
 
