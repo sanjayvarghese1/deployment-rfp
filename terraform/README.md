@@ -4,7 +4,7 @@ This directory contains the Terraform stack for the Vercel frontend.
 
 What it manages:
 
-- Vercel project connected to the GitLab repository
+- Vercel project connected to the GitHub repository
 - Production environment variables used by the Next.js app
 - Optional custom Vercel domain
 
@@ -14,11 +14,17 @@ What is already managed separately:
 
 GitLab CI usage:
 
-- All Terraform jobs run on `main` so the Vercel project configuration and environment variables stay aligned with the production branch.
-- `terraform:fmt` checks formatting
-- `terraform:validate` validates the configuration
-- `terraform:plan` creates a remote-state-backed plan in GitLab
-- `terraform:apply` is manual and applies the saved plan
+GitLab CI no longer runs Terraform jobs automatically. Terraform is left here for manual use when you intentionally want to manage the Vercel project configuration yourself.
+
+Run locally if needed:
+
+```bash
+cd terraform
+terraform init
+terraform fmt -recursive
+terraform validate
+terraform plan
+```
 
 Required GitLab CI/CD variables:
 
@@ -40,13 +46,3 @@ Optional variables:
 - `TF_VAR_vercel_custom_domain`
 - `TF_VAR_pdfshift_api_key`
 - `TF_VAR_extractor_webhook_secret`
-
-Run locally if needed:
-
-```bash
-cd terraform
-terraform init
-terraform fmt -recursive
-terraform validate
-terraform plan
-```
