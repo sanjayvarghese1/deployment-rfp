@@ -113,7 +113,7 @@ env:precheck:
         exit 1
       fi
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main" || $CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
 
 backend:unit:
   stage: unit
