@@ -87,9 +87,13 @@ env:precheck:
       check_var() {
         primary="$1"
         alt="$2"
-        val="${!primary:-}"
+        val=""
+        # POSIX-compatible retrieval of variable value (avoid Bash-only ${!var})
+        if [ -n "$primary" ]; then
+          eval "val=\${${primary}:-}"
+        fi
         if [ -z "$val" ] && [ -n "$alt" ]; then
-          val="${!alt:-}"
+          eval "val=\${${alt}:-}"
         fi
         if [ -z "$val" ]; then
           if [ -n "$alt" ]; then
