@@ -26,6 +26,17 @@ cache:
 default:
   interruptible: true
 
+.terraform_base:
+  image: debian:bookworm-slim
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends ca-certificates curl unzip
+    - rm -rf /var/lib/apt/lists/*
+    - export TERRAFORM_VERSION="1.11.3"
+    - curl -fsSL -o /tmp/terraform.zip "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+    - unzip -o /tmp/terraform.zip -d /usr/local/bin
+    - terraform version
+
 frontend:validate:
   stage: validate
   image: node:20-bookworm
@@ -67,11 +78,8 @@ frontend:build:
     - npm run build
 
 terraform:fmt:
+  extends: .terraform_base
   stage: iac
-  image:
-    name: hashicorp/terraform:1.11.3
-    entrypoint:
-      - ""
   script:
     - cd terraform
     - terraform fmt -check -recursive
@@ -79,11 +87,8 @@ terraform:fmt:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "main"'
 
 terraform:validate:
+  extends: .terraform_base
   stage: iac
-  image:
-    name: hashicorp/terraform:1.11.3
-    entrypoint:
-      - ""
   script:
     - cd terraform
     - terraform init -backend=false -input=false
@@ -92,11 +97,8 @@ terraform:validate:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "main"'
 
 terraform:plan:
+  extends: .terraform_base
   stage: iac
-  image:
-    name: hashicorp/terraform:1.11.3
-    entrypoint:
-      - ""
   script:
     - cd terraform
     - export TF_STATE_NAME="deployment-rfp-vercel"
@@ -115,11 +117,8 @@ terraform:plan:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "main"'
 
 terraform:apply:
+  extends: .terraform_base
   stage: iac
-  image:
-    name: hashicorp/terraform:1.11.3
-    entrypoint:
-      - ""
   needs:
     - terraform:plan
   script:
