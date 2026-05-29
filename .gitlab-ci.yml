@@ -1,0 +1,171 @@
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - when: never
+
+stages:
+  - validate
+  - unit
+  - build
+  - iac
+  - integration
+  - render
+  - deploy_verify
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  npm_config_cache: "$CI_PROJECT_DIR/.cache/npm"
+  NEXT_TELEMETRY_DISABLED: "1"
+
+cache:
+  paths:
+    - .cache/pip
+    - .cache/npm
+
+default:
+  interruptible: true
+
+frontend:validate:
+  stage: validate
+  image: node:20-bookworm
+  script:
+    - cd frontend
+    - npm ci
+    - npm run lint
+  artifacts:
+    when: always
+    paths:
+      - frontend/lint_output.json
+      - frontend/lint_output.txt
+
+backend:validate:
+  stage: validate
+  image: python:3.12-slim
+  script:
+    - cd backend
+    - python -m pip install --upgrade pip
+    - pip install -r requirements.txt
+    - python -m compileall app
+
+backend:unit:
+  stage: unit
+  image: python:3.12-slim
+  script:
+    - cd backend
+    - python -m pip install --upgrade pip
+    - pip install -r requirements.txt pytest
+    - pytest -q
+
+frontend:build:
+  stage: build
+  image: node:20-bookworm
+  script:
+    - cd frontend
+    - npm ci
+    - npm run build
+
+terraform:fmt:
+  stage: iac
+  image: hashicorp/terraform:1.11.3
+  script:
+    - cd terraform
+    - terraform fmt -check -recursive
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "main"'
+
+terraform:validate:
+  stage: iac
+  image: hashicorp/terraform:1.11.3
+  script:
+    - cd terraform
+    - terraform init -backend=false
+    - terraform validate
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "main"'
+
+terraform:plan:
+  stage: iac
+  image: hashicorp/terraform:1.11.3
+  script:
+    - cd terraform
+    - export TF_STATE_NAME="deployment-rfp-vercel"
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}"
+    - export TF_HTTP_LOCK_ADDRESS="${TF_HTTP_ADDRESS}/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${TF_HTTP_ADDRESS}/lock"
+    - export TF_HTTP_USERNAME="gitlab-ci-token"
+    - export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+    - terraform init -reconfigure
+    - terraform plan -out=tfplan
+  artifacts:
+    paths:
+      - terraform/tfplan
+    expire_in: 1 week
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "main"'
+
+terraform:apply:
+  stage: iac
+  image: hashicorp/terraform:1.11.3
+  needs:
+    - terraform:plan
+  script:
+    - cd terraform
+    - export TF_STATE_NAME="deployment-rfp-vercel"
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}"
+    - export TF_HTTP_LOCK_ADDRESS="${TF_HTTP_ADDRESS}/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${TF_HTTP_ADDRESS}/lock"
+    - export TF_HTTP_USERNAME="gitlab-ci-token"
+    - export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+    - terraform init -reconfigure
+    - terraform apply -auto-approve tfplan
+  when: manual
+  allow_failure: false
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+backend:integration:
+  stage: integration
+  image: python:3.12-slim
+  script:
+    - cd backend
+    - python -m pip install --upgrade pip
+    - pip install -r requirements.txt
+    - uvicorn app.main:app --host 127.0.0.1 --port 8000 &
+    - python tests/wait_for_http.py http://127.0.0.1:8000/healthz
+    - python tests/integration_smoke.py http://127.0.0.1:8000
+
+frontend:routing:
+  stage: integration
+  image: node:20-bookworm
+  script:
+    - cd frontend
+    - npm ci
+    - npm run build
+    - npm run start -- --hostname 127.0.0.1 --port 3000 &
+    - node tests/wait-for-http.mjs http://127.0.0.1:3000/companies
+    - node tests/route-and-api-smoke.mjs http://127.0.0.1:3000
+
+frontend:render:
+  stage: render
+  image: node:20-bookworm
+  script:
+    - cd frontend
+    - npm ci
+    - npm run build
+    - npm run start -- --hostname 127.0.0.1 --port 3000 &
+    - node tests/wait-for-http.mjs http://127.0.0.1:3000/companies
+    - node tests/route-and-api-smoke.mjs http://127.0.0.1:3000
+    - node tests/pdf-render-smoke.mjs http://127.0.0.1:3000
+
+deploy:verify:
+  stage: deploy_verify
+  image: node:20-bookworm
+  rules:
+    - if: '$DEPLOYED_FRONTEND_URL || $DEPLOYED_BACKEND_URL'
+      when: on_success
+    - when: never
+  script:
+    - cd frontend
+    - npm ci
+    - node tests/deployment-verify.mjs
