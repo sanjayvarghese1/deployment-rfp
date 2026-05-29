@@ -61,8 +61,8 @@ frontend:validate:
   script:
     - cd frontend
     - npm ci
-    - npx eslint "src/**/*.{ts,tsx,js,jsx}" --ignore-pattern "public/**" --ignore-pattern "builds/**" -f json -o lint_output.json || true
-    - npx eslint "src/**/*.{ts,tsx,js,jsx}" --ignore-pattern "public/**" --ignore-pattern "builds/**" -f unix > lint_output.txt || true
+    - npx eslint "src/**/*.{ts,tsx,js,jsx}" --ignore-pattern "public/**" --ignore-pattern "builds/**" --ignore-pattern "vendor/**" -f json -o lint_output.json || true
+    - npx eslint "src/**/*.{ts,tsx,js,jsx}" --ignore-pattern "public/**" --ignore-pattern "builds/**" --ignore-pattern "vendor/**" -f unix > lint_output.txt || true
   artifacts:
     when: always
     paths:
@@ -128,11 +128,18 @@ frontend:build:
     - |
       # Create .env.local for Next.js build by preferring NEXT_PUBLIC_* variables,
       # falling back to TF_VAR_* equivalents when present.
-      printf 'NEXT_PUBLIC_SUPABASE_URL=%s\n' "${NEXT_PUBLIC_SUPABASE_URL:-$TF_VAR_next_public_supabase_url}" > .env.local
-      printf 'NEXT_PUBLIC_SUPABASE_ANON_KEY=%s\n' "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-$TF_VAR_next_public_supabase_anon_key}" >> .env.local
-      printf 'NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET=%s\n' "${NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET:-$TF_VAR_next_public_supabase_storage_bucket}" >> .env.local
-      printf 'PDFSHIFT_API_KEY=%s\n' "${PDFSHIFT_API_KEY:-$TF_VAR_pdfshift_api_key}" >> .env.local
-      printf 'NEXT_PUBLIC_VERCEL_FRONTEND_URL=%s\n' "${NEXT_PUBLIC_VERCEL_FRONTEND_URL:-$TF_VAR_vercel_frontend_url}" >> .env.local
+      # strip surrounding quotes if present
+      strip() {
+        v="$1"
+        v="${v#\"}"
+        v="${v%\"}"
+        printf "%s" "$v"
+      }
+      printf 'NEXT_PUBLIC_SUPABASE_URL=%s\n' "$(strip "${NEXT_PUBLIC_SUPABASE_URL:-$TF_VAR_next_public_supabase_url}")" > .env.local
+      printf 'NEXT_PUBLIC_SUPABASE_ANON_KEY=%s\n' "$(strip "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-$TF_VAR_next_public_supabase_anon_key}")" >> .env.local
+      printf 'NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET=%s\n' "$(strip "${NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET:-$TF_VAR_next_public_supabase_storage_bucket}")" >> .env.local
+      printf 'PDFSHIFT_API_KEY=%s\n' "$(strip "${PDFSHIFT_API_KEY:-$TF_VAR_pdfshift_api_key}")" >> .env.local
+      printf 'NEXT_PUBLIC_VERCEL_FRONTEND_URL=%s\n' "$(strip "${NEXT_PUBLIC_VERCEL_FRONTEND_URL:-$TF_VAR_vercel_frontend_url}")" >> .env.local
     - npm ci
     - npm run build
 
