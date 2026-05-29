@@ -126,6 +126,9 @@ frontend:build:
       write_env NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET "${NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET:-}" "proposals"
       write_env NEXT_PUBLIC_BACKEND_URL "${DEPLOYED_BACKEND_URL:-}" "http://127.0.0.1:8000"
       write_env NEXT_PUBLIC_APP_URL "${DEPLOYED_FRONTEND_URL:-}" "http://localhost:3000"
+      write_env LANGFUSE_SECRET_KEY "${langfuse_secret_key:-}" ""
+      write_env LANGFUSE_PUBLIC_KEY "${langfuse_public_key:-}" ""
+      write_env LANGFUSE_BASE_URL "${langfuse_base_url:-}" "https://cloud.langfuse.com"
       write_env PDFSHIFT_API_KEY "${pdfshift_api_key:-}" ""
     - npm ci
     - npm run build
@@ -194,6 +197,25 @@ frontend:routing:
   image: node:20-bookworm
   script:
     - cd frontend
+    - |
+      write_env() {
+        key="$1"
+        value="$2"
+        if [ -z "$value" ]; then
+          value="$3"
+        fi
+        printf '%s=%s\n' "$key" "$value" >> .env.local
+      }
+      : > .env.local
+      write_env NEXT_PUBLIC_SUPABASE_URL "${NEXT_PUBLIC_SUPABASE_URL:-}" "https://example.invalid"
+      write_env NEXT_PUBLIC_SUPABASE_ANON_KEY "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}" "placeholder-anon-key"
+      write_env NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET "${NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET:-}" "proposals"
+      write_env NEXT_PUBLIC_BACKEND_URL "${DEPLOYED_BACKEND_URL:-}" "http://127.0.0.1:8000"
+      write_env NEXT_PUBLIC_APP_URL "${DEPLOYED_FRONTEND_URL:-}" "http://localhost:3000"
+      write_env LANGFUSE_SECRET_KEY "${langfuse_secret_key:-}" ""
+      write_env LANGFUSE_PUBLIC_KEY "${langfuse_public_key:-}" ""
+      write_env LANGFUSE_BASE_URL "${langfuse_base_url:-}" "https://cloud.langfuse.com"
+      write_env PDFSHIFT_API_KEY "${pdfshift_api_key:-}" ""
     - npm ci
     - npm run build
     - npm run start -- --hostname 127.0.0.1 --port 3000 &
@@ -206,6 +228,25 @@ frontend:render:
   image: node:20-bookworm
   script:
     - cd frontend
+    - |
+      write_env() {
+        key="$1"
+        value="$2"
+        if [ -z "$value" ]; then
+          value="$3"
+        fi
+        printf '%s=%s\n' "$key" "$value" >> .env.local
+      }
+      : > .env.local
+      write_env NEXT_PUBLIC_SUPABASE_URL "${NEXT_PUBLIC_SUPABASE_URL:-}" "https://example.invalid"
+      write_env NEXT_PUBLIC_SUPABASE_ANON_KEY "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}" "placeholder-anon-key"
+      write_env NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET "${NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET:-}" "proposals"
+      write_env NEXT_PUBLIC_BACKEND_URL "${DEPLOYED_BACKEND_URL:-}" "http://127.0.0.1:8000"
+      write_env NEXT_PUBLIC_APP_URL "${DEPLOYED_FRONTEND_URL:-}" "http://localhost:3000"
+      write_env LANGFUSE_SECRET_KEY "${langfuse_secret_key:-}" ""
+      write_env LANGFUSE_PUBLIC_KEY "${langfuse_public_key:-}" ""
+      write_env LANGFUSE_BASE_URL "${langfuse_base_url:-}" "https://cloud.langfuse.com"
+      write_env PDFSHIFT_API_KEY "${pdfshift_api_key:-}" ""
     - npm ci
     - npm run build
     - npm run start -- --hostname 127.0.0.1 --port 3000 &
