@@ -100,8 +100,9 @@ terraform:validate:
         fi
       done
       if [ -n "$missing_vars" ]; then
-        echo "Skipping terraform:validate because required CI variables are missing:$missing_vars"
-        exit 0
+        echo "Missing required CI variables:$missing_vars"
+        echo "Add them in GitLab CI/CD settings before running Terraform jobs."
+        exit 1
       fi
     - terraform init -backend=false -input=false
     - terraform validate
@@ -122,8 +123,9 @@ terraform:plan:
         fi
       done
       if [ -n "$missing_vars" ]; then
-        echo "Skipping terraform:plan because required CI variables are missing:$missing_vars"
-        exit 0
+        echo "Missing required CI variables:$missing_vars"
+        echo "Add them in GitLab CI/CD settings before running Terraform jobs."
+        exit 1
       fi
     - export TF_STATE_NAME="deployment-rfp-vercel"
     - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}"
@@ -158,8 +160,9 @@ terraform:apply:
         fi
       done
       if [ -n "$missing_vars" ]; then
-        echo "Skipping terraform:apply because required CI variables are missing:$missing_vars"
-        exit 0
+        echo "Missing required CI variables:$missing_vars"
+        echo "Add them in GitLab CI/CD settings before running Terraform jobs."
+        exit 1
       fi
     - export TF_STATE_NAME="deployment-rfp-vercel"
     - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}"
