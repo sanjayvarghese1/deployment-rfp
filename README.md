@@ -62,6 +62,42 @@ Procurement Link is a procurement and RFP platform with a Next.js frontend, a Fa
 - The frontend is ready for a Vercel-style deployment or any host that supports Next.js.
 - After deployment, update the website link above and set production values for `NEXT_PUBLIC_APP_URL` and `NEXT_PUBLIC_BACKEND_URL`.
 
+## Infrastructure as Code
+
+Terraform is now scaffolded in [terraform/](terraform/) and can be executed from GitLab CI.
+
+- Vercel project configuration and production environment variables are managed in Terraform.
+- The Render backend is already defined declaratively in [render.yaml](render.yaml).
+- GitLab CI runs `terraform fmt`, `terraform validate`, `terraform plan`, and a manual `terraform apply` using GitLab remote state.
+
+Recommended GitLab variables for Terraform are documented in [terraform/README.md](terraform/README.md).
+For a deeper explanation of the CI/CD and IaC design, see [docs/CI_CD_IAC.md](docs/CI_CD_IAC.md).
+
+## GitLab CI/CD
+
+The repository now includes a GitLab pipeline in [`.gitlab-ci.yml`](.gitlab-ci.yml) with these checks:
+
+- validation: frontend linting and backend compile checks
+- unit: backend pytest coverage for the health endpoints and job store
+- build: frontend production build
+- integration: local backend and frontend smoke tests
+- render: frontend PDF generation smoke test against the hosted PDF route
+- mirror: pushes `main` from GitLab to GitHub so the existing GitHub-triggered deployments keep firing
+- deploy: triggers the Vercel production deploy hook from GitLab on `main`
+- deploy verification: optional checks against the live Vercel and Render URLs
+
+Set these variables in GitLab CI/CD settings when you want GitLab to mirror to GitHub, drive Vercel/CD, or run live deployment verification:
+
+- `GITHUB_MIRROR_REPOSITORY` in `owner/repo` form
+- `GITHUB_MIRROR_TOKEN`, a GitHub personal access token or fine-grained token with write access to the repo
+- `VERCEL_DEPLOY_HOOK_URL` for the Vercel production deploy hook
+- `DEPLOYED_FRONTEND_URL` for the Vercel site
+- `DEPLOYED_BACKEND_URL` for the Render backend
+
+GitLab and GitHub do not sync automatically just because both remotes exist in the local clone. The new mirror job keeps GitHub in step with GitLab on `main`, which preserves the existing GitHub-triggered deploy flow. If you use the mirror job, leave the direct Vercel hook unset to avoid duplicate deploys.
+
+The deploy verification job checks the backend health endpoint, the frontend redirect, and the PDF generation route end to end.
+
 ## Troubleshooting
 
 - If the frontend cannot reach the backend, confirm `NEXT_PUBLIC_BACKEND_URL` is set correctly.

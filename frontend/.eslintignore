@@ -1,0 +1,7 @@
+builds/
+public/pdf.worker.min.mjs
+public/pdf.worker.js
+public/pdf.worker.min.mjs
+.next/
+dist/
+node_modules/
