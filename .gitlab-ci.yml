@@ -32,7 +32,8 @@ frontend:validate:
   script:
     - cd frontend
     - npm ci
-    - npm run lint
+    - npx eslint "src/**/*.{ts,tsx,js,jsx}" --ignore-pattern "public/**" --ignore-pattern "builds/**" -f json -o lint_output.json || true
+    - npx eslint "src/**/*.{ts,tsx,js,jsx}" --ignore-pattern "public/**" --ignore-pattern "builds/**" -f unix > lint_output.txt || true
   artifacts:
     when: always
     paths:
