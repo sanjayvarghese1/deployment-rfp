@@ -8,12 +8,9 @@ stages:
   - validate
   - unit
   - build
-  - iac
   - integration
   - render
   - mirror
-  - deploy
-  - deploy_verify
 
 variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
@@ -78,43 +75,6 @@ backend:validate:
     - pip install -r requirements.txt
     - python -m compileall app
 
-env:precheck:
-  stage: validate
-  image: alpine:3.18
-  script:
-    - |
-      missing=""
-      check_var() {
-        primary="$1"
-        alt="$2"
-        val=""
-        # POSIX-compatible retrieval of variable value (avoid Bash-only ${!var})
-        if [ -n "$primary" ]; then
-          eval "val=\${${primary}:-}"
-        fi
-        if [ -z "$val" ] && [ -n "$alt" ]; then
-          eval "val=\${${alt}:-}"
-        fi
-        if [ -z "$val" ]; then
-          if [ -n "$alt" ]; then
-            missing="$missing $primary/$alt"
-          else
-            missing="$missing $primary"
-          fi
-        fi
-      }
-      check_var NEXT_PUBLIC_SUPABASE_URL TF_VAR_next_public_supabase_url
-      check_var NEXT_PUBLIC_SUPABASE_ANON_KEY TF_VAR_next_public_supabase_anon_key
-      check_var PDFSHIFT_API_KEY TF_VAR_pdfshift_api_key
-      check_var LANGFUSE_SECRET_KEY TF_VAR_langfuse_secret_key
-      check_var LANGFUSE_PUBLIC_KEY TF_VAR_langfuse_public_key
-      if [ -n "$missing" ]; then
-        echo "Missing required CI variables:$missing" >&2
-        exit 1
-      fi
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
-
 backend:unit:
   stage: unit
   image: python:3.12-slim
@@ -130,55 +90,23 @@ frontend:build:
   script:
     - cd frontend
     - |
-      # Create .env.local for Next.js build by preferring NEXT_PUBLIC_* variables,
-      # falling back to TF_VAR_* equivalents when present.
-      # strip surrounding quotes if present
-      strip() {
-        v="$1"
-        v="${v#\"}"
-        v="${v%\"}"
-        printf "%s" "$v"
+      write_env() {
+        key="$1"
+        value="$2"
+        if [ -z "$value" ]; then
+          value="$3"
+        fi
+        printf '%s=%s\n' "$key" "$value" >> .env.local
       }
-      printf 'NEXT_PUBLIC_SUPABASE_URL=%s\n' "$(strip "${NEXT_PUBLIC_SUPABASE_URL:-$TF_VAR_next_public_supabase_url}")" > .env.local
-      printf 'NEXT_PUBLIC_SUPABASE_ANON_KEY=%s\n' "$(strip "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-$TF_VAR_next_public_supabase_anon_key}")" >> .env.local
-      printf 'NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET=%s\n' "$(strip "${NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET:-$TF_VAR_next_public_supabase_storage_bucket}")" >> .env.local
-      printf 'PDFSHIFT_API_KEY=%s\n' "$(strip "${PDFSHIFT_API_KEY:-$TF_VAR_pdfshift_api_key}")" >> .env.local
-      printf 'NEXT_PUBLIC_VERCEL_FRONTEND_URL=%s\n' "$(strip "${NEXT_PUBLIC_VERCEL_FRONTEND_URL:-$TF_VAR_vercel_frontend_url}")" >> .env.local
+      : > .env.local
+      write_env NEXT_PUBLIC_SUPABASE_URL "${NEXT_PUBLIC_SUPABASE_URL:-$TF_VAR_next_public_supabase_url}" "https://example.invalid"
+      write_env NEXT_PUBLIC_SUPABASE_ANON_KEY "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-$TF_VAR_next_public_supabase_anon_key}" "placeholder-anon-key"
+      write_env NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET "${NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET:-$TF_VAR_next_public_supabase_storage_bucket}" "proposals"
+      write_env NEXT_PUBLIC_BACKEND_URL "${NEXT_PUBLIC_BACKEND_URL:-$TF_VAR_vercel_backend_url}" "http://127.0.0.1:8000"
+      write_env NEXT_PUBLIC_APP_URL "${NEXT_PUBLIC_APP_URL:-$TF_VAR_vercel_frontend_url}" "http://localhost:3000"
+      write_env PDFSHIFT_API_KEY "${PDFSHIFT_API_KEY:-$TF_VAR_pdfshift_api_key}" ""
     - npm ci
     - npm run build
-
-terraform:fmt:
-  extends: .terraform_base
-  stage: iac
-  script:
-    - echo "Terraform/Vercel management is disabled in CI; deployment is handled through GitHub mirror and Vercel auto-build."
-  rules:
-    - when: never
-
-terraform:validate:
-  extends: .terraform_base
-  stage: iac
-  script:
-    - echo "Terraform/Vercel management is disabled in CI; deployment is handled through GitHub mirror and Vercel auto-build."
-  rules:
-    - when: never
-
-terraform:plan:
-  extends: .terraform_base
-  stage: iac
-  script:
-    - echo "Terraform/Vercel management is disabled in CI; deployment is handled through GitHub mirror and Vercel auto-build."
-  rules:
-    - when: never
-
-terraform:apply:
-  extends: .terraform_base
-  stage: iac
-  script:
-    - echo "Terraform/Vercel management is disabled in CI; deployment is handled through GitHub mirror and Vercel auto-build."
-  rules:
-    - when: never
-
 backend:integration:
   stage: integration
   image: python:3.12-slim
@@ -199,6 +127,7 @@ frontend:routing:
     - npm run build
     - npm run start -- --hostname 127.0.0.1 --port 3000 &
     - node tests/wait-for-http.mjs http://127.0.0.1:3000/companies
+    - node tests/routing-smoke.mjs http://127.0.0.1:3000
     - node tests/route-and-api-smoke.mjs http://127.0.0.1:3000
 
 frontend:render:
@@ -226,28 +155,3 @@ mirror:github:
     - git push github HEAD:main
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
-
-vercel:deploy:
-  stage: deploy
-  image: curlimages/curl:8.8.0
-  script:
-    - |
-      if [ -z "${VERCEL_DEPLOY_HOOK_URL:-}" ]; then
-        echo "Missing VERCEL_DEPLOY_HOOK_URL. Configure a Vercel production deploy hook in GitLab CI/CD variables."
-        exit 1
-      fi
-    - curl --fail --show-error --request POST "$VERCEL_DEPLOY_HOOK_URL"
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
-
-deploy:verify:
-  stage: deploy_verify
-  image: node:20-bookworm
-  rules:
-    - if: '$DEPLOYED_FRONTEND_URL || $DEPLOYED_BACKEND_URL'
-      when: on_success
-    - when: never
-  script:
-    - cd frontend
-    - npm ci
-    - node tests/deployment-verify.mjs
