@@ -16,11 +16,6 @@ variable "vercel_project_name" {
   default     = "deployment-rfp"
 }
 
-variable "vercel_git_repository" {
-  description = "GitHub repository in owner/repo form."
-  type        = string
-}
-
 variable "vercel_custom_domain" {
   description = "Optional custom production domain."
   type        = string

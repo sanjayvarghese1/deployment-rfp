@@ -37,21 +37,32 @@ terraform plan
 
 Required GitLab CI/CD variables:
 
-- `TF_VAR_vercel_api_token`
-- `TF_VAR_vercel_git_repository` in `owner/repo` form
-- `TF_VAR_vercel_backend_url`
-- `TF_VAR_next_public_supabase_url`
-- `TF_VAR_next_public_supabase_anon_key`
-- `TF_VAR_supabase_service_role_key`
-- `TF_VAR_openrouter_api_key`
-- `TF_VAR_langfuse_secret_key`
-- `TF_VAR_langfuse_public_key`
-- `TF_VAR_email_user`
-- `TF_VAR_email_pass`
+- `vercel_api_token`
+- `DEPLOYED_BACKEND_URL`
+- `DEPLOYED_FRONTEND_URL`
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET`
+- `supabase_service_role_key`
+- `openrouter_api_key`
+- `openrouter_base_url`
+- `openrouter_primary_model`
+- `openrouter_intake_model`
+- `openrouter_fallback_model`
+- `openrouter_analysis_model`
+- `langfuse_secret_key`
+- `langfuse_public_key`
+- `langfuse_base_url`
+- `pdfshift_api_key`
+- `pdfshift_sandbox`
+- `analysis_scoring_strictness`
+- `analysis_full_score_confidence`
+- `llm_guard_enable`
+- `email_user`
+- `email_pass`
 
 Optional variables:
 
-- `TF_VAR_vercel_team_id`
-- `TF_VAR_vercel_custom_domain`
-- `TF_VAR_pdfshift_api_key`
-- `TF_VAR_extractor_webhook_secret`
+- `vercel_team_id`
+- `vercel_custom_domain`
+- `extractor_webhook_secret`
