@@ -1,0 +1,259 @@
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - when: never
+
+stages:
+  - validate
+  - unit
+  - build
+  - iac
+  - integration
+  - render
+  - mirror
+  - deploy
+  - deploy_verify
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  npm_config_cache: "$CI_PROJECT_DIR/.cache/npm"
+  NEXT_TELEMETRY_DISABLED: "1"
+
+cache:
+  paths:
+    - .cache/pip
+    - .cache/npm
+
+default:
+  interruptible: true
+
+.terraform_base:
+  image: debian:bookworm-slim
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends ca-certificates curl unzip
+    - rm -rf /var/lib/apt/lists/*
+    - export TERRAFORM_VERSION="1.11.3"
+    - curl -fsSL -o /tmp/terraform.zip "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+    - unzip -o /tmp/terraform.zip -d /usr/local/bin
+    - terraform version
+    - |
+      export TF_VAR_vercel_api_token="${TF_VAR_vercel_api_token:-${VERCEL_API_TOKEN:-}}"
+      export TF_VAR_vercel_git_repository="${TF_VAR_vercel_git_repository:-${VERCEL_GIT_REPOSITORY:-}}"
+      export TF_VAR_vercel_backend_url="${TF_VAR_vercel_backend_url:-${VERCEL_BACKEND_URL:-}}"
+      export TF_VAR_next_public_supabase_url="${TF_VAR_next_public_supabase_url:-${NEXT_PUBLIC_SUPABASE_URL:-}}"
+      export TF_VAR_next_public_supabase_anon_key="${TF_VAR_next_public_supabase_anon_key:-${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}}"
+      export TF_VAR_supabase_service_role_key="${TF_VAR_supabase_service_role_key:-${SUPABASE_SERVICE_ROLE_KEY:-}}"
+      export TF_VAR_openrouter_api_key="${TF_VAR_openrouter_api_key:-${OPENROUTER_API_KEY:-}}"
+      export TF_VAR_vercel_team_id="${TF_VAR_vercel_team_id:-${VERCEL_TEAM_ID:-}}"
+      export TF_VAR_vercel_custom_domain="${TF_VAR_vercel_custom_domain:-${VERCEL_CUSTOM_DOMAIN:-}}"
+      export TF_VAR_pdfshift_api_key="${TF_VAR_pdfshift_api_key:-${PDFSHIFT_API_KEY:-}}"
+      export TF_VAR_extractor_webhook_secret="${TF_VAR_extractor_webhook_secret:-${EXTRACTOR_WEBHOOK_SECRET:-}}"
+      export TF_VAR_langfuse_secret_key="${TF_VAR_langfuse_secret_key:-${LANGFUSE_SECRET_KEY:-}}"
+      export TF_VAR_langfuse_public_key="${TF_VAR_langfuse_public_key:-${LANGFUSE_PUBLIC_KEY:-}}"
+      export TF_VAR_email_user="${TF_VAR_email_user:-${EMAIL_USER:-}}"
+      export TF_VAR_email_pass="${TF_VAR_email_pass:-${EMAIL_PASS:-}}"
+
+frontend:validate:
+  stage: validate
+  image: node:20-bookworm
+  script:
+    - cd frontend
+    - npm ci
+    - npx eslint "src/**/*.{ts,tsx,js,jsx}" --ignore-pattern "public/**" --ignore-pattern "builds/**" -f json -o lint_output.json || true
+    - npx eslint "src/**/*.{ts,tsx,js,jsx}" --ignore-pattern "public/**" --ignore-pattern "builds/**" -f unix > lint_output.txt || true
+  artifacts:
+    when: always
+    paths:
+      - frontend/lint_output.json
+      - frontend/lint_output.txt
+
+backend:validate:
+  stage: validate
+  image: python:3.12-slim
+  script:
+    - cd backend
+    - python -m pip install --upgrade pip
+    - pip install -r requirements.txt
+    - python -m compileall app
+
+backend:unit:
+  stage: unit
+  image: python:3.12-slim
+  script:
+    - cd backend
+    - python -m pip install --upgrade pip
+    - pip install -r requirements.txt pytest
+    - pytest -q
+
+frontend:build:
+  stage: build
+  image: node:20-bookworm
+  script:
+    - cd frontend
+    - npm ci
+    - npm run build
+
+terraform:fmt:
+  extends: .terraform_base
+  stage: iac
+  script:
+    - cd terraform
+    - terraform fmt -check -recursive
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "main"'
+
+terraform:validate:
+  extends: .terraform_base
+  stage: iac
+  script:
+    - cd terraform
+    - terraform init -backend=false -input=false
+    - terraform validate
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "main"'
+
+# Keep Terraform on main so Vercel project settings and env vars stay in sync.
+terraform:plan:
+  extends: .terraform_base
+  stage: iac
+  script:
+    - cd terraform
+    - |
+      missing_vars=""
+      for required_var in TF_VAR_vercel_api_token TF_VAR_vercel_git_repository TF_VAR_vercel_backend_url TF_VAR_next_public_supabase_url TF_VAR_next_public_supabase_anon_key TF_VAR_supabase_service_role_key TF_VAR_openrouter_api_key; do
+        eval "value=\${$required_var:-}"
+        if [ -z "$value" ]; then
+          missing_vars="$missing_vars $required_var"
+        fi
+      done
+      if [ -n "$missing_vars" ]; then
+        echo "Missing required CI variables:$missing_vars"
+        echo "Add them in GitLab CI/CD settings before running Terraform jobs."
+        exit 1
+      fi
+    - export TF_STATE_NAME="deployment-rfp-vercel"
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}"
+    - export TF_HTTP_LOCK_ADDRESS="${TF_HTTP_ADDRESS}/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${TF_HTTP_ADDRESS}/lock"
+    - export TF_HTTP_LOCK_METHOD="POST"
+    - export TF_HTTP_UNLOCK_METHOD="DELETE"
+    - export TF_HTTP_USERNAME="gitlab-ci-token"
+    - export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+    - terraform init -reconfigure -input=false
+    - terraform plan -input=false -out=tfplan
+  artifacts:
+    paths:
+      - terraform/tfplan
+    expire_in: 1 week
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+terraform:apply:
+  extends: .terraform_base
+  stage: iac
+  needs:
+    - terraform:plan
+  script:
+    - cd terraform
+    - |
+      missing_vars=""
+      for required_var in TF_VAR_vercel_api_token TF_VAR_vercel_git_repository TF_VAR_vercel_backend_url TF_VAR_next_public_supabase_url TF_VAR_next_public_supabase_anon_key TF_VAR_supabase_service_role_key TF_VAR_openrouter_api_key; do
+        eval "value=\${$required_var:-}"
+        if [ -z "$value" ]; then
+          missing_vars="$missing_vars $required_var"
+        fi
+      done
+      if [ -n "$missing_vars" ]; then
+        echo "Missing required CI variables:$missing_vars"
+        echo "Add them in GitLab CI/CD settings before running Terraform jobs."
+        exit 1
+      fi
+    - export TF_STATE_NAME="deployment-rfp-vercel"
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}"
+    - export TF_HTTP_LOCK_ADDRESS="${TF_HTTP_ADDRESS}/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${TF_HTTP_ADDRESS}/lock"
+    - export TF_HTTP_LOCK_METHOD="POST"
+    - export TF_HTTP_UNLOCK_METHOD="DELETE"
+    - export TF_HTTP_USERNAME="gitlab-ci-token"
+    - export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+    - terraform init -reconfigure -input=false
+    - terraform apply -auto-approve tfplan
+  when: manual
+  allow_failure: false
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+backend:integration:
+  stage: integration
+  image: python:3.12-slim
+  script:
+    - cd backend
+    - python -m pip install --upgrade pip
+    - pip install -r requirements.txt
+    - uvicorn app.main:app --host 127.0.0.1 --port 8000 &
+    - python tests/wait_for_http.py http://127.0.0.1:8000/healthz
+    - python tests/integration_smoke.py http://127.0.0.1:8000
+
+frontend:routing:
+  stage: integration
+  image: node:20-bookworm
+  script:
+    - cd frontend
+    - npm ci
+    - npm run build
+    - npm run start -- --hostname 127.0.0.1 --port 3000 &
+    - node tests/wait-for-http.mjs http://127.0.0.1:3000/companies
+    - node tests/route-and-api-smoke.mjs http://127.0.0.1:3000
+
+frontend:render:
+  stage: render
+  image: node:20-bookworm
+  script:
+    - cd frontend
+    - npm ci
+    - npm run build
+    - npm run start -- --hostname 127.0.0.1 --port 3000 &
+    - node tests/wait-for-http.mjs http://127.0.0.1:3000/companies
+    - node tests/route-and-api-smoke.mjs http://127.0.0.1:3000
+    - node tests/pdf-render-smoke.mjs http://127.0.0.1:3000
+
+mirror:github:
+  stage: mirror
+  image: alpine/git:2.49.0
+  script:
+    - |
+      if [ -z "${GITHUB_MIRROR_TOKEN:-}" ] || [ -z "${GITHUB_MIRROR_REPOSITORY:-}" ]; then
+        echo "Missing GITHUB_MIRROR_TOKEN or GITHUB_MIRROR_REPOSITORY. Configure GitHub mirroring in GitLab CI/CD variables."
+        exit 1
+      fi
+    - git remote add github "https://x-access-token:${GITHUB_MIRROR_TOKEN}@github.com/${GITHUB_MIRROR_REPOSITORY}.git"
+    - git push github HEAD:main
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+vercel:deploy:
+  stage: deploy
+  image: curlimages/curl:8.8.0
+  script:
+    - |
+      if [ -z "${VERCEL_DEPLOY_HOOK_URL:-}" ]; then
+        echo "Missing VERCEL_DEPLOY_HOOK_URL. Configure a Vercel production deploy hook in GitLab CI/CD variables."
+        exit 1
+      fi
+    - curl --fail --show-error --request POST "$VERCEL_DEPLOY_HOOK_URL"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+deploy:verify:
+  stage: deploy_verify
+  image: node:20-bookworm
+  rules:
+    - if: '$DEPLOYED_FRONTEND_URL || $DEPLOYED_BACKEND_URL'
+      when: on_success
+    - when: never
+  script:
+    - cd frontend
+    - npm ci
+    - node tests/deployment-verify.mjs
