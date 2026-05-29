@@ -115,3 +115,36 @@ Terraform variables are only needed if you decide to manage Vercel manually with
 
 - If you want GitHub to remain the deploy trigger, keep `mirror:github` enabled.
 - If you want GitHub/Vercel to own CD, do not add deploy-hook jobs back into GitLab CI.
+
+## Detailed Pipeline Documentation (current)
+
+This project uses a GitLab-first CI with an optional push mirror to GitHub so Vercel can continue to deploy from GitHub. The following explains current jobs, important variables, and expected behavior so operators can reliably test mirroring.
+
+- **Primary pipeline file**: [`.gitlab-ci.yml`](../.gitlab-ci.yml)
+- **Runs on**: `main` (full pipeline), and merge requests (validation subset).
+
+- **Key jobs and intent**:
+	- `validate`: linting and static checks for frontend/backend.
+	- `unit`: runs backend `pytest` to validate business logic.
+	- `build`: performs a production frontend build (used for integration test assets).
+	- `integration`: lightweight integration and smoke tests that exercise backend APIs.
+	- `routing` / `route-smoke`: verify important frontend routes render correctly under Next.js server.
+	- `render` / `pdf-render-smoke`: exercise the PDF generation API; note this job may fail if third-party PDF services (PDFShift) return 403 — treat as an expected external failure unless you add a fallback PDF provider.
+	- `mirror:github`: push `main` to the GitHub remote. This job is the mechanism that keeps GitHub in sync and triggers Vercel builds. It requires the mirror token and repository variables listed below.
+
+- **Essential CI variables** (GitLab CI/CD → Variables):
+	- `GITHUB_MIRROR_REPOSITORY` — set to `owner/repo` for the GitHub target.
+	- `GITHUB_MIRROR_TOKEN` — a personal access token with `repo` scope that can push to the target.
+	- `OPENROUTER_API_KEY`, `LANGFUSE_KEY`, `PDFSHIFT_KEY`, `SUPABASE_SERVICE_ROLE` — these are protected values used by smoke tests; the `frontend:smoke-quick` job is configured to run automatically on `main` where protected variables are available.
+
+- **Mirroring behavior and timing**:
+	- The `mirror:github` job pushes the GitLab `main` ref to GitHub. If GitHub has diverged, the push will fail (fast-forward requirement). You should resolve remote divergence locally or enable force pushes carefully.
+	- Mirroring is a push of commits/refs (the git objects). It does not selectively push files — the exact commit(s) created in GitLab are replicated on GitHub.
+	- If you want to *test* mirroring, push a commit to GitLab only and verify GitHub receives it. Depending on your GitLab mirroring configuration, there may be a short delay while the mirror job runs.
+
+- **Troubleshooting**:
+	- If mirroring fails with `non-fast-forward`, fetch `origin/main` locally, rebase or merge as appropriate, then push from GitLab or push directly to GitHub if desired.
+	- If the mirror job does not run, confirm `mirror:github` is present in `.gitlab-ci.yml` and that it is not protected by manual-only rules.
+	- Check GitLab Project → Settings → Repository → Mirroring repositories for native mirror errors and timestamps.
+
+If you want, I will now commit this documentation update and push it to GitLab only so you can observe whether GitHub receives it via your configured mirror.
