@@ -292,9 +292,6 @@ frontend:smoke-quick:
     # Run automatically on protected `main` branch where masked variables are available
     - if: '$CI_COMMIT_BRANCH == "main"'
       when: always
-    # Allow manual runs on branches that have the required protected variables set
-    - if: '$OPENROUTER_API_KEY && $PDFSHIFT_API_KEY && $langfuse_secret_key'
-      when: manual
     - when: never
 
 mirror:github:
