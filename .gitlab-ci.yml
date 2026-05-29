@@ -61,8 +61,8 @@ frontend:validate:
   script:
     - cd frontend
     - npm ci
-    - npx eslint "src/**/*.{ts,tsx,js,jsx}" --ignore-pattern "public/**" --ignore-pattern "builds/**" -f json -o lint_output.json || true
-    - npx eslint "src/**/*.{ts,tsx,js,jsx}" --ignore-pattern "public/**" --ignore-pattern "builds/**" -f unix > lint_output.txt || true
+    - npx eslint "src/**/*.{ts,tsx,js,jsx}" --ignore-pattern "public/**" --ignore-pattern "builds/**" --ignore-pattern "vendor/**" -f json -o lint_output.json || true
+    - npx eslint "src/**/*.{ts,tsx,js,jsx}" --ignore-pattern "public/**" --ignore-pattern "builds/**" --ignore-pattern "vendor/**" -f unix > lint_output.txt || true
   artifacts:
     when: always
     paths:
@@ -78,6 +78,43 @@ backend:validate:
     - pip install -r requirements.txt
     - python -m compileall app
 
+env:precheck:
+  stage: validate
+  image: alpine:3.18
+  script:
+    - |
+      missing=""
+      check_var() {
+        primary="$1"
+        alt="$2"
+        val=""
+        # POSIX-compatible retrieval of variable value (avoid Bash-only ${!var})
+        if [ -n "$primary" ]; then
+          eval "val=\${${primary}:-}"
+        fi
+        if [ -z "$val" ] && [ -n "$alt" ]; then
+          eval "val=\${${alt}:-}"
+        fi
+        if [ -z "$val" ]; then
+          if [ -n "$alt" ]; then
+            missing="$missing $primary/$alt"
+          else
+            missing="$missing $primary"
+          fi
+        fi
+      }
+      check_var NEXT_PUBLIC_SUPABASE_URL TF_VAR_next_public_supabase_url
+      check_var NEXT_PUBLIC_SUPABASE_ANON_KEY TF_VAR_next_public_supabase_anon_key
+      check_var PDFSHIFT_API_KEY TF_VAR_pdfshift_api_key
+      check_var LANGFUSE_SECRET_KEY TF_VAR_langfuse_secret_key
+      check_var LANGFUSE_PUBLIC_KEY TF_VAR_langfuse_public_key
+      if [ -n "$missing" ]; then
+        echo "Missing required CI variables:$missing" >&2
+        exit 1
+      fi
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
 backend:unit:
   stage: unit
   image: python:3.12-slim
@@ -92,6 +129,21 @@ frontend:build:
   image: node:20-bookworm
   script:
     - cd frontend
+    - |
+      # Create .env.local for Next.js build by preferring NEXT_PUBLIC_* variables,
+      # falling back to TF_VAR_* equivalents when present.
+      # strip surrounding quotes if present
+      strip() {
+        v="$1"
+        v="${v#\"}"
+        v="${v%\"}"
+        printf "%s" "$v"
+      }
+      printf 'NEXT_PUBLIC_SUPABASE_URL=%s\n' "$(strip "${NEXT_PUBLIC_SUPABASE_URL:-$TF_VAR_next_public_supabase_url}")" > .env.local
+      printf 'NEXT_PUBLIC_SUPABASE_ANON_KEY=%s\n' "$(strip "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-$TF_VAR_next_public_supabase_anon_key}")" >> .env.local
+      printf 'NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET=%s\n' "$(strip "${NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET:-$TF_VAR_next_public_supabase_storage_bucket}")" >> .env.local
+      printf 'PDFSHIFT_API_KEY=%s\n' "$(strip "${PDFSHIFT_API_KEY:-$TF_VAR_pdfshift_api_key}")" >> .env.local
+      printf 'NEXT_PUBLIC_VERCEL_FRONTEND_URL=%s\n' "$(strip "${NEXT_PUBLIC_VERCEL_FRONTEND_URL:-$TF_VAR_vercel_frontend_url}")" >> .env.local
     - npm ci
     - npm run build
 
