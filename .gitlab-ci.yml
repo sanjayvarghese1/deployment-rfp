@@ -280,90 +280,14 @@ frontend:smoke-quick:
   script:
     - cd frontend
     - |
-      write_env() {
-        key="$1"
-        value="$2"
-        if [ -z "$value" ]; then
-          value="$3"
-        fi
-        printf '%s=%s\n' "$key" "$value" >> .env.local
-      }
-      : > .env.local
-      write_env NEXT_PUBLIC_SUPABASE_URL "${NEXT_PUBLIC_SUPABASE_URL:-}" "https://example.invalid"
-      write_env NEXT_PUBLIC_SUPABASE_ANON_KEY "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}" "placeholder-anon-key"
-      write_env NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET "${NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET:-}" "proposals"
-      write_env NEXT_PUBLIC_BACKEND_URL "${DEPLOYED_BACKEND_URL:-}" "http://127.0.0.1:8000"
-      write_env NEXT_PUBLIC_APP_URL "${DEPLOYED_FRONTEND_URL:-}" "http://localhost:3000"
-      # Inject protected API keys so the app's generate endpoint exercises external services
-      write_env OPENROUTER_API_KEY "${openrouter_api_key:-}" ""
-      write_env OPENROUTER_BASE_URL "${openrouter_base_url:-}" "https://openrouter.ai/api/v1"
-      write_env LANGFUSE_SECRET_KEY "${langfuse_secret_key:-}" ""
-      write_env LANGFUSE_PUBLIC_KEY "${langfuse_public_key:-}" ""
-      write_env LANGFUSE_BASE_URL "${langfuse_base_url:-}" "https://cloud.langfuse.com"
-      write_env PDFSHIFT_API_KEY "${pdfshift_api_key:-}" ""
-      write_env PDFSHIFT_SANDBOX "${pdfshift_sandbox:-}" ""
-      write_env NEXT_PUBLIC_SUPABASE_URL "${NEXT_PUBLIC_SUPABASE_URL:-}" "https://example.invalid"
-      write_env NEXT_PUBLIC_SUPABASE_ANON_KEY "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}" "placeholder-anon-key"
-      write_env SUPABASE_SERVICE_ROLE_KEY "${supabase_service_role_key:-}" ""
-    - npm ci --prefer-offline
-    - npm run build
-    - npm run start -- --hostname 127.0.0.1 --port 3000 &
-    - node tests/wait-for-http.mjs http://127.0.0.1:3000/companies
-    - |
-      cat > smoke-quick.mjs <<'NODE'
-      // Quick CI smoke: POST minimal RFP and ensure stream emits a progress event
-      const url = process.argv[2] || 'http://127.0.0.1:3000/api/rfp/generate';
-      const payload = {
-        project_title: 'CI Smoke Test',
-        organization_name: 'CI',
-        category: 'software',
-        sections: { executive_summary: 'auto' },
-        fastMode: true,
-      };
-      (async () => {
-        try {
-          const res = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          });
-          if (!res.ok) {
-            console.error('API responded non-OK', res.status);
-            process.exit(1);
-          }
-          if (!res.body) {
-            console.error('No streaming body');
-            process.exit(1);
-          }
-          const reader = res.body.getReader();
-          const dec = new TextDecoder();
-          let buf = '';
-          const start = Date.now();
-          while (Date.now() - start < 45000) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buf += dec.decode(value, { stream: true });
-            process.stdout.write(buf.slice(-1024));
-            if (buf.includes('event: progress') || buf.includes('event: result') || buf.includes('event: pdf')) {
-              console.log('\nSmoke quick: success (progress/result/pdf seen)');
-              process.exit(0);
-            }
-            if (buf.includes('event: error')) {
-              console.error('\nSmoke quick: stream emitted error');
-              process.exit(1);
-            }
-            // keep buffer short
-            if (buf.length > 20000) buf = buf.slice(-10000);
-          }
-          console.error('Smoke quick: timed out waiting for progress');
-          process.exit(1);
-        } catch (e) {
-          console.error('Smoke quick: exception', e);
-          process.exit(1);
-        }
-      })();
-      NODE
-    - node smoke-quick.mjs http://127.0.0.1:3000/api/rfp/generate
+      base_url="${DEPLOYED_FRONTEND_URL:-${CI_ENVIRONMENT_URL:-}}"
+      if [ -z "$base_url" ]; then
+        echo "Missing DEPLOYED_FRONTEND_URL or CI_ENVIRONMENT_URL; cannot run smoke-quick against a deployed app."
+        exit 1
+      fi
+      echo "Running quick smoke against $base_url"
+      node tests/analysis-smoke.mjs "$base_url"
+      node tests/rfp-generate-smoke.mjs "$base_url"
   rules:
     # Run automatically on protected `main` branch where masked variables are available
     - if: '$CI_COMMIT_BRANCH == "main"'
