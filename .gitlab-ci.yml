@@ -69,6 +69,8 @@ frontend:build:
 terraform:fmt:
   stage: iac
   image: hashicorp/terraform:1.11.3
+  entrypoint:
+    - ""
   script:
     - cd terraform
     - terraform fmt -check -recursive
@@ -78,6 +80,8 @@ terraform:fmt:
 terraform:validate:
   stage: iac
   image: hashicorp/terraform:1.11.3
+  entrypoint:
+    - ""
   script:
     - cd terraform
     - terraform init -backend=false -input=false
@@ -88,6 +92,8 @@ terraform:validate:
 terraform:plan:
   stage: iac
   image: hashicorp/terraform:1.11.3
+  entrypoint:
+    - ""
   script:
     - cd terraform
     - export TF_STATE_NAME="deployment-rfp-vercel"
@@ -108,6 +114,8 @@ terraform:plan:
 terraform:apply:
   stage: iac
   image: hashicorp/terraform:1.11.3
+  entrypoint:
+    - ""
   needs:
     - terraform:plan
   script:
