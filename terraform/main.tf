@@ -37,7 +37,7 @@ resource "vercel_project" "frontend" {
   output_directory = ".next"
 
   git_repository = {
-    type              = "gitlab"
+    type              = "github"
     repo              = var.vercel_git_repository
     production_branch = "main"
   }

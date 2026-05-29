@@ -17,7 +17,7 @@ variable "vercel_project_name" {
 }
 
 variable "vercel_git_repository" {
-  description = "GitLab repository in owner/repo form."
+  description = "GitHub repository in owner/repo form."
   type        = string
 }
 
