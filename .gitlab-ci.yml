@@ -100,30 +100,17 @@ terraform:fmt:
     - cd terraform
     - terraform fmt -check -recursive
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "main"'
 
 terraform:validate:
   extends: .terraform_base
   stage: iac
   script:
     - cd terraform
-    - |
-      missing_vars=""
-      for required_var in TF_VAR_vercel_api_token TF_VAR_vercel_git_repository TF_VAR_vercel_backend_url TF_VAR_next_public_supabase_url TF_VAR_next_public_supabase_anon_key TF_VAR_supabase_service_role_key TF_VAR_openrouter_api_key; do
-        eval "value=\${$required_var:-}"
-        if [ -z "$value" ]; then
-          missing_vars="$missing_vars $required_var"
-        fi
-      done
-      if [ -n "$missing_vars" ]; then
-        echo "Missing required CI variables:$missing_vars"
-        echo "Add them in GitLab CI/CD settings before running Terraform jobs."
-        exit 1
-      fi
     - terraform init -backend=false -input=false
     - terraform validate
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "main"'
 
 terraform:plan:
   extends: .terraform_base
