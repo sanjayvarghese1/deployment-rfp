@@ -35,6 +35,12 @@ resource "vercel_project" "frontend" {
   install_command  = "npm ci"
   build_command    = "npm run build"
   output_directory = ".next"
+
+  git_repository = {
+    type              = "github"
+    repo              = var.vercel_git_repository
+    production_branch = "main"
+  }
 }
 
 resource "vercel_project_environment_variable" "frontend" {

@@ -38,6 +38,7 @@ terraform plan
 Required GitLab CI/CD variables:
 
 - `vercel_api_token`
+- `vercel_git_repository` in `owner/repo` form
 - `DEPLOYED_BACKEND_URL`
 - `DEPLOYED_FRONTEND_URL`
 - `NEXT_PUBLIC_SUPABASE_URL`
