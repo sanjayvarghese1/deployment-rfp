@@ -3,17 +3,28 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import Link from "next/link";
+import jsPDF from "jspdf";
 import { saveProposalAnalysisResult, ProposalAnalysis, JudgeResult, startBackgroundAnalysisJob, getBackgroundAnalysisJob } from "@/services/aiService";
 import { generateProposalPDF } from "@/services/pdfGenerator";
+import ProposalPairwiseComparison from "@/components/ProposalPairwiseComparison";
 import VendorComparisonChart from "@/components/VendorComparisonChart";
 import ProposalMetricsComparison from "@/components/ProposalMetricsComparison";
 import { supabase } from "@/services/supabase";
-import formatCurrency, { extractCurrencyLikeText, extractTimelineLikeText, parseNumber } from "@/lib/formatters/number";
+import formatCurrency, { extractCurrencyLikeText, extractPriceLikeText, extractTimelineLikeText, parseNumber } from "@/lib/formatters/number";
 import { randomUUID } from '@/lib/uuid';
 import { apiUrl } from "@/lib/api";
 
 function normalizeDoc(data: any): any {
   return data;
+}
+
+function sanitizeFileName(value: string): string {
+  return value
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\s/g, "_")
+    .slice(0, 120) || "vendor-analysis-report";
 }
 
 interface Contract {
@@ -253,6 +264,134 @@ export default function VendorResponsesTab() {
     }
   };
 
+  const downloadAnalysisReport = (proposal: Proposal) => {
+    const analysis = analyses[proposal.proposal_id];
+    if (!analysis) {
+      alert("Run AI Analysis first, then try downloading the report.");
+      return;
+    }
+
+    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 14;
+    const contentWidth = pageWidth - margin * 2;
+    let y = 18;
+
+    const ensureSpace = (neededHeight: number) => {
+      if (y + neededHeight > pageHeight - 16) {
+        doc.addPage();
+        y = 18;
+      }
+    };
+
+    const addSectionTitle = (text: string) => {
+      ensureSpace(10);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(37, 99, 235);
+      doc.text(text, margin, y);
+      y += 6;
+      doc.setDrawColor(209, 213, 219);
+      doc.setLineWidth(0.2);
+      doc.line(margin, y, pageWidth - margin, y);
+      y += 5;
+    };
+
+    const addWrappedText = (text: string, fontSize = 9, lineHeight = 4.6) => {
+      if (!text) return;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(fontSize);
+      doc.setTextColor(55, 65, 81);
+      const lines = doc.splitTextToSize(text, contentWidth);
+      ensureSpace(lines.length * lineHeight + 2);
+      doc.text(lines, margin, y);
+      y += lines.length * lineHeight + 2;
+    };
+
+    const addKeyValue = (label: string, value: string) => {
+      const text = `${label}: ${value}`;
+      const lines = doc.splitTextToSize(text, contentWidth);
+      ensureSpace(lines.length * 4.6 + 2);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(17, 24, 39);
+      doc.text(lines, margin, y);
+      y += lines.length * 4.6 + 1.5;
+    };
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(18);
+    doc.setTextColor(17, 24, 39);
+    doc.text("Vendor Analysis Report", margin, y);
+    y += 8;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(107, 114, 128);
+    doc.text([proposal.vendor_name, selectedContractData?.title || "Contract"].filter(Boolean).join(" · "), margin, y);
+    y += 10;
+
+    addKeyValue("Overall score", `${analysis.overall_score}/100`);
+    addKeyValue("Recommendation", analysis.independent_recommendation || "Not provided");
+    addKeyValue("Price", analysis.price ? formatCurrency(analysis.price) : (proposal.price || "Not provided"));
+    addKeyValue("Risk flags", `${analysis.risk_flags?.length || 0}`);
+
+    addSectionTitle("Executive Summary");
+    addWrappedText(analysis.analysis_summary || "No summary available.");
+
+    addSectionTitle("Strengths");
+    if ((analysis.strengths || []).length > 0) {
+      analysis.strengths!.forEach((item) => addWrappedText(`- ${item}`));
+    } else {
+      addWrappedText("No strengths captured.");
+    }
+
+    addSectionTitle("Weaknesses");
+    if ((analysis.weaknesses || []).length > 0) {
+      analysis.weaknesses!.forEach((item) => addWrappedText(`- ${item}`));
+    } else {
+      addWrappedText("No weaknesses captured.");
+    }
+
+    addSectionTitle("Risk Flags");
+    if ((analysis.risk_flags || []).length > 0) {
+      analysis.risk_flags!.forEach((item) => addWrappedText(`- ${item}`));
+    } else {
+      addWrappedText("No risk flags captured.");
+    }
+
+    addSectionTitle("Mandatory Criteria");
+    const criterionRows = Array.isArray(analysis.scoring_criteria) && analysis.scoring_criteria.length > 0
+      ? analysis.scoring_criteria
+      : [
+          { id: "technical_fit", label: "Technical fit", max_score: 30, score: analysis.criterion_scores?.technical_fit?.score ?? 0, reason: analysis.criterion_scores?.technical_fit?.reason ?? "" },
+          { id: "cost_efficiency", label: "Cost efficiency", max_score: 20, score: analysis.criterion_scores?.cost_efficiency?.score ?? 0, reason: analysis.criterion_scores?.cost_efficiency?.reason ?? "" },
+          { id: "relevant_experience", label: "Relevant experience", max_score: 20, score: analysis.criterion_scores?.relevant_experience?.score ?? 0, reason: analysis.criterion_scores?.relevant_experience?.reason ?? "" },
+          { id: "timeline_fit", label: "Timeline fit", max_score: 15, score: analysis.criterion_scores?.timeline_fit?.score ?? 0, reason: analysis.criterion_scores?.timeline_fit?.reason ?? "" },
+          { id: "compliance_completeness", label: "Compliance completeness", max_score: 15, score: analysis.criterion_scores?.compliance_completeness?.score ?? 0, reason: analysis.criterion_scores?.compliance_completeness?.reason ?? "" },
+        ];
+
+    criterionRows.forEach((row, index) => {
+      ensureSpace(12);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(17, 24, 39);
+      doc.text(`${index + 1}. ${row.label} (${row.score}/${row.max_score})`, margin, y);
+      y += 4.8;
+      if (row.reason) {
+        addWrappedText(row.reason, 8.5, 4.3);
+      }
+    });
+
+    if (savedAnalysis?.judge_result?.comparative_analysis) {
+      addSectionTitle("Overall Comparison Context");
+      addWrappedText(savedAnalysis.judge_result.comparative_analysis.selection_summary || "No comparison summary available.");
+      addWrappedText(`Best vendor overall: ${savedAnalysis.judge_result.comparative_analysis.best_vendor || "Not provided"}`);
+    }
+
+    doc.save(sanitizeFileName(`${proposal.vendor_name || "vendor"}-analysis-report.pdf`));
+  };
+
   const runAIAnalysis = async () => {
     const contract = myContracts.find((c) => c.contract_id === selectedContract);
     if (!contract || allProposals.length === 0) return;
@@ -265,7 +404,7 @@ export default function VendorResponsesTab() {
         if (p.proposal_type === "uploaded_pdf" && (!proposalData || proposalData.trim() === "")) {
           setAnalysisProgress(`Extracting PDF for "${p.vendor_name}"...`);
           proposalData = await extractPdfText(p.proposal_file || "", p.vendor_name);
-          const extractedPriceMatch = extractCurrencyLikeText(proposalData);
+          const extractedPriceMatch = extractPriceLikeText(proposalData);
           const extractedPriceValue = parseNumber(extractedPriceMatch);
           const updatePayload: Record<string, unknown> = { extracted_text: proposalData };
           if (extractedPriceValue > 0 && !p.price) {
@@ -277,7 +416,7 @@ export default function VendorResponsesTab() {
         return {
           proposal_id: p.proposal_id,
           vendor_name: p.vendor_name,
-          price: p.price || (typeof proposalData === "string" ? formatCurrency(parseNumber(extractCurrencyLikeText(proposalData))) : "") || "",
+          price: p.price || (typeof proposalData === "string" ? formatCurrency(parseNumber(extractPriceLikeText(proposalData))) : "") || "",
           timeline: p.timeline || "",
           experience: p.experience || "",
           proposal_data: proposalData,
@@ -503,6 +642,11 @@ export default function VendorResponsesTab() {
                     </div>
                   )}
 
+                  <ProposalPairwiseComparison
+                    proposals={allProposals}
+                    analyses={analyses}
+                  />
+
                   <VendorComparisonChart
                     title="Vendor score comparison"
                     subtitle="Higher bars mean stronger overall fit for the contract."
@@ -610,14 +754,9 @@ export default function VendorResponsesTab() {
                       <div className="flex gap-4 text-sm text-[var(--muted)] mb-2">
                       <span>Price: <span className="font-medium text-[var(--foreground)]">{(() => {
                         if (p.price) return p.price;
-                        const extractedPrice = extractCurrencyLikeText(p.extracted_text ?? p.proposal_data);
+                        const extractedPrice = extractPriceLikeText(p.extracted_text ?? p.proposal_data);
                         const priceValue = parseNumber(extractedPrice);
                         return priceValue > 0 ? formatCurrency(priceValue) : "N/A";
-                      })()}</span></span>
-                      <span>Timeline: <span className="font-medium text-[var(--foreground)]">{(() => {
-                        if (p.timeline) return p.timeline;
-                        const extractedTimeline = extractTimelineLikeText(p.extracted_text ?? p.proposal_data);
-                        return extractedTimeline && extractedTimeline.length < 80 ? extractedTimeline : "N/A";
                       })()}</span></span>
                     </div>
                     {p.experience && <p className="text-sm text-[var(--muted)] leading-relaxed mb-3">{p.experience}</p>}
@@ -675,9 +814,17 @@ export default function VendorResponsesTab() {
 
                     <div className="mt-3 pt-3 border-t border-[var(--divider)] flex items-center justify-between gap-3">
                       <p className="text-sm text-[var(--muted)] line-clamp-2">{analysis?.analysis_summary || "No summary available."}</p>
-                      <Link href={`/contracts/${selectedContract}/reports/${p.proposal_id}`} target="_blank" rel="noopener noreferrer" className="shrink-0 inline-flex items-center gap-1.5 text-sm text-[var(--primary)] hover:text-[var(--primary-hover)] font-medium">
-                        Show Report
-                      </Link>
+                      <div className="shrink-0 flex items-center gap-3">
+                        <button
+                          onClick={() => downloadAnalysisReport(p)}
+                          className="inline-flex items-center gap-1.5 text-sm text-[var(--primary)] hover:text-[var(--primary-hover)] font-medium"
+                        >
+                          Download Report
+                        </button>
+                        <Link href={`/contracts/${selectedContract}/reports/${p.proposal_id}`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-sm text-[var(--primary)] hover:text-[var(--primary-hover)] font-medium">
+                          Show Report
+                        </Link>
+                      </div>
                     </div>
 
                     {!isAccepted && !isRejected && !hasDecision && (

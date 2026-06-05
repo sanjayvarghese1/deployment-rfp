@@ -6,6 +6,7 @@ import {
   formatCurrency,
   firstNonEmptyText,
   extractCurrencyLikeText,
+  extractPriceLikeText,
   extractTimelineLikeText,
 } from "@/lib/formatters/number";
 import MetricCard from "@/components/MetricCard";
@@ -47,12 +48,14 @@ export default function ProposalMetricsComparison({
   // ─── Build proposal metrics data ───
   const metricsData = proposals.map((proposal) => {
     const analysis = analyses[proposal.proposal_id];
-    const extractedPrice = extractCurrencyLikeText(proposal.extracted_text ?? proposal.proposal_data);
+    const extractedPrice = extractPriceLikeText(proposal.extracted_text ?? proposal.proposal_data);
     const extractedTimeline = extractTimelineLikeText(proposal.extracted_text ?? proposal.proposal_data);
-    const priceText = isSafeShortText(extractedPrice)
-      ? extractedPrice
-      : isSafeShortText(proposal.price)
-        ? proposal.price
+    // Prefer the explicit uploaded `proposal.price` to match the proposal card display;
+    // fall back to extracted price when the uploaded price isn't safe/available.
+    const priceText = isSafeShortText(proposal.price)
+      ? proposal.price
+      : isSafeShortText(extractedPrice)
+        ? extractedPrice
         : "";
     const timelineText = isSafeShortText(extractedTimeline)
       ? extractedTimeline
@@ -112,7 +115,7 @@ export default function ProposalMetricsComparison({
           Proposal Metrics Comparison
         </p>
         <p className="text-sm text-[var(--muted)]">
-          Budget, pricing, timeline, risk, and score breakdown for all vendors
+          Budget, pricing, risk, and score breakdown for all vendors
         </p>
       </div>
 
@@ -231,9 +234,6 @@ export default function ProposalMetricsComparison({
                   Price
                 </th>
                 <th className="text-right px-3 py-2 font-semibold text-[var(--muted)] uppercase tracking-wide text-xs">
-                  Timeline
-                </th>
-                <th className="text-right px-3 py-2 font-semibold text-[var(--muted)] uppercase tracking-wide text-xs">
                   Risk
                 </th>
                 <th className="text-right px-3 py-2 font-semibold text-[var(--muted)] uppercase tracking-wide text-xs">
@@ -259,9 +259,7 @@ export default function ProposalMetricsComparison({
                   >
                       {metric.priceFormatted}
                   </td>
-                  <td className="text-right px-3 py-2.5 text-[var(--foreground)]">
-                    {metric.timeline}
-                  </td>
+                  {/* Timeline column intentionally removed — timeline shown only in detailed reports */}
                   <td className="text-right px-3 py-2.5">
                     <span
                       className={`inline-flex items-center gap-1 px-2 py-1 rounded-full font-semibold text-xs ${

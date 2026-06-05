@@ -4,11 +4,12 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { getCachedFullPipeline, runCachedFullPipeline, saveProposalAnalysisResult, ProposalAnalysis, JudgeResult, CachedFullPipelineResult } from "@/services/aiService";
+import { getCachedFullPipeline, saveProposalAnalysisResult, ProposalAnalysis, JudgeResult } from "@/services/aiService";
 import { generateProposalPDF } from "@/services/pdfGenerator";
 import VendorComparisonChart from "@/components/VendorComparisonChart";
 import ProposalMetricsComparison from "@/components/ProposalMetricsComparison";
-import formatCurrency, { firstNonEmptyText, extractCurrencyLikeText, extractTimelineLikeText, parseNumber } from "@/lib/formatters/number";
+import ProposalPairwiseComparison from "@/components/ProposalPairwiseComparison";
+import formatCurrency, { firstNonEmptyText, extractCurrencyLikeText, extractPriceLikeText, extractTimelineLikeText, parseNumber } from "@/lib/formatters/number";
 import { randomUUID } from '@/lib/uuid';
 import { startBackgroundAnalysisJob, getBackgroundAnalysisJob } from "@/services/aiService";
 import { supabase } from "@/services/supabase";
@@ -51,7 +52,7 @@ function downloadPdfFromBase64(base64: string, filename: string) {
 export default function ContractDetailPage() {
   const params = useParams<{ id?: string }>();
   const router = useRouter();
-  const contractId = params?.id;
+  const contractId: string = String(params?.id || "");
   const { user, profile } = useAuth();
   const [contract, setContract] = useState<any>(null);
   const [proposals, setProposals] = useState<any[]>([]);
@@ -71,7 +72,6 @@ export default function ContractDetailPage() {
   const [referrer, setReferrer] = useState("");
   const [backgroundJobId, setBackgroundJobId] = useState<string | null>(null);
 
-  if (!contractId) return null;
   const savedAnalysis = contract?.last_analysis_result;
   const liveAnalysis = backgroundJobId || analyzing || judgeResult || Object.keys(analyses).length > 0 ? {
     analyses_by_proposal_id: analyses,
@@ -490,6 +490,8 @@ export default function ContractDetailPage() {
     contract.rfp_metadata?.budgetIndicator,
     extractCurrencyLikeText(contractTextSource)
   ) || "TBD";
+
+  if (!contractId) return null;
   const displayDeadline = firstNonEmptyText(
     contract.deadline,
     contract.timelineIndicator,
@@ -734,6 +736,11 @@ export default function ContractDetailPage() {
                         </div>
                       )}
 
+                      <ProposalPairwiseComparison
+                        proposals={sortedProposals}
+                        analyses={analyses}
+                      />
+
                       <VendorComparisonChart
                         title="Vendor score comparison"
                         subtitle="Higher bars mean stronger overall fit for the contract."
@@ -904,14 +911,9 @@ export default function ContractDetailPage() {
                         <div className="flex gap-4 text-sm text-[var(--muted)] mb-2">
                           <span>Price: <span className="font-medium text-[var(--foreground)]">{(() => {
                             if (p.price) return p.price;
-                            const extractedPrice = extractCurrencyLikeText(p.extracted_text ?? p.proposal_data);
+                            const extractedPrice = extractPriceLikeText(p.extracted_text ?? p.proposal_data);
                             const priceValue = parseNumber(extractedPrice);
                             return priceValue > 0 ? formatCurrency(priceValue) : "N/A";
-                          })()}</span></span>
-                          <span>Timeline: <span className="font-medium text-[var(--foreground)]">{(() => {
-                            if (p.timeline) return p.timeline;
-                            const extractedTimeline = extractTimelineLikeText(p.extracted_text ?? p.proposal_data);
-                            return extractedTimeline && extractedTimeline.length < 80 ? extractedTimeline : "N/A";
                           })()}</span></span>
                         </div>
                         {p.experience && <p className="text-sm text-[var(--muted)] leading-relaxed mb-3">{p.experience}</p>}

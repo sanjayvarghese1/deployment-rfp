@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/services/supabase';
-import { extractCurrencyLikeText, extractTimelineLikeText, formatCurrency } from '@/lib/formatters/number';
+import { extractCurrencyLikeText, extractPriceLikeText, extractTimelineLikeText, formatCurrency } from '@/lib/formatters/number';
 import { createClient } from '@supabase/supabase-js';
 
 function normalizeCurrencyWithSuffix(text: string){
@@ -112,7 +112,7 @@ export async function POST(req: NextRequest){
         const { data: proposal } = await svc.from('proposals').select('id,contract_id,vendor_name,price,timeline,experience').eq('id', p.id).single();
 
         // Extract price/timeline from parsed text
-        const extractedPrice = extractCurrencyLikeText(safe);
+        const extractedPrice = extractPriceLikeText(safe);
         const extractedTimeline = extractTimelineLikeText(safe);
 
         // Normalize price (convert 4.8 M -> $4,800,000.00)
@@ -145,7 +145,7 @@ export async function POST(req: NextRequest){
             
             if(proposal && contract){
               const analysisUrl = buildAbsoluteUrl(req.nextUrl.origin, '/api/ai/analyze-proposal');
-              const extractedPrice = extractCurrencyLikeText(safe);
+              const extractedPrice = extractPriceLikeText(safe);
               const extractedTimeline = extractTimelineLikeText(safe);
               const normalizedPrice = extractedPrice ? normalizeCurrencyWithSuffix(extractedPrice) : '';
               

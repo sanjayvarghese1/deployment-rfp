@@ -4,6 +4,7 @@ import { langfuse } from "@/config/langfuse";
 import { saveProposalAnalysisResult } from "@/services/aiService";
 import type { MandatoryCriteriaPayload } from "@/lib/rfp/config";
 import type { AnalysisScoringCriterion, CriterionScore, JudgeResult, ProposalAnalysis } from "@/services/aiService";
+import computeComparativeMetrics from "@/lib/comparativeMetrics";
 
 export const maxDuration = 240; // Conservative limit for Vercel Hobby (max 300)
 
@@ -20,6 +21,7 @@ type OpenRouterCriterionResponse = {
   evidence?: string;
   support_level?: "explicit" | "partial" | "inferred" | string;
   confidence?: number;
+  support_reasoning?: string;
 };
 
 type ScoringStrictness = "strict" | "balanced" | "lenient";
@@ -196,9 +198,9 @@ function tightenCriterionScore(input: {
       evidence: evidence.matchedSignals.slice(0, 3).join(", "),
       support_level: "inferred",
       confidence: 0,
+      support_reasoning: `The vendor text did not show concrete support for ${input.criterion.label}.`,
     } as unknown as CriterionScore;
   }
-
   return {
     ...input.score,
     score,
@@ -206,6 +208,9 @@ function tightenCriterionScore(input: {
     evidence: evidence.matchedSignals.slice(0, 3).join(", ") || input.score.evidence,
     support_level: evidence.explicitSupport ? "explicit" : "partial",
     confidence: evidence.explicitSupport ? Math.max(Number(input.score.confidence || 0), 0.8) : Math.min(Number(input.score.confidence || 0.55), 0.65),
+    support_reasoning: evidence.explicitSupport
+      ? `The score was retained because the proposal contains direct support for ${input.criterion.label}.`
+      : `The score was capped because the evidence for ${input.criterion.label} is only partial or indirect.`,
   } as unknown as CriterionScore;
 }
 
@@ -336,6 +341,111 @@ function extractPriceFromText(text: string): string | null {
   return moneyMatch;
 }
 
+function extractTimelineCandidates(text: string): string[] {
+  if (!text) return [];
+  const hay = String(text).replace(/\s+/g, " ").trim();
+  const candidates = new Set<string>();
+
+  // Duration patterns: '4 weeks', '6 months', '1 year', etc.
+  const durationRe = /\b\d{1,3}\s+(?:day|days|week|weeks|month|months|year|years)\b/ig;
+  for (const m of hay.matchAll(durationRe)) candidates.add(m[0].trim());
+
+  // Month + year: 'June 2026', 'Jun 2026'
+  const monthYearRe = /\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{4}\b/ig;
+  for (const m of hay.matchAll(monthYearRe)) candidates.add(m[0].trim());
+
+  // Date ranges like 'Jan - Mar 2026' or 'Jan to Mar 2026'
+  const rangeRe = /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s*(?:-|to|–)\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s*\d{4}\b/ig;
+  for (const m of hay.matchAll(rangeRe)) candidates.add(m[0].trim());
+
+  // Quarter patterns: Q1 2026
+  const quarterRe = /\bQ[1-4]\s*\d{4}\b/ig;
+  for (const m of hay.matchAll(quarterRe)) candidates.add(m[0].trim());
+
+  // Explicit ISO dates, e.g., 2026-06-05 or 05/06/2026 (simple)
+  const isoRe = /\b\d{4}-\d{2}-\d{2}\b/g;
+  for (const m of hay.matchAll(isoRe)) candidates.add(m[0].trim());
+  const slashRe = /\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g;
+  for (const m of hay.matchAll(slashRe)) candidates.add(m[0].trim());
+
+  // Heuristic: phrases with 'timeline' or 'weeks' nearby
+  const timelinePhraseRe = /(?:timeline|estimated|expected|completion|deliver|delivery|duration)[:\s\-]{0,30}([\w\s\d,\-\/]+?)(?:[\.\n]|$)/ig;
+  for (const m of hay.matchAll(timelinePhraseRe)) {
+    const s = (m[1] || "").trim();
+    if (s && s.length <= 80) candidates.add(s.replace(/\s+/g, " "));
+  }
+
+  return Array.from(candidates).slice(0, 5);
+}
+
+async function selectBestTimelineWithLLM(input: {
+  vendorName: string;
+  vendorMarkdown: string;
+  vendorText: string;
+  timelineCandidates: string[];
+}): Promise<{ timeline: string; timeline_confidence: "explicit" | "partial" | "inferred"; timeline_evidence?: string }> {
+  const combinedText = [input.vendorMarkdown, input.vendorText].filter(Boolean).join("\n\n").slice(0, 18000);
+  const candidateBlock = input.timelineCandidates.length > 0
+    ? input.timelineCandidates.map((item, index) => `${index + 1}. ${item}`).join("\n")
+    : "None found by heuristics";
+
+  const prompt = `You are extracting the most appropriate delivery timeline from a vendor proposal.
+
+Rules:
+- Return the single best timeline that is actually supported by the proposal.
+- Prefer a direct proposed delivery schedule, implementation window, milestone range, or go-live timeframe.
+- If multiple timelines appear, choose the most specific vendor-committed one.
+- Do not invent or normalize beyond what the proposal says.
+- If no reliable timeline exists, return an empty timeline and set confidence to "inferred".
+
+Vendor: ${input.vendorName}
+
+Heuristic candidates:
+${candidateBlock}
+
+Proposal text:
+${combinedText}
+
+Return STRICT JSON only:
+{
+  "timeline": "<string>",
+  "timeline_confidence": "<explicit|partial|inferred>",
+  "timeline_evidence": "<short supporting quote or note>"
+}`;
+
+  try {
+    const result = await openRouterChatJSON({
+      model: AGENT_MODEL.QUALITY_ASSURANCE,
+      messages: [
+        { role: "system", content: "You are a JSON-only extraction API. Return raw valid JSON only, with no markdown or commentary." },
+        { role: "user", content: prompt },
+      ],
+      max_tokens: 500,
+      temperature: 0,
+    }) as { timeline?: string; timeline_confidence?: string; timeline_evidence?: string };
+
+    const timeline = String(result?.timeline || "").trim();
+    const confidenceRaw = String(result?.timeline_confidence || "inferred").toLowerCase();
+    const timeline_confidence = confidenceRaw === "explicit" || confidenceRaw === "partial" || confidenceRaw === "inferred"
+      ? confidenceRaw
+      : "inferred";
+
+    return {
+      timeline,
+      timeline_confidence,
+      timeline_evidence: typeof result?.timeline_evidence === "string" ? result.timeline_evidence.trim().slice(0, 220) : undefined,
+    };
+  } catch (error) {
+    console.warn("Timeline extraction LLM failed, falling back to heuristics:", error instanceof Error ? error.message : String(error));
+    const fallback = input.timelineCandidates[0] || "";
+    return {
+      timeline: fallback,
+      timeline_confidence: fallback ? "partial" : "inferred",
+      timeline_evidence: fallback || undefined,
+    };
+  }
+}
+
 function getScoringStrictness(): ScoringStrictness {
   const raw = String(process.env.ANALYSIS_SCORING_STRICTNESS || "balanced").trim().toLowerCase();
   if (raw === "strict") return "strict";
@@ -450,6 +560,7 @@ function buildHeuristicScore(input: {
       evidence: "",
       support_level: "inferred",
       confidence: 0,
+      support_reasoning: `No matching phrases were found for ${input.criterion.label}.`,
     } as unknown as CriterionScore;
   }
 
@@ -464,6 +575,7 @@ function buildHeuristicScore(input: {
         score: 0,
         reason: `Heuristic phrase found but not present in submitted vendor text; scoring requires phrase evidence in vendor text.`,
         evidence: matchedInText.slice(0, 3).map((item) => item.hint).join(", "),
+        support_reasoning: `The match was too weak because it did not appear clearly in the raw vendor text.`,
       };
     }
   } else {
@@ -473,6 +585,7 @@ function buildHeuristicScore(input: {
         score: 0,
         reason: `Heuristic evidence was insufficient in vendor text for ${input.criterion.label}.`,
         evidence: matchedInText.slice(0, 3).map((item) => item.hint).join(", "),
+        support_reasoning: `The available text mentions related terms, but not enough to justify scoring ${input.criterion.label}.`,
       };
     }
   }
@@ -489,6 +602,7 @@ function buildHeuristicScore(input: {
     evidence: matchedInText.slice(0, 3).map((item) => item.hint).join(", "),
     support_level,
     confidence,
+    support_reasoning: `The score is based on keyword evidence rather than a direct explicit commitment in the vendor text.`,
   } as unknown as CriterionScore;
 }
 
@@ -525,6 +639,8 @@ SCORING RULES
 - Prefer raw vendor text evidence over extracted summaries.
 - Quote the clearest concrete evidence you used.
 - Keep the reason short and factual.
+- Explain why the score is explicit, partial, or inferred when writing the reason or support reasoning.
+- If the evidence is weak, state the missing detail or gap that prevented a higher score.
 ${strictnessNote}
 ${retry ? "- This is a retry because the first pass came back with an all-zero result. Re-read the text and be less conservative if evidence is present." : ""}
 
@@ -539,7 +655,8 @@ OUTPUT JSON ONLY IN THIS SHAPE:
   "reason": "<short reason>",
   "evidence": "<exact or near-exact supporting evidence or empty string if none>",
   "support_level": "<explicit|partial|inferred>",
-  "confidence": <number between 0 and 1>
+  "confidence": <number between 0 and 1>,
+  "support_reasoning": "<one short sentence explaining why the evidence quality/support level was assigned>"
 }
 
 RFP EXTRACT:
@@ -580,6 +697,7 @@ async function scoreCriterion(input: {
   let score = clampScore(response.score, input.criterion.max_score);
   const reason = String(response.reason || "").trim().slice(0, 220);
   const evidence = String(response.evidence || "").trim().slice(0, 500);
+  const supportReasoning = String(response.support_reasoning || "").trim().slice(0, 260);
   const supportLevelRaw = String(response.support_level || "").trim().toLowerCase();
   const supportLevel = supportLevelRaw === "explicit" || supportLevelRaw === "partial" || supportLevelRaw === "inferred"
     ? supportLevelRaw
@@ -644,6 +762,11 @@ async function scoreCriterion(input: {
     evidence,
     support_level: supportLevel,
     confidence,
+    support_reasoning: supportReasoning || (supportLevel === "explicit"
+      ? `The vendor text shows direct, specific support for ${input.criterion.label}.`
+      : supportLevel === "partial"
+        ? `The vendor text suggests support for ${input.criterion.label}, but the evidence is not fully explicit.`
+        : `The score is based on weak or inferred support for ${input.criterion.label}.`),
   } as unknown as CriterionScore;
 }
 
@@ -792,6 +915,7 @@ async function runScorer(
       evidence: tightened.evidence,
       support_level: (tightened as any).support_level,
       confidence: (tightened as any).confidence,
+      support_reasoning: (tightened as any).support_reasoning,
     });
   }
 
@@ -827,6 +951,7 @@ async function runScorer(
           evidence: tightened.evidence || current.evidence,
           support_level: (tightened as any).support_level || (current as any).support_level,
           confidence: (tightened as any).confidence || (current as any).confidence,
+          support_reasoning: (tightened as any).support_reasoning || (current as any).support_reasoning,
         };
       }
     }
@@ -860,6 +985,7 @@ async function runScorer(
         evidence: tightened.evidence,
         support_level: (tightened as any).support_level,
         confidence: (tightened as any).confidence,
+        support_reasoning: (tightened as any).support_reasoning,
       });
     }
   }
@@ -891,6 +1017,7 @@ async function runScorer(
         evidence: tightened.evidence,
         support_level: (tightened as any).support_level,
         confidence: (tightened as any).confidence,
+        support_reasoning: (tightened as any).support_reasoning,
       });
     }
   }
@@ -924,6 +1051,7 @@ async function runScorer(
         evidence: tightened.evidence,
         support_level: (tightened as any).support_level,
         confidence: (tightened as any).confidence,
+        support_reasoning: (tightened as any).support_reasoning,
       });
     }
   }
@@ -968,6 +1096,9 @@ async function runScorer(
     reason: criterion.reason,
     evidence: criterion.evidence,
     max_score: criterion.max_score,
+    support_level: criterion.support_level,
+    confidence: criterion.confidence,
+    support_reasoning: criterion.support_reasoning,
   }]));
   // Build weaknesses (include low scoring and non-explicit evidence as weaknesses)
   const weaknessThresholdFactor = 0.4; // criteria scoring below 40% of max considered weaknesses
@@ -991,6 +1122,43 @@ async function runScorer(
       return `${item.label} review recommended`;
     }).slice(0, 5);
 
+  // Build smart analysis summary here (runScorer scope)
+  const strengthsArr = criterionScores.filter((item) => item.score > 0).map((item) => `${item.label}: ${item.reason}`).slice(0, 5);
+  const topStrengths = strengthsArr.slice(0, 3).map((s) => s.replace(/\s+/g, " ").trim());
+  const topWeaknesses = weaknesses.slice(0, 3).map((w) => w.replace(/\s+/g, " ").trim());
+  const topRiskFlags = (Array.isArray(risk_flags) ? risk_flags : []).slice(0, 3).map((r) => r.replace(/\s+/g, " ").trim());
+
+  const proposalSnippetSource = (vendorMarkdown || "").trim() || (vendorText || "").trim();
+  const snippetLenRaw = Number(process.env.ANALYSIS_SNIPPET_LENGTH || 800);
+  const snippetLen = Number.isFinite(snippetLenRaw) && snippetLenRaw > 50 ? Math.min(20000, Math.round(snippetLenRaw)) : 800;
+  const proposalSnippet = proposalSnippetSource
+    ? (proposalSnippetSource.length > snippetLen ? proposalSnippetSource.slice(0, snippetLen) + "..." : proposalSnippetSource)
+    : "(No proposal text available)";
+
+  const timelineCandidates = extractTimelineCandidates(`${vendorMarkdown}\n${vendorText}`).slice(0, 5);
+  const selectedTimeline = await selectBestTimelineWithLLM({
+    vendorName,
+    vendorMarkdown,
+    vendorText,
+    timelineCandidates,
+  });
+
+  const baseSummary = overall_score === 0
+    ? "The proposal did not contain enough evidence to score any criterion."
+    : `Weighted score based on ${criterionScores.length} mandatory criteria and vendor evidence. ${mandatoryGaps.length} mandatory gaps remain.`;
+
+  const isTerse = overall_score === 0 || (topStrengths.length === 0 && topWeaknesses.length === 0);
+  const structuredPart = [] as string[];
+  if (topStrengths.length) structuredPart.push(`Top strengths: ${topStrengths.join("; ")}`);
+  if (topWeaknesses.length) structuredPart.push(`Top weaknesses: ${topWeaknesses.join("; ")}`);
+  if (topRiskFlags.length) structuredPart.push(`Risk flags: ${topRiskFlags.join("; ")}`);
+  // Do not include timeline candidates in the human-readable summary string
+  // so the vendor list/cards won't surface them. Expose them as a separate field.
+
+  const analysisSummaryFinal = isTerse
+    ? `${baseSummary} Proposal snapshot:\n${proposalSnippet}`
+    : `${baseSummary} ${structuredPart.join(" ")}`;
+
   return {
     vendor_name: vendorName,
     overall_score,
@@ -1007,9 +1175,11 @@ async function runScorer(
     strengths: criterionScores.filter((item) => item.score > 0).map((item) => `${item.label}: ${item.reason}`).slice(0, 5),
     weaknesses,
     risk_flags,
-    analysis_summary: overall_score === 0
-      ? "The proposal did not contain enough evidence to score any criterion."
-      : `Weighted score based on ${criterionScores.length} mandatory criteria and vendor evidence. ${mandatoryGaps.length} mandatory gaps remain.`,
+    analysis_summary: analysisSummaryFinal,
+    timeline: selectedTimeline.timeline,
+    timeline_confidence: selectedTimeline.timeline_confidence,
+    timeline_evidence: selectedTimeline.timeline_evidence,
+    timeline_candidates: timelineCandidates,
   };
 }
 
@@ -1017,7 +1187,7 @@ async function runScorer(
    Agent 3 — Judge
    Compares multiple scored vendors and selects the best one.
    ═══════════════════════════════════════════════════════════════════ */
-async function runJudge(rfpMarkdown: string, vendorScores: ProposalAnalysis[]): Promise<JudgeResult> {
+async function runJudge(rfpMarkdown: string, vendorScores: ProposalAnalysis[], comparativeMetrics?: any[]): Promise<JudgeResult> {
   const buildFallbackJudge = (): JudgeResult => {
     const ranking = [...vendorScores]
       .sort((left, right) => (right.overall_score || 0) - (left.overall_score || 0))
@@ -1040,6 +1210,16 @@ async function runJudge(rfpMarkdown: string, vendorScores: ProposalAnalysis[]): 
 
     const bestVendor = ranking[0]?.vendor_name || "Unknown";
     const runnerUp = ranking[1]?.vendor_name;
+    const bestScore = ranking[0]?.final_score || 0;
+    const runnerUpScore = ranking[1]?.final_score || 0;
+    const scoreDiff = Math.max(0, bestScore - runnerUpScore);
+    const bestStrengths = ranking[0]?.strengths || [];
+    const bestWeaknesses = ranking[0]?.weaknesses || [];
+    const runnerUpName = ranking[1]?.vendor_name;
+    const pairwiseReasons = [
+      bestStrengths[0] ? `Stronger evidence on ${bestStrengths[0]}` : `Higher overall score and better weighted fit.`,
+      bestWeaknesses[0] ? `Lower risk because ${bestWeaknesses[0]}` : `Fewer critical gaps across the required criteria.`,
+    ];
 
     return {
       comparative_analysis: {
@@ -1048,6 +1228,30 @@ async function runJudge(rfpMarkdown: string, vendorScores: ProposalAnalysis[]): 
           ? `${bestVendor} ranked highest in the fallback analysis, with ${runnerUp} next.`
           : `${bestVendor} ranked highest in the fallback analysis.`,
         ranking,
+        comparative_reasoning: {
+          summary: runnerUp
+            ? `${bestVendor} led the field by balancing score, strengths, and fewer major weaknesses.`
+            : `${bestVendor} had the highest score in the fallback ranking.`,
+          top_drivers: [
+            bestScore ? `Highest overall score: ${bestScore}` : "Highest overall score in the set",
+            bestStrengths[0] ? `Primary strength: ${bestStrengths[0]}` : "Broadest overall fit",
+          ].slice(0, 3),
+          tradeoffs: runnerUpName
+            ? [
+                `${runnerUpName} is the closest backup option.`,
+                scoreDiff > 0 ? `${bestVendor} leads by ${scoreDiff} points.` : `${bestVendor} and ${runnerUpName} are closely matched on raw score.`,
+              ]
+            : ["No backup vendor available for direct tradeoff analysis."],
+          pairwise_comparisons: runnerUpName
+            ? [{
+                a: bestVendor,
+                b: runnerUpName,
+                winner: bestVendor,
+                reasons: pairwiseReasons,
+                winnerScoreDiff: scoreDiff,
+              }]
+            : [],
+        },
       },
       final_recommendation_view: {
         recommended_vendor: bestVendor,
@@ -1087,6 +1291,9 @@ ${rfpMarkdown}
 SCORED VENDORS JSON:
 ${JSON.stringify(vendorScores, null, 2)}
 
+COMPARATIVE METRICS (deterministic helper output):
+${JSON.stringify(comparativeMetrics || [], null, 2)}
+
 COMPARATIVE LABELS
 - Best Fit
 - Strong Candidate
@@ -1099,6 +1306,8 @@ YOUR TASK
 2. Rank all vendors from best to worst.
 3. Select the final best vendor.
 4. Produce a final recommendation view suitable for UX.
+5. Add comparative reasoning with top drivers, tradeoffs, and at least one pairwise comparison if there is more than one vendor.
+6. Use the deterministic comparative metrics only as supporting context, not as the sole basis for the decision.
 
 OUTPUT REQUIREMENTS
 The UI should show only one clear answer first:
@@ -1126,7 +1335,21 @@ RETURN STRICT JSON:
         "weaknesses": ["<string>"],
         "why": "<string>"
       }
-    ]
+    ],
+    "comparative_reasoning": {
+      "summary": "<string>",
+      "top_drivers": ["<string>"],
+      "tradeoffs": ["<string>"],
+      "pairwise_comparisons": [
+        {
+          "a": "<string>",
+          "b": "<string>",
+          "winner": "<string|tie>",
+          "reasons": ["<string>"],
+          "winnerScoreDiff": <number>
+        }
+      ]
+    }
   },
   "final_recommendation_view": {
     "recommended_vendor": "<string>",
@@ -1149,7 +1372,7 @@ RETURN STRICT JSON:
     return await openRouterChatJSON({
       model: AGENT_MODEL.QUALITY_ASSURANCE,
       messages: [
-        { role: "system", content: "You are a JSON-only API. You MUST respond with raw valid JSON only. No explanations, no markdown, no text before or after the JSON object. Keep all string values concise." },
+        { role: "system", content: "You are a JSON-only API. You MUST respond with raw valid JSON only. No explanations, no markdown, no text before or after the JSON object. Keep all string values concise but informative." },
         { role: "user", content: prompt },
       ],
       max_tokens: 8000,
@@ -1488,7 +1711,8 @@ export async function POST(req: NextRequest) {
           rfpExtractChars: typeof rfp_extract === "string" ? rfp_extract.length : 0,
         },
       });
-      const judgeResult = await runJudge(rfp_extract, vendor_scores);
+      const metrics = computeComparativeMetrics(vendor_scores || []);
+      const judgeResult = await runJudge(rfp_extract, vendor_scores, metrics);
       judgeSpan.end({
         output: {
           bestVendor: judgeResult?.comparative_analysis?.best_vendor || "",
@@ -1711,7 +1935,8 @@ export async function POST(req: NextRequest) {
             rfpExtractChars: rfpMarkdown.length,
           },
         });
-        judgeResult = await runJudge(rfpMarkdown, vendorScores);
+        const metrics = computeComparativeMetrics(vendorScores || []);
+        judgeResult = await runJudge(rfpMarkdown, vendorScores, metrics);
         recommendationSpan.end({
           output: {
             bestVendor: judgeResult?.comparative_analysis?.best_vendor || "",

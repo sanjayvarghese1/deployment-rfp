@@ -53,6 +53,20 @@ export function extractCurrencyLikeText(source: unknown): string {
   return currencyMatch?.[0]?.trim() || "";
 }
 
+export function extractPriceLikeText(source: unknown): string {
+  const text = toText(source);
+  if (!text) return "";
+
+  const labeled = extractLabeledText(text, ["Proposed Price", "Price", "Total Cost", "Estimated Price", "Quote", "Quoted Price", "Bid"]);
+  if (labeled) return labeled;
+
+  const priceContextMatch = text.match(/(?:proposed price|quoted price|total cost|estimated price|quote|bid)[:\s-]{0,20}(?:USD\s*)?\$?\s*[\d,]+(?:\.\d+)?(?:\s*(?:k|m|million|billion))?/i);
+  if (priceContextMatch?.[0]) return priceContextMatch[0].trim();
+
+  const currencyMatch = text.match(/(?:USD\s*)?\$?\s*[\d,]+(?:\.\d+)?(?:\s*(?:k|m|million|billion))?/i);
+  return currencyMatch?.[0]?.trim() || "";
+}
+
 export function extractTimelineLikeText(source: unknown): string {
   const text = toText(source);
   if (!text) return "";

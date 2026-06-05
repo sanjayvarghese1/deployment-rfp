@@ -57,6 +57,7 @@ export interface CriterionScore {
   evidence?: string;
   support_level?: "explicit" | "partial" | "inferred" | string;
   confidence?: number;
+  support_reasoning?: string;
 }
 
 export interface AnalysisScoringCriterion {
@@ -68,6 +69,7 @@ export interface AnalysisScoringCriterion {
   evidence?: string;
   support_level?: "explicit" | "partial" | "inferred" | string;
   confidence?: number;
+  support_reasoning?: string;
 }
 
 export interface ProposalAnalysis {
@@ -75,6 +77,9 @@ export interface ProposalAnalysis {
   overall_score: number;
   independent_recommendation: string;
   budget?: string;
+  timeline?: string;
+  timeline_confidence?: "explicit" | "partial" | "inferred" | string;
+  timeline_evidence?: string;
   criterion_scores: Record<string, CriterionScore>;
   scoring_criteria?: AnalysisScoringCriterion[];
   mandatory_criteria?: MandatoryCriteriaPayload;
@@ -82,6 +87,7 @@ export interface ProposalAnalysis {
   weaknesses: string[];
   risk_flags: string[];
   analysis_summary: string;
+  timeline_candidates?: string[];
 }
 
 // ─── Agent 3 (Judge) output types ──────────────────────────────
@@ -93,6 +99,19 @@ export interface VendorRanking {
   strengths: string[];
   weaknesses: string[];
   why: string;
+}
+
+export interface ComparativeReasoning {
+  summary: string;
+  top_drivers?: string[];
+  tradeoffs?: string[];
+  pairwise_comparisons?: Array<{
+    a: string;
+    b: string;
+    winner: string | "tie";
+    reasons: string[];
+    winnerScoreDiff?: number;
+  }>;
 }
 
 export interface OtherVendorSnapshot {
@@ -107,6 +126,7 @@ export interface JudgeResult {
     best_vendor: string;
     selection_summary: string;
     ranking: VendorRanking[];
+    comparative_reasoning?: ComparativeReasoning;
   };
   final_recommendation_view: {
     recommended_vendor: string;
@@ -155,7 +175,7 @@ export interface SavedProposalAnalysisResult {
 
 type PipelineContract = { title: string; description: string; budget: string; deadline?: string; certifications?: string; mandatoryCriteria?: MandatoryCriteriaPayload };
 
-const ANALYSIS_CACHE_VERSION = 6;
+const ANALYSIS_CACHE_VERSION = 7;
 
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
