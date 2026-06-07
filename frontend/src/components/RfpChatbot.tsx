@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import { RFP_QUESTIONS, FINAL_INTAKE_KEY, getFinalIntakeQuestionLabel, type PipelineProgress, type PipelineResult, type RfpInput, type DecompositionData, type PdfTemplate, type QAResult, type MandatoryCriterion, type MandatoryCriteriaRecommendation } from "@/lib/rfp/config";
 import { useAuth } from "@/contexts/AuthContext";
 import { useRouter } from "next/navigation";
@@ -19,6 +19,62 @@ const MAX_INTAKE_MESSAGE_CHARS = 1000;
 const EDITOR_DRAFT_KEY = "rfp-editor-draft";
 const EDITOR_SYNC_EVENT = "rfp-editor-draft-updated";
 const SELECTED_TARGET_KEY = "rfp-selected-target";
+const CHAT_STATE_KEY = "rfp-chat-state";
+
+type ChatProgressStatus = "answered" | "skipped" | "current" | "pending";
+
+interface ChatStateSnapshot {
+  messages: ChatMessage[];
+  answers: Record<string, string>;
+  skippedQuestions: string[];
+  questionWarnings: Record<string, number>;
+  forcedQuestionKey: string | null;
+  inputValue: string;
+}
+
+interface ChatProgressItem {
+  key: string;
+  label: string;
+  status: ChatProgressStatus;
+  index: number;
+}
+
+function getMissingQuestionLabel(key: string | null, fallback: string): string {
+  if (!key) return fallback;
+  return getQuestionLabelForKey(key) || fallback;
+}
+
+function createInitialChatMessages(): ChatMessage[] {
+  return [
+    { role: "bot", text: "Welcome! I will collect 20 RFP details one by one." },
+    { role: "bot", text: RFP_QUESTIONS[0].label },
+  ];
+}
+
+function isGreetingOnlyMessage(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized || normalized.length > 40) return false;
+  return /^(hi|hello|hey|good morning|good afternoon|good evening|greetings|sup|yo|hello there|hey there)[!.?\s]*$/i.test(normalized);
+}
+
+function isSkipRequest(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized || normalized.length > 120) return false;
+
+  return /\b(can't provide|cannot provide|cant provide|can't share|cannot share|can't answer|cannot answer|won't provide|won't share|don't know|do not know|not sure|unsure|prefer not|skip this|skip it|pass|none|n\/a|na|unable|don't have|do not have|no idea|no comment)\b/i.test(normalized)
+    || /^(skip|pass|none|n\/a|na|not sure|unsure|no)$/i.test(normalized);
+}
+
+function isBoilerplateSummary(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return true;
+  return normalized.includes("greeting received") || normalized.includes("follow-up") || normalized.includes("follow up");
+}
+
+function getFriendlyAcknowledge(text: string): string {
+  if (!text || isBoilerplateSummary(text)) return "";
+  return text.replace(/\s+/g, " ").trim();
+}
 
 function clearEditorDraftStorage() {
   try {
@@ -33,6 +89,25 @@ function clearEditorDraftStorage() {
     }
     for (const key of keysToRemove) {
       window.localStorage.removeItem(key);
+    }
+  } catch {
+    // Ignore storage failures and continue with the reset.
+  }
+}
+
+function clearRfpSessionStorage() {
+  try {
+    window.sessionStorage.removeItem("rfp-upload-analysis");
+    window.sessionStorage.removeItem("rfp-uploaded-pdf-name");
+    const keysToRemove: string[] = [];
+    for (let index = 0; index < window.sessionStorage.length; index++) {
+      const key = window.sessionStorage.key(index);
+      if (key && key.startsWith("rfp-uploaded-pdf:")) {
+        keysToRemove.push(key);
+      }
+    }
+    for (const key of keysToRemove) {
+      window.sessionStorage.removeItem(key);
     }
   } catch {
     // Ignore storage failures and continue with the reset.
@@ -147,29 +222,31 @@ interface MandatoryCriteriaState {
   error: string | null;
 }
 
-function getNextRequiredKey(answers: Record<string, string>): string | null {
+function getNextRequiredKey(answers: Record<string, string>, skippedQuestions: Set<string> = new Set()): string | null {
   for (const key of INTAKE_ORDER) {
+    if (skippedQuestions.has(key)) continue;
     const value = answers[key];
     if (!value || !value.trim()) return key;
   }
   return null;
 }
 
-function getNextConversationKey(answers: Record<string, string>): string | null {
+function getNextConversationKey(answers: Record<string, string>, skippedQuestions: Set<string> = new Set()): string | null {
   for (const question of RFP_QUESTIONS) {
+    if (skippedQuestions.has(question.key)) continue;
     const value = answers[question.key];
     if (!value || !value.trim()) return question.key;
   }
-  // After all RFP_QUESTIONS are answered, ask for additional details
-  if (!answers[FINAL_INTAKE_KEY] || !answers[FINAL_INTAKE_KEY].trim()) {
+  if (!skippedQuestions.has(FINAL_INTAKE_KEY) && (!answers[FINAL_INTAKE_KEY] || !answers[FINAL_INTAKE_KEY].trim())) {
     return FINAL_INTAKE_KEY;
   }
   return null;
 }
 
-function getNextRequiredGenerationKey(answers: Record<string, string>): string | null {
+function getNextRequiredGenerationKey(answers: Record<string, string>, skippedQuestions: Set<string> = new Set()): string | null {
   for (const question of RFP_QUESTIONS) {
     if (question.key === FINAL_INTAKE_KEY) continue;
+    if (skippedQuestions.has(question.key)) continue;
     const value = answers[question.key];
     if (!value || !value.trim()) return question.key;
   }
@@ -183,27 +260,55 @@ function toTitleCaseFromKey(key: string): string {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function getQuestionLabelForKey(key: string | null): string | null {
+  if (!key) return null;
+  if (key === FINAL_INTAKE_KEY) return getFinalIntakeQuestionLabel();
+  return RFP_QUESTIONS.find((question) => question.key === key)?.label || toTitleCaseFromKey(key);
+}
+
+const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
+
+function loadPersistedChatState(): Partial<ChatStateSnapshot> | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(CHAT_STATE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ChatStateSnapshot>;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initialUploadAnalysis }: RfpChatbotProps = {}) {
   const { user, profile } = useAuth();
   const router = useRouter();
   const [flowState, setFlowState] = useState<FlowState>("idle");
   const [wizardStep, setWizardStep] = useState<WizardStep>(1);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [inputValue, setInputValue] = useState("");
+  const persistedChatState = loadPersistedChatState();
+  const [answers, setAnswers] = useState<Record<string, string>>(() => (persistedChatState?.answers && typeof persistedChatState.answers === "object" ? persistedChatState.answers : {}));
+  const [inputValue, setInputValue] = useState(() => (typeof persistedChatState?.inputValue === "string" ? persistedChatState.inputValue : ""));
   const [selectedTemplate, setSelectedTemplate] = useState<PdfTemplate>("software");
   const [templateTouched, setTemplateTouched] = useState(false);
-  const [selectedSubsystems, setSelectedSubsystems] = useState<Set<string>>(new Set()); // "full" or subsystem names
+  const [selectedSubsystems, setSelectedSubsystems] = useState<Set<string>>(new Set());
   const [decompositionAnalysis, setDecompositionAnalysis] = useState<DecompositionData | null>(null);
   const [decompositionLoading, setDecompositionLoading] = useState(false);
   const [qaReview, setQaReview] = useState<QAResult | null>(null);
   const [qaLoading, setQaLoading] = useState(false);
   const [qaSuggestionStates, setQaSuggestionStates] = useState<Record<number, QaSuggestionState>>({});
-  const [forcedQuestionKey, setForcedQuestionKey] = useState<string | null>(null);
+  const [forcedQuestionKey, setForcedQuestionKey] = useState<string | null>(() => (typeof persistedChatState?.forcedQuestionKey === "string" || persistedChatState?.forcedQuestionKey === null ? persistedChatState.forcedQuestionKey ?? null : null));
+  const [skippedQuestions, setSkippedQuestions] = useState<Set<string>>(() => new Set((persistedChatState?.skippedQuestions || []).filter((key): key is string => typeof key === "string")));
+  const [questionWarnings, setQuestionWarnings] = useState<Record<string, number>>(
+    () => (persistedChatState?.questionWarnings && typeof persistedChatState.questionWarnings === "object" ? persistedChatState.questionWarnings : {})
+  );
   const [generationSnapshot, setGenerationSnapshot] = useState(getBackgroundGenerationSnapshot());
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: "bot", text: "Welcome! I will collect 19 RFP details one by one." },
-    { role: "bot", text: RFP_QUESTIONS[0].label },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    const restoredMessages = persistedChatState?.messages;
+    if (Array.isArray(restoredMessages) && restoredMessages.length > 0) {
+      return restoredMessages.filter((item) => item && (item.role === "bot" || item.role === "user") && typeof item.text === "string");
+    }
+    return createInitialChatMessages();
+  });
   const [progress, setProgress] = useState<PipelineProgress | null>(null);
   const [result, setResult] = useState<Omit<PipelineResult, "pdfBase64"> | null>(null);
   const [pdfBase64, setPdfBase64] = useState<string | null>(null);
@@ -229,36 +334,104 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
   const uploadInitRef = useRef(false);
 
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const progressScrollRef = useRef<HTMLDivElement>(null);
+  const activeProgressItemRef = useRef<HTMLButtonElement | null>(null);
 
-  // Reset save states when entering mandatory criteria or when new result arrives
+  const scrollChatToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const container = chatScrollRef.current;
+    if (!container) return;
+    window.requestAnimationFrame(() => {
+      container.scrollTo({ top: container.scrollHeight, behavior });
+    });
+  }, []);
+
   useEffect(() => {
     if (wizardStep === 4) {
       setSaved(false);
       setSaving(false);
-      console.log("Reset save states - entering mandatory criteria phase");
     }
   }, [wizardStep]);
 
-  // Auto-scroll chat
+  useIsomorphicLayoutEffect(() => {
+    try {
+      const snapshot: ChatStateSnapshot = {
+        messages,
+        answers,
+        skippedQuestions: Array.from(skippedQuestions),
+        questionWarnings,
+        forcedQuestionKey,
+        inputValue,
+      };
+      window.localStorage.setItem(CHAT_STATE_KEY, JSON.stringify(snapshot));
+    } catch {
+      // Ignore storage failures.
+    }
+  }, [answers, forcedQuestionKey, inputValue, messages, questionWarnings, skippedQuestions]);
+
   useEffect(() => {
-    if (wizardStep !== 1) return;
+    const syncChatStateFromStorage = () => {
+      try {
+        const raw = window.localStorage.getItem(CHAT_STATE_KEY);
+        if (!raw) return;
+        const parsed = JSON.parse(raw) as Partial<ChatStateSnapshot>;
+        if (Array.isArray(parsed.messages) && parsed.messages.length > 0) {
+          setMessages(parsed.messages.filter((item) => item && (item.role === "bot" || item.role === "user") && typeof item.text === "string"));
+        }
+        if (parsed.answers && typeof parsed.answers === "object") {
+          setAnswers(parsed.answers);
+        }
+        if (Array.isArray(parsed.skippedQuestions)) {
+          setSkippedQuestions(new Set(parsed.skippedQuestions.filter((key): key is string => typeof key === "string")));
+        }
+        if (parsed.questionWarnings && typeof parsed.questionWarnings === "object") {
+          setQuestionWarnings(parsed.questionWarnings);
+        }
+        if (typeof parsed.forcedQuestionKey === "string" || parsed.forcedQuestionKey === null) {
+          setForcedQuestionKey(parsed.forcedQuestionKey ?? null);
+        }
+        if (typeof parsed.inputValue === "string") {
+          setInputValue(parsed.inputValue);
+        }
+      } catch {
+        // Ignore malformed storage entries.
+      }
+    };
 
-    const container = chatScrollRef.current;
-    if (!container) return;
+    syncChatStateFromStorage();
+    window.addEventListener("storage", syncChatStateFromStorage);
+    return () => window.removeEventListener("storage", syncChatStateFromStorage);
+  }, []);
 
-    const handle = window.requestAnimationFrame(() => {
-      container.scrollTop = container.scrollHeight;
-    });
-
-    return () => window.cancelAnimationFrame(handle);
-  }, [messages, wizardStep, progress, generationSnapshot.progress]);
-
-  const currentPromptKey = forcedQuestionKey || getNextConversationKey(answers);
+  const currentPromptKey = forcedQuestionKey || getNextConversationKey(answers, skippedQuestions);
   const currentQuestion = currentPromptKey
     ? currentPromptKey === FINAL_INTAKE_KEY
       ? { key: FINAL_INTAKE_KEY, label: getFinalIntakeQuestionLabel(), placeholder: "Add any extra notes..." }
       : RFP_QUESTIONS.find((q) => q.key === currentPromptKey) || null
     : null;
+
+  const questionProgress = useMemo<ChatProgressItem[]>(() => {
+    return RFP_QUESTIONS.map((question, index) => {
+      const hasAnswer = !!answers[question.key]?.trim();
+      const isSkipped = skippedQuestions.has(question.key);
+      const isCurrent = currentPromptKey === question.key && !hasAnswer;
+      const status: ChatProgressStatus = isSkipped ? "skipped" : hasAnswer ? "answered" : isCurrent ? "current" : "pending";
+      return { key: question.key, label: question.label, status, index };
+    });
+  }, [answers, currentPromptKey, skippedQuestions]);
+
+  const completedCount = questionProgress.filter((item) => item.status === "answered").length;
+  const skippedCount = questionProgress.filter((item) => item.status === "skipped").length;
+  const completionPercent = Math.round((completedCount / Math.max(1, RFP_QUESTIONS.length)) * 100);
+
+  useEffect(() => {
+    if (wizardStep !== 1) return;
+    scrollChatToBottom("auto");
+  }, [currentPromptKey, generationSnapshot.progress, messages, progress, scrollChatToBottom, wizardStep]);
+
+  useEffect(() => {
+    if (wizardStep !== 1) return;
+    activeProgressItemRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [currentPromptKey, wizardStep]);
 
   useEffect(() => {
     if (templateTouched) return;
@@ -275,26 +448,14 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     setSelectedTemplate(recommended);
   }, [answers.category, templateTouched]);
 
-  // Fetch decomposition analysis when intake is complete
-  useEffect(() => {
-    if (decompositionAnalysis) {
-      console.log("📋 [CHECKBOX UI AVAILABLE]", {
-        availableSubsystems: Object.keys(decompositionAnalysis.subsystems),
-        currentSelection: Array.from(selectedSubsystems),
-      });
-    }
-  }, [decompositionAnalysis, selectedSubsystems]);
-
   useEffect(() => {
     return subscribeBackgroundGeneration((snapshot) => {
       setGenerationSnapshot(snapshot);
-
       if (snapshot.status === "running") {
         setFlowState("generating");
         setWizardStep(3);
         setProgress(snapshot.progress);
       }
-
       if (snapshot.status === "complete" && snapshot.result && snapshot.pdfBase64 && snapshot.decomposition) {
         setFlowState("review");
         setWizardStep(3);
@@ -303,7 +464,6 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
         setDecomposition(snapshot.decomposition);
         setProgress(null);
       }
-
       if (snapshot.status === "error" && snapshot.error) {
         setError(snapshot.error);
         setFlowState("review");
@@ -326,7 +486,6 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
         template: draft.template,
       };
     });
-    // If draft contains updated subsystem pdfs, merge them into decomposition state
     if (draft.decomposition && draft.decomposition.subsystemPdfs && draft.decomposition.subsystemPdfs.length > 0) {
       setDecomposition((prev) => {
         const base: DecompositionData = prev ? { ...prev } : { ...draft.decomposition! };
@@ -335,8 +494,6 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
         return base;
       });
     }
-
-    // When an edited draft is applied (returning from editor), ensure the UI shows the results page
     setFlowState("review");
     setWizardStep(3);
   }, []);
@@ -346,10 +503,8 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
       setElapsed(0);
       return;
     }
-
     const startedAt = generationSnapshot.startedAt;
     const updateElapsed = () => setElapsed(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
-
     updateElapsed();
     const timer = window.setInterval(updateElapsed, 1000);
     return () => window.clearInterval(timer);
@@ -362,7 +517,6 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
         if (!raw) return;
         const parsed = JSON.parse(raw) as EditorDraftSnapshot;
         applyEditedDraft(parsed);
-        // restore last selected file if present
         try {
           const sel = window.localStorage.getItem(SELECTED_TARGET_KEY);
           if (parsed.subsystemName) {
@@ -411,26 +565,18 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     };
   }, [applyEditedDraft]);
 
-  const intakeComplete = getNextRequiredKey(answers) === null;
+  const intakeComplete = getNextRequiredKey(answers, skippedQuestions) === null;
   const qaSuggestionsResolved = !qaReview || qaReview.improvements.every((_, index) => qaSuggestionStates[index]?.mode);
 
   const buildQaRevisionNotes = useCallback(() => {
     if (!qaReview) return "";
-
     return qaReview.improvements
       .map((improvement, index) => {
         const state = qaSuggestionStates[index];
         if (!state?.mode) return "";
-
         const note = state.note.trim();
-        if (state.mode === "skip") {
-          return `Suggestion ${index + 1} skipped: ${improvement}`;
-        }
-
-        if (state.mode === "auto" || !note || note.toLowerCase() === "auto") {
-          return `Suggestion ${index + 1} auto-applied by AI: ${improvement}`;
-        }
-
+        if (state.mode === "skip") return `Suggestion ${index + 1} skipped: ${improvement}`;
+        if (state.mode === "auto" || !note || note.toLowerCase() === "auto") return `Suggestion ${index + 1} auto-applied by AI: ${improvement}`;
         return `Suggestion ${index + 1} custom revision: ${note}`;
       })
       .filter(Boolean)
@@ -457,9 +603,7 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<EditorDraftSnapshot>;
         const hasSnapshot = !!parsed?.metadata && !!parsed?.sections && !!parsed?.sectionLabels && !!parsed?.template;
-        if (hasSnapshot) {
-          restoredDraft = parsed as EditorDraftSnapshot;
-        }
+        if (hasSnapshot) restoredDraft = parsed as EditorDraftSnapshot;
       }
     } catch {
       restoredDraft = null;
@@ -471,9 +615,7 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     const sections = hasDetectedSections
       ? uploadSections
       : { project_overview: initialUploadAnalysis.analysis.extractedText.slice(0, 5000) };
-    const sectionLabels = Object.fromEntries(
-      Object.keys(sections).map((key) => [key, toTitleCaseFromKey(key)]),
-    );
+    const sectionLabels = Object.fromEntries(Object.keys(sections).map((key) => [key, toTitleCaseFromKey(key)]));
     const projectTitle =
       initialUploadAnalysis.analysis.metadata?.title?.trim() ||
       initialUploadAnalysis.analysis.fileName?.replace(/\.pdf$/i, "") ||
@@ -486,11 +628,7 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
       improvements: (initialUploadAnalysis.suggestions || []).slice(0, 6),
       strengths: (initialUploadAnalysis.strengths || []).slice(0, 5),
       readinessLevel:
-        initialUploadAnalysis.overallScore >= 70
-          ? "ready"
-          : initialUploadAnalysis.overallScore >= 40
-            ? "needs_minor_edits"
-            : "needs_major_revisions",
+        initialUploadAnalysis.overallScore >= 70 ? "ready" : initialUploadAnalysis.overallScore >= 40 ? "needs_minor_edits" : "needs_major_revisions",
       scoreExplanation: "Initial QA score generated from uploaded RFP analysis.",
     };
 
@@ -536,33 +674,21 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     setSelectedSubsystems(new Set(["full"]));
     setDownloadTarget("full");
     setEditTarget("full");
-    setMandatoryCriteria({
-      loading: false,
-      ready: false,
-      targets: [],
-      activeTargetIndex: 0,
-      criteriaByTarget: {},
-      error: null,
-    });
+    setMandatoryCriteria({ loading: false, ready: false, targets: [], activeTargetIndex: 0, criteriaByTarget: {}, error: null });
   }, [answers.category, initialUploadAnalysis, initializeQaSuggestionStates, profile?.company_name, selectedTemplate]);
 
-  // Fetch decomposition analysis when intake is complete
   useEffect(() => {
-    if (!intakeComplete || decompositionAnalysis) return; // Only fetch once
-
+    if (!intakeComplete || decompositionAnalysis) return;
     let cancelled = false;
-
     const fetchDecomposition = async () => {
       setDecompositionLoading(true);
       try {
-        // Build input for decomposition analysis
         const sections: Record<string, string> = {};
         for (const q of RFP_QUESTIONS) {
           if (!q.isMetadata && q.key !== "detailed_project_description") {
             sections[q.key] = answers[q.key] || "";
           }
         }
-
         const input: RfpInput = {
           organization_name: answers.organization_name || profile?.company_name || "Organization",
           project_title: answers.project_title || "Project",
@@ -571,39 +697,26 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
           detailed_project_description: answers.detailed_project_description || "",
           additional_details: answers[FINAL_INTAKE_KEY] || "",
         };
-
         const res = await fetch(apiUrl("/api/rfp/analyze-decomposition"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(input),
         });
-
         if (res.ok) {
           const data = await res.json() as DecompositionData;
           if (!cancelled && data.subsystems && Object.keys(data.subsystems).length > 0) {
-            console.log("✅ [DECOMPOSITION FETCHED]", {
-              subsystemCount: Object.keys(data.subsystems).length,
-              subsystemNames: Object.keys(data.subsystems),
-            });
             setDecompositionAnalysis(data);
-            // Preserve the user's explicit choice; do not force common/full.
             setSelectedSubsystems((current) => current);
           }
         }
       } catch (err) {
         console.warn("Decomposition analysis failed:", err);
-        // Silently fail - decomposition UI won't show if analysis fails
       } finally {
-        if (!cancelled) {
-          setDecompositionLoading(false);
-        }
+        if (!cancelled) setDecompositionLoading(false);
       }
     };
-
     fetchDecomposition();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [intakeComplete, decompositionAnalysis, answers, profile]);
 
   useEffect(() => {
@@ -612,11 +725,9 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
       setEditTarget("full");
       return;
     }
-
     if (downloadTarget !== "full" && !decomposition.subsystemDrafts.some((draft) => draft.name === downloadTarget)) {
       setDownloadTarget("full");
     }
-
     if (editTarget !== "full" && !decomposition.subsystemDrafts.some((draft) => draft.name === editTarget)) {
       setEditTarget("full");
     }
@@ -641,7 +752,6 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
   const loadMandatoryCriteriaRecommendations = useCallback(async (targets: string[]) => {
     const normalizedTargets = targets.length > 0 ? targets : ["full"];
     setMandatoryCriteria((current) => ({ ...current, loading: true, ready: false, error: null, targets: normalizedTargets }));
-
     try {
       const response = await fetch(apiUrl("/api/rfp/mandatory-criteria"), {
         method: "POST",
@@ -655,33 +765,15 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
           decomposition: decompositionAnalysis?.subsystems || {},
         }),
       });
-
-      if (!response.ok) {
-        throw new Error(await response.text().catch(() => "Failed to generate mandatory criteria"));
-      }
-
+      if (!response.ok) throw new Error(await response.text().catch(() => "Failed to generate mandatory criteria"));
       const data = (await response.json()) as MandatoryCriteriaRecommendation;
       const criteriaByTarget = normalizeRecommendation(data, normalizedTargets);
-      setMandatoryCriteria({
-        loading: false,
-        ready: true,
-        targets: normalizedTargets,
-        activeTargetIndex: 0,
-        criteriaByTarget,
-        error: null,
-      });
+      setMandatoryCriteria({ loading: false, ready: true, targets: normalizedTargets, activeTargetIndex: 0, criteriaByTarget, error: null });
     } catch (error) {
       console.warn("Mandatory criteria recommendation failed:", error);
       const fallbackTargets = normalizedTargets.length > 0 ? normalizedTargets : ["full"];
       const criteriaByTarget = Object.fromEntries(fallbackTargets.map((target) => [target, buildFallbackCriteria(target === "full" ? "Full RFP" : target.replace(/_/g, " "))]));
-      setMandatoryCriteria({
-        loading: false,
-        ready: true,
-        targets: fallbackTargets,
-        activeTargetIndex: 0,
-        criteriaByTarget,
-        error: null,
-      });
+      setMandatoryCriteria({ loading: false, ready: true, targets: fallbackTargets, activeTargetIndex: 0, criteriaByTarget, error: null });
     }
   }, [answers.category, answers.detailed_project_description, answers.organization_name, answers.project_title, decompositionAnalysis?.subsystems, profile?.company_name, result]);
 
@@ -694,10 +786,7 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
 
   const handleMandatoryCriteriaBack = useCallback(() => {
     setMandatoryCriteria((current) => {
-      if (current.activeTargetIndex <= 0) {
-        setWizardStep(3);
-        return current;
-      }
+      if (current.activeTargetIndex <= 0) { setWizardStep(3); return current; }
       return { ...current, activeTargetIndex: current.activeTargetIndex - 1 };
     });
   }, []);
@@ -710,35 +799,26 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
   }, []);
 
   const updateMandatoryCriterion = useCallback((target: string, index: number, patch: Partial<MandatoryCriterion>) => {
-    setMandatoryCriteria((current) => ({
-      ...current,
-      criteriaByTarget: updateCriterionTarget(current.criteriaByTarget, target, index, patch),
-    }));
+    setMandatoryCriteria((current) => ({ ...current, criteriaByTarget: updateCriterionTarget(current.criteriaByTarget, target, index, patch) }));
   }, []);
 
   const addMandatoryCriterion = useCallback((target: string) => {
-    setMandatoryCriteria((current) => ({
-      ...current,
-      criteriaByTarget: addCriterionTarget(current.criteriaByTarget, target),
-    }));
+    setMandatoryCriteria((current) => ({ ...current, criteriaByTarget: addCriterionTarget(current.criteriaByTarget, target) }));
   }, []);
 
   const removeMandatoryCriterion = useCallback((target: string, index: number) => {
-    setMandatoryCriteria((current) => ({
-      ...current,
-      criteriaByTarget: removeCriterionTarget(current.criteriaByTarget, target, index),
-    }));
+    setMandatoryCriteria((current) => ({ ...current, criteriaByTarget: removeCriterionTarget(current.criteriaByTarget, target, index) }));
   }, []);
 
   const handleStartOver = useCallback(() => {
     resetBackgroundGeneration();
     try {
-      window.sessionStorage.removeItem("rfp-upload-analysis");
+      window.localStorage.removeItem(CHAT_STATE_KEY);
     } catch {
-      // Ignore storage errors and continue reset.
+      // Ignore storage errors.
     }
+    clearRfpSessionStorage();
     clearEditorDraftStorage();
-
     setFlowState("idle");
     setWizardStep(1);
     setAnswers({});
@@ -751,18 +831,9 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     setQaSuggestionStates({});
     setQaLoading(false);
     setForcedQuestionKey(null);
-    setMandatoryCriteria({
-      loading: false,
-      ready: false,
-      targets: [],
-      activeTargetIndex: 0,
-      criteriaByTarget: {},
-      error: null,
-    });
-    setMessages([
-      { role: "bot", text: "Let's generate a new RFP. I will ask 19 questions one by one." },
-      { role: "bot", text: RFP_QUESTIONS[0].label },
-    ]);
+    setSkippedQuestions(new Set());
+    setQuestionWarnings({});
+    setMandatoryCriteria({ loading: false, ready: false, targets: [], activeTargetIndex: 0, criteriaByTarget: {}, error: null });
     setResult(null);
     setPdfBase64(null);
     setDecomposition(null);
@@ -775,19 +846,15 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     setIntaking(false);
     setDownloadTarget("full");
     setEditTarget("full");
+    setMessages(createInitialChatMessages());
     uploadInitRef.current = false;
-
     router.replace("/rfp/intake");
   }, [router]);
 
   useEffect(() => {
     if (availableFileTargets.length === 0) return;
-    if (!availableFileTargets.includes(downloadTarget)) {
-      setDownloadTarget(availableFileTargets[0]);
-    }
-    if (!availableFileTargets.includes(editTarget)) {
-      setEditTarget(availableFileTargets[0]);
-    }
+    if (!availableFileTargets.includes(downloadTarget)) setDownloadTarget(availableFileTargets[0]);
+    if (!availableFileTargets.includes(editTarget)) setEditTarget(availableFileTargets[0]);
   }, [availableFileTargets, downloadTarget, editTarget]);
 
   useEffect(() => {
@@ -797,9 +864,60 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     }
   }, [selectedSubsystems]);
 
+  const handleSkipCurrentQuestion = useCallback(() => {
+    const currentKey = currentPromptKey;
+    if (!currentKey || intaking || flowState !== "idle") return;
+
+    const currentQuestionLabel = getQuestionLabelForKey(currentKey) || "the current question";
+    const nextSkippedQuestions = new Set(skippedQuestions);
+    nextSkippedQuestions.add(currentKey);
+
+    const nextAnswers = { ...answers };
+    delete nextAnswers[currentKey];
+
+    const nextQuestionKey = getNextConversationKey(nextAnswers, nextSkippedQuestions);
+    const nextQuestionLabel = getQuestionLabelForKey(nextQuestionKey);
+
+    setAnswers(nextAnswers);
+    setQuestionWarnings((prev) => {
+      const next = { ...prev };
+      delete next[currentKey];
+      return next;
+    });
+    setSkippedQuestions(nextSkippedQuestions);
+    setForcedQuestionKey(null);
+    setInputValue("");
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "bot",
+        text: nextQuestionLabel
+          ? `Skipped for now: ${currentQuestionLabel}. Next up: ${nextQuestionLabel}`
+          : `Skipped for now: ${currentQuestionLabel}. I have everything else I need for the intake.`,
+      },
+    ]);
+    scrollChatToBottom();
+  }, [answers, currentPromptKey, flowState, intaking, scrollChatToBottom, skippedQuestions]);
+
   const submitAnswer = useCallback(async (value: string) => {
     const answerText = value.trim();
     if (!answerText || intaking || flowState !== "idle") return;
+
+    const currentKey = currentPromptKey;
+    const currentQuestionLabel = currentQuestion?.label || "the current question";
+
+    if (isGreetingOnlyMessage(answerText)) {
+      setMessages((prev) => [...prev, { role: "user", text: answerText }, { role: "bot", text: `Hi there. ${currentQuestionLabel}` }]);
+      setInputValue("");
+      return;
+    }
+
+    if (currentKey && isSkipRequest(answerText)) {
+      setMessages((prev) => [...prev, { role: "user", text: answerText }]);
+      setInputValue("");
+      handleSkipCurrentQuestion();
+      return;
+    }
 
     if (answerText.length > MAX_INTAKE_MESSAGE_CHARS) {
       setMessages((prev) => [...prev, { role: "user", text: answerText }]);
@@ -816,43 +934,33 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
       const res = await fetch(apiUrl("/api/rfp/intake"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: answerText, answers, currentQuestionKey: currentPromptKey }),
+        body: JSON.stringify({ message: answerText, answers, currentQuestionKey: currentKey }),
       });
-
       if (!res.ok) {
         const errText = await res.text().catch(() => "Failed to extract intake fields");
         throw new Error(errText);
       }
-
       const data = (await res.json()) as IntakeResponse;
-      const mergedAnswers = {
-        ...answers,
-        ...(data.extractedAnswers || {}),
-      };
-
+      const mergedAnswers = { ...answers, ...(data.extractedAnswers || {}) };
       setAnswers(mergedAnswers);
-      if (forcedQuestionKey && mergedAnswers[forcedQuestionKey]?.trim()) {
-        setForcedQuestionKey(null);
+      if (currentKey) {
+        setQuestionWarnings((prev) => { const next = { ...prev }; delete next[currentKey]; return next; });
+        setSkippedQuestions((prev) => { if (!prev.has(currentKey)) return prev; const next = new Set(prev); next.delete(currentKey); return next; });
       }
-
-      const nextQuestionKey = data.nextQuestionKey || getNextRequiredKey(mergedAnswers);
+      if (forcedQuestionKey && mergedAnswers[forcedQuestionKey]?.trim()) setForcedQuestionKey(null);
+      const nextQuestionKey = data.nextQuestionKey || getNextRequiredKey(mergedAnswers, skippedQuestions);
       const botMessage =
-        data.chatReply ||
+        getFriendlyAcknowledge(data.chatReply || data.summary || "") ||
         data.clarifyingQuestion ||
-        (!nextQuestionKey && data.readyForGeneration
-          ? "I have enough information to generate the RFP. Click **Generate RFP** when you're ready."
-          : "");
-
-      if (botMessage) {
-        setMessages((prev) => [...prev, { role: "bot", text: botMessage }]);
-      }
+        (!nextQuestionKey && data.readyForGeneration ? "I have enough information to generate the RFP. Click **Generate RFP** when you're ready." : "");
+      if (botMessage) setMessages((prev) => [...prev, { role: "bot", text: botMessage }]);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setMessages((prev) => [...prev, { role: "bot", text: `I couldn't parse that yet: ${msg}` }]);
     } finally {
       setIntaking(false);
     }
-  }, [answers, currentPromptKey, flowState, intaking]);
+  }, [answers, currentPromptKey, currentQuestion?.label, flowState, handleSkipCurrentQuestion, intaking]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey && flowState === "idle") {
@@ -862,16 +970,14 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
   };
 
   const runQaReview = useCallback(async () => {
-    const missingKey = getNextRequiredKey(answers);
+    const missingKey = getNextRequiredKey(answers, skippedQuestions);
     if (missingKey) {
       setForcedQuestionKey(missingKey);
-      setMessages((prev) => [...prev, { role: "bot", text: `I still need one more answer: ${RFP_QUESTIONS.find((q) => q.key === missingKey)?.label || missingKey}` }]);
+      setError(`I still need one more answer: ${getMissingQuestionLabel(missingKey, missingKey)}`);
       return;
     }
-
     setQaLoading(true);
     setError(null);
-
     try {
       const res = await fetch(apiUrl("/api/rfp/qa-review"), {
         method: "POST",
@@ -886,42 +992,37 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
           additionalDetails: answers[FINAL_INTAKE_KEY] || "",
         }),
       });
-
       if (!res.ok) {
         const errText = await res.text().catch(() => "Failed to review the intake");
         throw new Error(errText);
       }
-
       const data = (await res.json()) as QaReviewResponse;
-
       if (data.missingRequired?.length) {
-        const key = data.missingQuestionKey || data.missingRequired[0] || null;
-        setForcedQuestionKey(key);
-        setWizardStep(1);
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "bot",
-            text: `Before I score the draft, I still need: ${data.missingQuestionLabel || (key ? RFP_QUESTIONS.find((q) => q.key === key)?.label : "one missing answer") || "one missing answer"}`,
-          },
-        ]);
+        const remainingMissing = data.missingRequired.filter((key) => !skippedQuestions.has(key));
+        if (remainingMissing.length > 0) {
+          const key = data.missingQuestionKey && !skippedQuestions.has(data.missingQuestionKey)
+            ? data.missingQuestionKey
+            : remainingMissing[0];
+          setForcedQuestionKey(key);
+          setWizardStep(1);
+          setError(`Before I score the draft, I still need: ${getMissingQuestionLabel(key, data.missingQuestionLabel || "one missing answer")}`);
+          setInputValue("");
+          scrollChatToBottom("auto");
+        }
         return;
       }
-
       setQaReview(data.qa);
       initializeQaSuggestionStates(data.qa);
       setWizardStep(2);
-      setMessages([]);
+      setError(null);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
-      setMessages((prev) => [...prev, { role: "bot", text: `QA review failed: ${msg}` }]);
     } finally {
       setQaLoading(false);
     }
-  }, [answers, initializeQaSuggestionStates, profile?.company_name, selectedSubsystems, selectedTemplate]);
+  }, [answers, initializeQaSuggestionStates, profile?.company_name, selectedSubsystems, selectedTemplate, skippedQuestions]);
 
-  /* ─── Start SSE pipeline ─── */
   const startGeneration = async () => {
     const organizationName = answers.organization_name || profile?.company_name || "Organization";
     const projectTitle = answers.project_title || "Project";
@@ -932,13 +1033,11 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
       setMessages((prev) => [...prev, { role: "bot", text: "I still need the organization name and project title before I can generate the RFP." }]);
       return;
     }
-
     if (wizardStep === 2 && qaReview && !qaSuggestionsResolved) {
       setError("Please choose auto, custom, or skip for every QA suggestion before generating.");
       setMessages((prev) => [...prev, { role: "bot", text: "I still need a decision for each QA suggestion before I can generate the RFP." }]);
       return;
     }
-
     if (selectedSubsystems.size === 0) {
       setError("Please select Common RFP or at least one subsystem before generating.");
       setMessages((prev) => [...prev, { role: "bot", text: "Select Common RFP or one or more subsystems before I generate the file." }]);
@@ -951,14 +1050,7 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     setResult(null);
     setPdfBase64(null);
     setDecomposition(null);
-    setMandatoryCriteria({
-      loading: false,
-      ready: false,
-      targets: [],
-      activeTargetIndex: 0,
-      criteriaByTarget: {},
-      error: null,
-    });
+    setMandatoryCriteria({ loading: false, ready: false, targets: [], activeTargetIndex: 0, criteriaByTarget: {}, error: null });
     setProgress(null);
     setMessages([]);
     setInputValue("");
@@ -969,22 +1061,17 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
       void Notification.requestPermission();
     }
 
-    // Build input
     const finalAnswers = { ...answers };
     if (!finalAnswers.organization_name && profile?.company_name) finalAnswers.organization_name = profile.company_name;
-    // Fill unfilled with auto
     for (const q of RFP_QUESTIONS) {
       if (!finalAnswers[q.key]) finalAnswers[q.key] = "auto";
     }
     if (!finalAnswers[FINAL_INTAKE_KEY]) finalAnswers[FINAL_INTAKE_KEY] = "";
 
     const qaRevisionNotes = buildQaRevisionNotes();
-
     const sections: Record<string, string> = {};
     for (const q of RFP_QUESTIONS) {
-      if (!q.isMetadata && q.key !== "detailed_project_description") {
-        sections[q.key] = finalAnswers[q.key];
-      }
+      if (!q.isMetadata && q.key !== "detailed_project_description") sections[q.key] = finalAnswers[q.key];
     }
 
     const input: RfpInput = {
@@ -999,37 +1086,15 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
       qaReview: qaReview || undefined,
       qaRevisionNotes: qaRevisionNotes || undefined,
       precomputedDecomposition: decompositionAnalysis
-        ? {
-            subsystems: decompositionAnalysis.subsystems,
-            inferredRequirements: decompositionAnalysis.inferredRequirements || [],
-            needsDecomposition: decompositionAnalysis.needsDecomposition,
-          }
+        ? { subsystems: decompositionAnalysis.subsystems, inferredRequirements: decompositionAnalysis.inferredRequirements || [], needsDecomposition: decompositionAnalysis.needsDecomposition }
         : undefined,
     };
-
-    console.log("🚀 [GENERATE START] Sending RfpInput:", {
-      organization_name: input.organization_name,
-      project_title: input.project_title,
-      category: input.category,
-      selected_template: input.selected_template,
-      selectedSubsystems: input.selectedSubsystems,
-      subsystemCount: input.selectedSubsystems?.length,
-      hasPrecomputedDecomposition: !!input.precomputedDecomposition,
-      precomputedSubsystems: input.precomputedDecomposition?.subsystems ? Object.keys(input.precomputedDecomposition.subsystems) : "N/A",
-      // DEBUG: Show all sections being sent
-      sections_keys: Object.keys(input.sections),
-      sections: input.sections,
-      detailed_project_description_length: input.detailed_project_description?.length || 0,
-      additional_details_length: input.additional_details?.length || 0,
-    });
 
     clearEditorDraftStorage();
 
     try {
       await startBackgroundRfpGeneration(input, user?.id || profile?.company_name || "anonymous", {
-        onProgress: (progress) => {
-          setProgress(progress);
-        },
+        onProgress: (progress) => { setProgress(progress); },
         onResult: (generatedResult, generatedPdfBase64, generatedDecomposition) => {
           setResult(generatedResult);
           setPdfBase64(generatedPdfBase64);
@@ -1038,26 +1103,17 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
           setFlowState("review");
           setWizardStep(3);
           try {
-            window.localStorage.setItem(
-              "rfp-editor-draft",
-              JSON.stringify({
-                metadata: generatedResult.metadata,
-                sections: generatedResult.sections,
-                sectionLabels: generatedResult.sectionLabels,
-                template: generatedResult.template,
-                pdfBase64: generatedPdfBase64,
-                decomposition: generatedDecomposition,
-              }),
-            );
-          } catch {
-            /* ignore storage failures */
-          }
+            window.localStorage.setItem("rfp-editor-draft", JSON.stringify({
+              metadata: generatedResult.metadata,
+              sections: generatedResult.sections,
+              sectionLabels: generatedResult.sectionLabels,
+              template: generatedResult.template,
+              pdfBase64: generatedPdfBase64,
+              decomposition: generatedDecomposition,
+            }));
+          } catch { /* ignore */ }
         },
-        onError: (message) => {
-          setError(message);
-          setFlowState("review");
-          setWizardStep(3);
-        },
+        onError: (message) => { setError(message); setFlowState("review"); setWizardStep(3); },
       });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1067,7 +1123,6 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     }
   };
 
-  /* ─── Download helpers ─── */
   const downloadBlob = (base64: string, filename: string) => {
     const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
     const blob = new Blob([bytes], { type: "application/pdf" });
@@ -1080,28 +1135,13 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
   };
 
   const resolveSavedPdf = () => {
-    if (pdfBase64) {
-      return {
-        base64: pdfBase64,
-        fileName: `${result?.metadata.project_title || "RFP"}.pdf`,
-      };
-    }
-
-    if (!initialUploadAnalysis) {
-      return null;
-    }
-
+    if (pdfBase64) return { base64: pdfBase64, fileName: `${result?.metadata.project_title || "RFP"}.pdf` };
+    if (!initialUploadAnalysis) return null;
     try {
       const uploadedFileName = window.sessionStorage.getItem("rfp-uploaded-pdf-name") || "Uploaded RFP.pdf";
       const uploadedPdfBase64 = window.sessionStorage.getItem(`rfp-uploaded-pdf:${uploadedFileName}`);
-      if (!uploadedPdfBase64) {
-        return null;
-      }
-
-      return {
-        base64: uploadedPdfBase64,
-        fileName: uploadedFileName,
-      };
+      if (!uploadedPdfBase64) return null;
+      return { base64: uploadedPdfBase64, fileName: uploadedFileName };
     } catch {
       return null;
     }
@@ -1121,80 +1161,43 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
   const buildEditorDraft = useCallback((target: TargetRfp): EditorDraftSnapshot | null => {
     if (target === "full") {
       if (!result || !pdfBase64) return null;
-      return {
-        metadata: result.metadata,
-        sections: result.sections,
-        sectionLabels: result.sectionLabels,
-        template: result.template as PdfTemplate,
-        pdfBase64,
-        sourcePdfBase64: pdfBase64,
-        decomposition,
-        updatedAt: new Date().toISOString(),
-      };
+      return { metadata: result.metadata, sections: result.sections, sectionLabels: result.sectionLabels, template: result.template as PdfTemplate, pdfBase64, sourcePdfBase64: pdfBase64, decomposition, updatedAt: new Date().toISOString() };
     }
-
     const subsystemDraft = decomposition?.subsystemDrafts?.find((draft) => draft.name === target);
     if (!subsystemDraft) return null;
-
-    return {
-      metadata: subsystemDraft.metadata,
-      sections: subsystemDraft.sections,
-      sectionLabels: subsystemDraft.sectionLabels,
-      template: subsystemDraft.template,
-      pdfBase64: subsystemDraft.pdfBase64,
-      sourcePdfBase64: subsystemDraft.pdfBase64,
-      decomposition,
-      subsystemName: subsystemDraft.name,
-      updatedAt: new Date().toISOString(),
-    };
+    return { metadata: subsystemDraft.metadata, sections: subsystemDraft.sections, sectionLabels: subsystemDraft.sectionLabels, template: subsystemDraft.template, pdfBase64: subsystemDraft.pdfBase64, sourcePdfBase64: subsystemDraft.pdfBase64, decomposition, subsystemName: subsystemDraft.name, updatedAt: new Date().toISOString() };
   }, [decomposition, pdfBase64, result]);
 
   const openEditorForTarget = useCallback((target: TargetRfp) => {
-    // Prefer per-target persisted draft if present (restores previous edits reliably)
     let draft: EditorDraftSnapshot | null = null;
     try {
       const key = `${EDITOR_DRAFT_KEY}:${target}`;
       const raw = window.localStorage.getItem(key);
       if (raw) draft = JSON.parse(raw) as EditorDraftSnapshot;
-    } catch {
-      /* ignore */
-    }
-    if (!draft) {
-      draft = buildEditorDraft(target);
-    }
+    } catch { /* ignore */ }
+    if (!draft) draft = buildEditorDraft(target);
     if (!draft) {
       setError(target === "full" ? "The full RFP is not ready yet." : `Subsystem draft for ${target} is not ready yet.`);
       return;
     }
-
     try {
-      // Store current location as return point. For upload mode, this preserves the React state (wizard step).
-      // If no search params, browser history fallback will be used in the editor page.
       const preferredReturn = window.location.pathname + window.location.search;
       const withReturn = { ...draft, returnTo: preferredReturn };
       window.localStorage.setItem(EDITOR_DRAFT_KEY, JSON.stringify(withReturn));
       try { window.localStorage.setItem(SELECTED_TARGET_KEY, target); } catch {}
-      // also ensure a per-target draft record exists so subsequent Edit uses the same content
       try { window.localStorage.setItem(`${EDITOR_DRAFT_KEY}:${target}`, JSON.stringify(withReturn)); } catch {}
-    } catch {
-      /* ignore storage failures */
-    }
+    } catch { /* ignore */ }
     router.push("/rfp/editor");
   }, [buildEditorDraft, router]);
 
   const downloadSelectedRfp = useCallback((target: TargetRfp) => {
-    if (target === "full") {
-      downloadPdf();
-      return;
-    }
+    if (target === "full") { downloadPdf(); return; }
     downloadSubsystemPdf(target);
   }, [downloadPdf, downloadSubsystemPdf]);
 
   const downloadMarkdown = () => {
     if (!result) return;
-    const md = Object.entries(result.sections)
-      .map(([key, val]) => `## ${result.sectionLabels[key] || key}\n\n${val}`)
-      .join("\n\n---\n\n");
+    const md = Object.entries(result.sections).map(([key, val]) => `## ${result.sectionLabels[key] || key}\n\n${val}`).join("\n\n---\n\n");
     const blob = new Blob([md], { type: "text/markdown" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1205,35 +1208,14 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
   };
 
   const saveToMyContracts = async () => {
-    console.log("▶ saveToMyContracts CALLED");
-    console.log("  Guards check:", { result: !!result, user: !!user, saving, saved });
-    
     if (!result || !user) {
-      console.error("✗ FAILED: Missing result or user", { result: !!result, user: !!user });
       setMessages((prev) => [...prev, { role: "bot", text: "Error: Missing user data or RFP result." }]);
       return;
     }
-    if (saving || saved) {
-      console.warn("✗ BLOCKED: Already saving/saved from previous operation", { saving, saved });
-      console.warn("  Tip: Clear browser cache or reload page if stuck");
-      return;
-    }
-    
-    console.log("  ✓ All guards passed, proceeding with save");
+    if (saving || saved) return;
     setSaving(true);
     try {
-      console.log("✓ Starting save process");
-      console.log("  Mandatory criteria state:", {
-        targets: mandatoryCriteria.targets,
-        loading: mandatoryCriteria.loading,
-        ready: mandatoryCriteria.ready,
-        criteriaCount: Object.keys(mandatoryCriteria.criteriaByTarget).length,
-      });
-      
-      const userMetadataFullName = (
-        user as unknown as { user_metadata?: { full_name?: string } }
-      ).user_metadata?.full_name;
-
+      const userMetadataFullName = (user as unknown as { user_metadata?: { full_name?: string } }).user_metadata?.full_name;
       const commonFields = {
         budget: answers.budget_framework || "TBD",
         deadline: answers.implementation_timeline || "TBD",
@@ -1252,88 +1234,46 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
       };
 
       const normalizeName = (value: string) => value.trim().toLowerCase().replace(/_/g, " ");
-      
-      // Sanitize function to remove null characters and other problematic Unicode
-      const sanitizeText = (text: string | null | undefined): string => {
-        if (!text) return "";
-        return String(text).replace(/\0/g, "");
-      };
-      
+      const sanitizeText = (text: string | null | undefined): string => { if (!text) return ""; return String(text).replace(/\0/g, ""); };
       const sanitizeObject = (obj: unknown): unknown => {
         if (obj === null || obj === undefined) return obj;
         if (typeof obj === "string") return sanitizeText(obj);
         if (Array.isArray(obj)) return obj.map(sanitizeObject);
-        if (typeof obj === "object") {
-          return Object.entries(obj).reduce((acc, [key, val]) => {
-            acc[key as keyof typeof acc] = sanitizeObject(val);
-            return acc;
-          }, {} as Record<string, unknown>);
-        }
+        if (typeof obj === "object") return Object.entries(obj).reduce((acc, [key, val]) => { acc[key as keyof typeof acc] = sanitizeObject(val); return acc; }, {} as Record<string, unknown>);
         return obj;
       };
-      
+
       const subsystemDrafts = decomposition?.subsystemDrafts || [];
       const subsystemPdfs = decomposition?.subsystemPdfs || [];
       const mandatoryCriteriaTargets = mandatoryCriteria.targets.length > 0 ? mandatoryCriteria.targets : ["full"];
       const saves: Promise<unknown>[] = [];
-
-      console.log("📋 Building save operations:");
-      console.log("  Mandatory criteria targets:", mandatoryCriteriaTargets);
-      console.log("  Subsystem drafts available:", subsystemDrafts.map(d => d.name));
-      console.log("  Subsystem PDFs available:", subsystemPdfs.map(p => p.name));
-
       const savedPdf = resolveSavedPdf();
       const savedPdfBase64 = savedPdf?.base64 || "";
       const savedPdfFileName = savedPdf?.fileName || `${result.metadata.project_title}.pdf`;
 
-      // Save full RFP if it's in the mandatory criteria targets
       if (mandatoryCriteriaTargets.includes("full")) {
-        console.log("Adding full RFP to save queue");
-        saves.push(
-          (async () => {
-            const insertData = {
-              ...commonFields,
-              title: result.metadata.project_title,
-              description: Object.values(result.sections).find(Boolean)?.slice(0, 300) || result.metadata.project_title,
-              rfp_sections: result.sections,
-              rfp_section_labels: result.sectionLabels,
-              rfp_pdf_base64: savedPdfBase64,
-              rfp_file_name: savedPdfFileName,
-              rfp_decomposition: null,
-              last_analysis_result: {
-                ...result.qa,
-                mandatory_criteria: buildMandatoryCriteriaPayload(mandatoryCriteria.criteriaByTarget, ["full"], 0),
-              },
-              rfp_metadata: {
-                ...commonFields.rfp_metadata,
-                mandatory_criteria: buildMandatoryCriteriaPayload(mandatoryCriteria.criteriaByTarget, ["full"], 0),
-              },
-            };
-            console.log("Inserting full RFP contract:", insertData.title);
-            const { error, data } = await supabase
-              .from("contracts")
-              .insert(sanitizeObject(insertData) as any)
-              .select();
-            if (error) {
-              console.error("Error saving full RFP:", error);
-              throw error;
-            }
-            console.log("Full RFP saved successfully:", data);
-          })()
-        );
+        saves.push((async () => {
+          const insertData = {
+            ...commonFields,
+            title: result.metadata.project_title,
+            description: Object.values(result.sections).find(Boolean)?.slice(0, 300) || result.metadata.project_title,
+            rfp_sections: result.sections,
+            rfp_section_labels: result.sectionLabels,
+            rfp_pdf_base64: savedPdfBase64,
+            rfp_file_name: savedPdfFileName,
+            rfp_decomposition: null,
+            last_analysis_result: { ...result.qa, mandatory_criteria: buildMandatoryCriteriaPayload(mandatoryCriteria.criteriaByTarget, ["full"], 0) },
+            rfp_metadata: { ...commonFields.rfp_metadata, mandatory_criteria: buildMandatoryCriteriaPayload(mandatoryCriteria.criteriaByTarget, ["full"], 0) },
+          };
+          const { error } = await supabase.from("contracts").insert(sanitizeObject(insertData) as any).select();
+          if (error) throw error;
+        })());
       }
 
-      // Save each subsystem in mandatory criteria targets
       const subsystemTargets = mandatoryCriteriaTargets.filter((target) => target !== "full");
-      console.log("Subsystem targets to save:", subsystemTargets);
-      
       for (const targetName of subsystemTargets) {
-        // Try to find draft or PDF for this subsystem
         const draft = subsystemDrafts.find((item) => normalizeName(item.name) === normalizeName(targetName));
         const pdf = subsystemPdfs.find((item) => normalizeName(item.name) === normalizeName(targetName));
-
-        // Use draft if available (has full data), otherwise use result data with subsystem metadata
-        // PDF only has pdfBase64, so we extract that separately
         const subsystemData = {
           name: targetName,
           sections: draft?.sections || result.sections,
@@ -1342,94 +1282,43 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
           template: draft?.template || result.template,
           pdfBase64: draft?.pdfBase64 || pdf?.pdfBase64 || "",
         };
-
-        const subsystemCriteriaPayload = buildMandatoryCriteriaPayload(
-          mandatoryCriteria.criteriaByTarget,
-          [targetName],
-          0,
-        );
-
-        console.log("Adding subsystem to save queue:", targetName);
-        
-        saves.push(
-          (async () => {
-            const insertData = {
-              ...commonFields,
-              title: `${subsystemData.metadata.project_title} — ${targetName}`,
-              description: `Subsystem RFP for "${targetName}" decomposed from ${result.metadata.project_title}`.slice(0, 300),
-              rfp_sections: subsystemData.sections,
-              rfp_section_labels: subsystemData.sectionLabels,
-              rfp_pdf_base64: subsystemData.pdfBase64 || savedPdfBase64,
-              rfp_file_name: `${subsystemData.metadata.project_title || result.metadata.project_title} — ${targetName}.pdf`,
-              rfp_decomposition: decomposition ? {
-                subsystems: decomposition.subsystems,
-                inferredRequirements: decomposition.inferredRequirements,
-                needsDecomposition: true,
-                subsystemName: targetName,
-              } : null,
-              rfp_metadata: {
-                ...commonFields.rfp_metadata,
-                ...subsystemData.metadata,
-                mandatory_criteria: subsystemCriteriaPayload,
-              },
-              rfp_template: subsystemData.template,
-              last_analysis_result: {
-                ...result.qa,
-                mandatory_criteria: subsystemCriteriaPayload,
-              },
-            };
-            console.log("Inserting subsystem contract:", insertData.title);
-            const { error, data } = await supabase
-              .from("contracts")
-              .insert(sanitizeObject(insertData) as any)
-              .select();
-            if (error) {
-              console.error("Error saving subsystem:", targetName, error);
-              throw error;
-            }
-            console.log("Subsystem saved successfully:", targetName, data);
-          })()
-        );
+        const subsystemCriteriaPayload = buildMandatoryCriteriaPayload(mandatoryCriteria.criteriaByTarget, [targetName], 0);
+        saves.push((async () => {
+          const insertData = {
+            ...commonFields,
+            title: `${subsystemData.metadata.project_title} — ${targetName}`,
+            description: `Subsystem RFP for "${targetName}" decomposed from ${result.metadata.project_title}`.slice(0, 300),
+            rfp_sections: subsystemData.sections,
+            rfp_section_labels: subsystemData.sectionLabels,
+            rfp_pdf_base64: subsystemData.pdfBase64 || savedPdfBase64,
+            rfp_file_name: `${subsystemData.metadata.project_title || result.metadata.project_title} — ${targetName}.pdf`,
+            rfp_decomposition: decomposition ? { subsystems: decomposition.subsystems, inferredRequirements: decomposition.inferredRequirements, needsDecomposition: true, subsystemName: targetName } : null,
+            rfp_metadata: { ...commonFields.rfp_metadata, ...subsystemData.metadata, mandatory_criteria: subsystemCriteriaPayload },
+            rfp_template: subsystemData.template,
+            last_analysis_result: { ...result.qa, mandatory_criteria: subsystemCriteriaPayload },
+          };
+          const { error } = await supabase.from("contracts").insert(sanitizeObject(insertData) as any).select();
+          if (error) throw error;
+        })());
       }
 
-      // If this is from v6 (embedded mode), call the callback instead of saving to database
       if (contractId && onRfpGenerated) {
-        console.log("Embedded mode: saving with callback");
-        if (saves.length > 0) {
-          // Still wait for the saves to complete
-          await Promise.all(saves);
-        }
-        onRfpGenerated({
-          title: result.metadata.project_title,
-          sections: result.sections,
-          sectionLabels: result.sectionLabels,
-          pdfBase64: pdfBase64 || "",
-          metadata: result.metadata,
-          mandatoryCriteria,
-        });
+        if (saves.length > 0) await Promise.all(saves);
+        onRfpGenerated({ title: result.metadata.project_title, sections: result.sections, sectionLabels: result.sectionLabels, pdfBase64: pdfBase64 || "", metadata: result.metadata, mandatoryCriteria });
         setSaved(true);
         setMessages((prev) => [...prev, { role: "bot", text: "RFP generated! Returning to contract view..." }]);
         onSaved?.();
         return;
       }
 
-      // Save to Supabase (standalone mode)
       if (saves.length === 0) {
-        console.error("✗ NO SYSTEMS TO SAVE - saves array is empty!");
-        console.error("  mandatoryCriteriaTargets:", mandatoryCriteriaTargets);
-        console.error("  mandatoryCriteria.targets:", mandatoryCriteria.targets);
-        console.error("  This means no systems were selected for saving");
-        setMessages((prev) => [...prev, { role: "bot", text: "❌ No systems to save. This shouldn't happen - please check console logs and try again." }]);
+        setMessages((prev) => [...prev, { role: "bot", text: "❌ No systems to save. Please check your selections and try again." }]);
         setSaving(false);
         return;
       }
 
-      console.log(`▶ Executing ${saves.length} save operation(s)...`);
       await Promise.all(saves);
       setSaved(true);
-      
-      console.log("✓ ALL SAVES COMPLETED SUCCESSFULLY");
-      console.log("  Targets saved - full:", mandatoryCriteriaTargets.includes("full"), "subsystems:", mandatoryCriteriaTargets.filter(t => t !== "full").length);
 
       if (mandatoryCriteriaTargets.includes("full") && subsystemTargets.length === 0) {
         setMessages((prev) => [...prev, { role: "bot", text: "✅ Full RFP contract saved to **My Contracts**. Go to the My Contracts tab to approve and publish it." }]);
@@ -1437,13 +1326,9 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
         const total = subsystemTargets.length + (mandatoryCriteriaTargets.includes("full") ? 1 : 0);
         setMessages((prev) => [...prev, { role: "bot", text: `✅ All **${total}** RFP contract${total > 1 ? "s" : ""} saved to **My Contracts** (full + subsystems). Go to the My Contracts tab to approve and publish.` }]);
       }
-      
       onSaved?.();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error("✗ SAVE FAILED:", err);
-      console.error("  Error message:", msg);
-      console.error("  Stack:", err instanceof Error ? err.stack : "N/A");
       setMessages((prev) => [...prev, { role: "bot", text: `❌ Failed to save: ${msg}` }]);
     }
     setSaving(false);
@@ -1451,110 +1336,117 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
 
   const formatTime = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
 
+  // ─────────────────────────────────────────────
+  // RENDER
+  // ─────────────────────────────────────────────
   return (
-    <div className="card" style={{ maxWidth: 800, margin: "0 auto" }}>
-      {/* Header */}
-      <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--card-border)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ width: 36, height: 36, borderRadius: "50%", background: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <svg width="18" height="18" fill="#EFECE3" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z" /></svg>
-          </div>
-          <div>
-            <div style={{ fontWeight: 600, fontSize: 15 }}>RFP Generator</div>
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>
-              {flowState === "idle" && "Intake in progress"}
-              {flowState === "generating" && `Generating... ${formatTime(elapsed)}`}
-              {flowState === "review" && "Complete"}
+    /*
+     * KEY FIX: flexWrap changed from "wrap" to "nowrap" so the sidebar stays
+     * alongside the chat panel instead of wrapping below it.
+     */
+    <div style={{ display: "flex", flexWrap: "nowrap", gap: 24, alignItems: "flex-start", maxWidth: 1480, margin: "0 auto", padding: "0 24px" }}>
+
+      {/* ── Main card ── */}
+      {/*
+       * KEY FIX: flex changed from "1 1 760px" → "1 1 0" so the card
+       * shrinks to share the row with the sidebar instead of claiming 760px
+       * and forcing a wrap.
+       */}
+      <div className="card" style={{ flex: "1 1 0", minWidth: 0, overflow: "hidden", background: "linear-gradient(180deg, rgba(255,255,255,0.95), rgba(239,236,227,0.92))", border: "1px solid var(--card-border)", boxShadow: "0 24px 60px rgba(15, 23, 42, 0.08)" }}>
+
+        {/* Header */}
+        <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--card-border)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 36, height: 36, borderRadius: "50%", background: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <svg width="18" height="18" fill="#EFECE3" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM6 20V4h5v7h7v9H6z" /></svg>
+            </div>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 15 }}>RFP Generator</div>
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                {flowState === "idle" && "Intake in progress"}
+                {flowState === "generating" && `Generating... ${formatTime(elapsed)}`}
+                {flowState === "review" && "Complete"}
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Stage progress */}
-      <div style={{ padding: "12px 20px 0" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8, marginBottom: 10 }}>
-          {[
-            { label: "1. Intake", active: wizardStep === 1, done: wizardStep > 1 },
-            { label: "2. QA Review", active: wizardStep === 2, done: wizardStep > 2 },
-            { label: "3. Results", active: wizardStep === 3, done: wizardStep > 3 },
-            { label: "4. Mandatory Criteria", active: wizardStep === 4, done: false },
-          ].map((step) => (
-            <div
-              key={step.label}
-              style={{
-                padding: "8px 10px",
-                borderRadius: 999,
-                textAlign: "center",
-                fontSize: 12,
-                fontWeight: 600,
-                background: step.active ? "var(--primary)" : step.done ? "var(--primary-light)" : "var(--surface)",
-                color: step.active ? "#EFECE3" : "var(--foreground)",
-                border: "1px solid var(--card-border)",
-              }}
-            >
-              {step.label}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Chat messages */}
-      {wizardStep === 1 && (
-        <div ref={chatScrollRef} style={{ height: 400, overflowY: "auto", padding: "16px 20px" }}>
-          {messages.map((msg, idx) => (
-            <div key={idx} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start", marginBottom: 8 }}>
+        {/* Stage progress */}
+        <div style={{ padding: "12px 20px 0" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 8, marginBottom: 10 }}>
+            {[
+              { label: "1. Intake", active: wizardStep === 1, done: wizardStep > 1 },
+              { label: "2. QA Review", active: wizardStep === 2, done: wizardStep > 2 },
+              { label: "3. Results", active: wizardStep === 3, done: wizardStep > 3 },
+              { label: "4. Mandatory Criteria", active: wizardStep === 4, done: false },
+            ].map((step) => (
               <div
+                key={step.label}
                 style={{
-                  maxWidth: "80%",
-                  padding: "10px 14px",
-                  borderRadius: msg.role === "user" ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
-                  background: msg.role === "user" ? "var(--primary)" : "var(--surface)",
-                  color: msg.role === "user" ? "#EFECE3" : "var(--foreground)",
-                  border: msg.role === "bot" ? "1px solid var(--card-border)" : "none",
-                  lineHeight: 1.5,
-                  whiteSpace: "pre-wrap",
-                  fontSize: 14,
+                  padding: "8px 10px",
+                  borderRadius: 999,
+                  textAlign: "center",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  background: step.active ? "var(--primary)" : step.done ? "var(--primary-light)" : "var(--surface)",
+                  color: step.active ? "#EFECE3" : "var(--foreground)",
+                  border: "1px solid var(--card-border)",
                 }}
-                dangerouslySetInnerHTML={{
-                  __html: msg.text.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>"),
-                }}
-              />
-            </div>
-          ))}
-
-          {/* Progress bar during generation */}
-          {flowState === "generating" && activeGenerationProgress && (
-            <div style={{ background: "var(--surface)", borderRadius: 12, padding: "14px 16px", marginTop: 8 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 6 }}>
-                <span style={{ fontWeight: 600 }}>{activeGenerationProgress.stage}</span>
-                <span style={{ color: "var(--muted)" }}>{activeGenerationProgress.percent}%</span>
+              >
+                {step.label}
               </div>
-              <div style={{ height: 6, borderRadius: 3, background: "var(--surface-hover)", overflow: "hidden" }}>
-                <div
-                  style={{
-                    height: "100%",
-                    width: `${activeGenerationProgress.percent}%`,
-                    background: "var(--primary)",
-                    borderRadius: 3,
-                    transition: "width 0.4s ease",
-                  }}
-                />
-              </div>
-              <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>{activeGenerationProgress.message}</div>
-            </div>
-          )}
+            ))}
+          </div>
         </div>
-      )}
+
+        {/* Chat messages */}
+        {wizardStep === 1 && (
+          <div style={{ padding: "16px 20px 8px" }}>
+            <div ref={chatScrollRef} style={{ height: 480, overflowY: "auto", paddingRight: 4 }}>
+              {messages.map((msg, idx) => (
+                <div key={idx} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start", marginBottom: 8 }}>
+                  <div
+                    style={{
+                      maxWidth: "80%",
+                      padding: "10px 14px",
+                      borderRadius: msg.role === "user" ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
+                      background: msg.role === "user" ? "var(--primary)" : "var(--surface)",
+                      color: msg.role === "user" ? "#EFECE3" : "var(--foreground)",
+                      border: msg.role === "bot" ? "1px solid var(--card-border)" : "none",
+                      lineHeight: 1.5,
+                      whiteSpace: "pre-wrap",
+                      fontSize: 14,
+                    }}
+                    dangerouslySetInnerHTML={{ __html: msg.text.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>") }}
+                  />
+                </div>
+              ))}
+
+              {flowState === "generating" && activeGenerationProgress && (
+                <div style={{ background: "var(--surface)", borderRadius: 12, padding: "14px 16px", marginTop: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 6 }}>
+                    <span style={{ fontWeight: 600 }}>{activeGenerationProgress.stage}</span>
+                    <span style={{ color: "var(--muted)" }}>{activeGenerationProgress.percent}%</span>
+                  </div>
+                  <div style={{ height: 6, borderRadius: 3, background: "var(--surface-hover)", overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${activeGenerationProgress.percent}%`, background: "var(--primary)", borderRadius: 3, transition: "width 0.4s ease" }} />
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>{activeGenerationProgress.message}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Error display */}
         {error && (
-          <div style={{ background: "var(--danger-light)", border: "1px solid var(--danger)", borderRadius: 8, padding: 12, marginTop: 8, color: "var(--danger)", fontSize: 13 }}>
+          <div style={{ background: "var(--danger-light)", border: "1px solid var(--danger)", borderRadius: 8, padding: 12, margin: "8px 20px", color: "var(--danger)", fontSize: 13 }}>
             {error}
           </div>
         )}
 
         {wizardStep === 3 && generationSnapshot.status === "running" && activeGenerationProgress && (
-          <div style={{ background: "var(--surface)", border: "1px solid var(--card-border)", borderRadius: 12, padding: 14, marginTop: 12, fontSize: 13, color: "var(--muted)" }}>
+          <div style={{ background: "var(--surface)", border: "1px solid var(--card-border)", borderRadius: 12, padding: 14, margin: "12px 20px", fontSize: 13, color: "var(--muted)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 8 }}>
               <strong style={{ color: "var(--foreground)" }}>{activeGenerationProgress.stage}</strong>
               <span>{activeGenerationProgress.percent}%</span>
@@ -1568,21 +1460,15 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
         )}
 
         {wizardStep === 2 && qaReview && (
-          <div className="animate-fadeIn" style={{ marginTop: 12 }}>
+          <div className="animate-fadeIn" style={{ margin: "12px 20px" }}>
             <div style={{ background: "var(--surface)", borderRadius: 12, padding: 16, marginBottom: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
                 <div
                   style={{
-                    width: 48,
-                    height: 48,
-                    borderRadius: "50%",
+                    width: 48, height: 48, borderRadius: "50%",
                     background: qaReview.overallScore >= 70 ? "var(--success)" : qaReview.overallScore >= 40 ? "var(--warning)" : "var(--danger)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "#EFECE3",
-                    fontWeight: 700,
-                    fontSize: 16,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    color: "#EFECE3", fontWeight: 700, fontSize: 16,
                   }}
                 >
                   {qaReview.overallScore}
@@ -1595,17 +1481,13 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
                 </div>
               </div>
               {qaReview.strengths.length > 0 && (
-                <div style={{ fontSize: 12 }}>
-                  <strong>Strengths:</strong> {qaReview.strengths.slice(0, 3).join(", ")}
-                </div>
+                <div style={{ fontSize: 12 }}><strong>Strengths:</strong> {qaReview.strengths.slice(0, 3).join(", ")}</div>
               )}
               {qaReview.improvements.length > 0 && (
                 <div style={{ fontSize: 12, marginTop: 4 }}>
                   <strong>Suggestions:</strong>
                   <ul style={{ margin: "6px 0 0 18px", padding: 0, display: "grid", gap: 4 }}>
-                    {qaReview.improvements.slice(0, 5).map((item, index) => (
-                      <li key={index}>{item}</li>
-                    ))}
+                    {qaReview.improvements.slice(0, 5).map((item, index) => <li key={index}>{item}</li>)}
                   </ul>
                 </div>
               )}
@@ -1621,15 +1503,9 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
                       <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Suggestion {index + 1}</div>
                       <div style={{ fontSize: 13, marginBottom: 10, color: "var(--foreground-secondary)" }}>{improvement}</div>
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-                        <button className="btn-outline" onClick={() => setQaSuggestionStates((prev) => ({ ...prev, [index]: { mode: "auto", note: "auto" } }))} style={{ fontSize: 12, padding: "6px 10px" }}>
-                          auto
-                        </button>
-                        <button className="btn-outline" onClick={() => setQaSuggestionStates((prev) => ({ ...prev, [index]: { mode: "custom", note: prev[index]?.note || "" } }))} style={{ fontSize: 12, padding: "6px 10px" }}>
-                          custom
-                        </button>
-                        <button className="btn-outline" onClick={() => setQaSuggestionStates((prev) => ({ ...prev, [index]: { mode: "skip", note: "skip" } }))} style={{ fontSize: 12, padding: "6px 10px" }}>
-                          No
-                        </button>
+                        <button className="btn-outline" onClick={() => setQaSuggestionStates((prev) => ({ ...prev, [index]: { mode: "auto", note: "auto" } }))} style={{ fontSize: 12, padding: "6px 10px" }}>auto</button>
+                        <button className="btn-outline" onClick={() => setQaSuggestionStates((prev) => ({ ...prev, [index]: { mode: "custom", note: prev[index]?.note || "" } }))} style={{ fontSize: 12, padding: "6px 10px" }}>custom</button>
+                        <button className="btn-outline" onClick={() => setQaSuggestionStates((prev) => ({ ...prev, [index]: { mode: "skip", note: "skip" } }))} style={{ fontSize: 12, padding: "6px 10px" }}>No</button>
                       </div>
                       {state.mode === "custom" && (
                         <textarea
@@ -1641,57 +1517,35 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
                           style={{ width: "100%", resize: "vertical" }}
                         />
                       )}
-                      {state.mode === "auto" && (
-                        <div style={{ fontSize: 12, color: "var(--success)" }}>AI will apply this suggestion automatically.</div>
-                      )}
-                      {state.mode === "skip" && (
-                        <div style={{ fontSize: 12, color: "var(--muted)" }}>Suggestion skipped. Generation will continue without this change.</div>
-                      )}
+                      {state.mode === "auto" && <div style={{ fontSize: 12, color: "var(--success)" }}>AI will apply this suggestion automatically.</div>}
+                      {state.mode === "skip" && <div style={{ fontSize: 12, color: "var(--muted)" }}>Suggestion skipped. Generation will continue without this change.</div>}
                     </div>
                   );
                 })}
               </div>
               {!qaSuggestionsResolved && (
-                <div style={{ marginTop: 10, fontSize: 12, color: "var(--warning)" }}>
-                  Please choose auto, custom, or No for every suggestion.
-                </div>
+                <div style={{ marginTop: 10, fontSize: 12, color: "var(--warning)" }}>Please choose auto, custom, or No for every suggestion.</div>
               )}
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
-                <button className="btn-primary" onClick={startGeneration} disabled={!qaSuggestionsResolved || qaLoading || selectedSubsystems.size === 0}>
-                  Generate RFP
-                </button>
+                <button className="btn-primary" onClick={startGeneration} disabled={!qaSuggestionsResolved || qaLoading || selectedSubsystems.size === 0}>Generate RFP</button>
                 {initialUploadAnalysis && (
                   <button
                     className="btn-outline"
                     onClick={() => {
-                      // Skip generation and go directly to Mandatory Criteria using uploaded analysis
                       let loadedPdfBase64 = null;
-                      
                       if (initialUploadAnalysis) {
-                        // Try to get the uploaded PDF file from session storage
                         const pdfFileName = sessionStorage.getItem("rfp-uploaded-pdf-name");
                         if (pdfFileName) {
-                          const pdfDataKey = `rfp-uploaded-pdf:${pdfFileName}`;
-                          const pdfBase64String = sessionStorage.getItem(pdfDataKey);
-                          if (pdfBase64String) {
-                            setPdfBase64(pdfBase64String);
-                            loadedPdfBase64 = pdfBase64String;
-                            console.log("✓ Loaded uploaded PDF from session storage", { fileName: pdfFileName, size: pdfBase64String.length });
-                          } else {
-                            console.warn("⚠ PDF file not found in session storage for:", pdfFileName);
-                            setMessages((prev) => [...prev, { role: "bot", text: "⚠ Warning: Could not load original PDF file. You can still set mandatory criteria, but the PDF won't be saved." }]);
-                          }
-                        } else {
-                          console.warn("⚠ No PDF filename found in session storage");
+                          const pdfBase64String = sessionStorage.getItem(`rfp-uploaded-pdf:${pdfFileName}`);
+                          if (pdfBase64String) { setPdfBase64(pdfBase64String); loadedPdfBase64 = pdfBase64String; }
                         }
                       }
-                      
                       setFlowState("review");
                       setWizardStep(4);
                       setSelectedSubsystems(new Set(["full"]));
                       setDownloadTarget("full");
                       setEditTarget("full");
-                      const successMsg = loadedPdfBase64 
+                      const successMsg = loadedPdfBase64
                         ? "Continuing with uploaded RFP without changes. The PDF will be saved along with your mandatory criteria."
                         : "Continuing with uploaded RFP analysis without changes. Setting up mandatory criteria...";
                       setMessages((prev) => [...prev, { role: "bot", text: successMsg }]);
@@ -1700,33 +1554,29 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
                     Continue without changes
                   </button>
                 )}
-                <button className="btn-outline" onClick={() => setWizardStep(1)}>
-                  Back to intake
-                </button>
+                <button className="btn-outline" onClick={() => setWizardStep(1)}>Back to intake</button>
               </div>
             </div>
           </div>
         )}
 
-        {/* Results: QA + Download */}
+        {/* Results */}
         {wizardStep === 3 && result && (
-          <div className="animate-fadeIn" style={{ marginTop: 12 }}>
+          <div className="animate-fadeIn" style={{ margin: "12px 20px" }}>
             <div style={{ background: "linear-gradient(180deg, var(--surface) 0%, rgba(239,236,227,0.7) 100%)", borderRadius: 18, padding: 18, marginBottom: 12, border: "1px solid var(--card-border)" }}>
               <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.18em", color: "var(--muted)", marginBottom: 8 }}>File summary</div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: "var(--foreground)", marginBottom: 8 }}>
-                {result.metadata.project_title}
-              </div>
-              <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.7, maxWidth: 860 }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: "var(--foreground)", marginBottom: 8 }}>{result.metadata.project_title}</div>
+              <div style={{ fontSize: 13, color: "var(--muted)", lineHeight: 1.7 }}>
                 {selectedSubsystems.has("full")
-                  ? "The AI generated the common combined RFP from your intake answers, and it is available as the selected file."
+                  ? "The AI generated the common combined RFP from your intake answers."
                   : selectedSubsystemNames.length > 0
-                    ? `The AI generated only the subsystem files you selected during intake: ${selectedSubsystemNames.join(", ")}.`
+                    ? `The AI generated only the subsystem files you selected: ${selectedSubsystemNames.join(", ")}.`
                     : "The AI generated the RFP set from your intake answers, ready to download or edit."}
               </div>
             </div>
 
             <div style={{ background: "var(--surface)", borderRadius: 16, padding: 16, border: "1px solid var(--card-border)", display: "grid", gap: 14 }}>
-              <div style={{ background: "rgba(239,236,227,0.65)", borderRadius: 14, padding: 14, border: "1px solid var(--card-border)", overflow: "visible" }}>
+              <div style={{ background: "rgba(239,236,227,0.65)", borderRadius: 14, padding: 14, border: "1px solid var(--card-border)" }}>
                 <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.16em", color: "var(--muted)", marginBottom: 8 }}>File selector</div>
                 <div style={{ fontSize: 13, color: "var(--foreground)", lineHeight: 1.6, marginBottom: 12 }}>Choose one generated file and use the same selector for download or edit.</div>
                 <div style={{ display: "grid", gap: 12 }}>
@@ -1740,32 +1590,21 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
                           <button
                             key={target}
                             type="button"
-                            onClick={() => {
-                              setDownloadTarget(target);
-                              setEditTarget(target);
-                              try { window.localStorage.setItem(SELECTED_TARGET_KEY, target); } catch {}
-                            }}
+                            onClick={() => { setDownloadTarget(target); setEditTarget(target); try { window.localStorage.setItem(SELECTED_TARGET_KEY, target); } catch {} }}
                             style={{
-                              padding: "8px 12px",
-                              borderRadius: 999,
+                              padding: "8px 12px", borderRadius: 999,
                               border: active ? "1px solid var(--primary)" : "1px solid var(--card-border)",
                               background: active ? "var(--primary)" : "#fff",
                               color: active ? "#EFECE3" : "var(--foreground)",
-                              fontSize: 12,
-                              fontWeight: 600,
-                              cursor: "pointer",
-                              transition: "all 0.15s ease",
+                              fontSize: 12, fontWeight: 600, cursor: "pointer", transition: "all 0.15s ease",
                             }}
                           >
                             {label}
                           </button>
                         );
-                      }) : (
-                        <div style={{ fontSize: 12, color: "var(--muted)" }}>No generated files available yet.</div>
-                      )}
+                      }) : <div style={{ fontSize: 12, color: "var(--muted)" }}>No generated files available yet.</div>}
                     </div>
                   </div>
-
                   <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 2 }}>
                     <button className="btn-primary" onClick={() => downloadSelectedRfp(downloadTarget)} style={{ gap: 6 }}>
                       <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM6 20V4h7v5h5v11H6z"/></svg>
@@ -1791,13 +1630,7 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
                 </button>
               )}
 
-              <button
-                className="btn-ghost"
-                onClick={handleStartOver}
-              >
-                Start Over
-              </button>
-
+              <button className="btn-ghost" onClick={handleStartOver}>Start Over</button>
             </div>
 
             <details style={{ marginTop: 16 }}>
@@ -1838,146 +1671,253 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
           </div>
         )}
 
-      <div style={{ padding: "12px 20px", borderTop: "1px solid var(--card-border)" }}>
-        {wizardStep === 1 && flowState === "idle" && currentQuestion && (
-          <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-            <textarea
-              className="input-field"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={currentQuestion?.placeholder || "Type your response here..."}
-              rows={3}
-              style={{ flex: 1, resize: "none" }}
-            />
-            <div style={{ display: "flex", gap: 6 }}>
-              <button className="btn-primary" style={{ fontSize: 13, padding: "6px 16px" }} onClick={() => submitAnswer(inputValue)} disabled={intaking}>
-                {intaking ? "Thinking..." : "Send"}
-              </button>
+        {/* Bottom input / action bar */}
+        <div style={{ padding: "12px 20px", borderTop: "1px solid var(--card-border)" }}>
+          {wizardStep === 1 && flowState === "idle" && currentQuestion && (
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+              <textarea
+                className="input-field"
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={currentQuestion?.placeholder || "Type your response here..."}
+                rows={3}
+                style={{ flex: 1, resize: "none" }}
+              />
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <button className="btn-outline" style={{ fontSize: 13, padding: "6px 16px" }} onClick={handleSkipCurrentQuestion} disabled={intaking || !currentQuestion}>
+                  Skip
+                </button>
+                <button className="btn-primary" style={{ fontSize: 13, padding: "6px 16px" }} onClick={() => submitAnswer(inputValue)} disabled={intaking}>
+                  {intaking ? "Thinking..." : "Send"}
+                </button>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {wizardStep === 1 && flowState === "idle" && intakeComplete && !decompositionLoading && (
-          <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
-            {/* Decomposition Selection UI */}
-            {decompositionAnalysis?.subsystems && Object.keys(decompositionAnalysis.subsystems).length > 0 && (
-              <div style={{ background: "var(--surface)", borderRadius: 12, padding: 16, border: "1px solid var(--card-border)" }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: "var(--foreground)", marginBottom: 12 }}>
-                  Choose which RFPs to generate
-                </div>
-                <div style={{ display: "grid", gap: 8 }}>
-                  {/* Full RFP checkbox */}
-                  <label style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={selectedSubsystems.has("full")}
-                      onChange={(e) => {
-                        const newSet = new Set(selectedSubsystems);
-                        if (e.target.checked) {
-                          newSet.add("full");
-                          // When checking "full", uncheck all subsystems
-                          Object.keys(decompositionAnalysis.subsystems).forEach((name) => newSet.delete(name));
-                        } else {
-                          newSet.delete("full");
-                        }
-                        setSelectedSubsystems(newSet);
-                      }}
-                      style={{ marginTop: 4, cursor: "pointer", width: 18, height: 18 }}
-                    />
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: 13, color: "var(--primary)" }}>Full RFP Only</div>
-                      <div style={{ fontSize: 12, color: "var(--muted)" }}>Single comprehensive RFP document</div>
-                    </div>
-                  </label>
-
-                  {/* Subsystem checkboxes */}
-                  {Object.entries(decompositionAnalysis.subsystems).map(([subsystemName, description]) => (
-                    <label key={subsystemName} style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer" }}>
+          {wizardStep === 1 && flowState === "idle" && intakeComplete && !decompositionLoading && (
+            <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
+              {decompositionAnalysis?.subsystems && Object.keys(decompositionAnalysis.subsystems).length > 0 && (
+                <div style={{ background: "var(--surface)", borderRadius: 12, padding: 16, border: "1px solid var(--card-border)" }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: "var(--foreground)", marginBottom: 12 }}>Choose which RFPs to generate</div>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <label style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer" }}>
                       <input
                         type="checkbox"
-                        checked={selectedSubsystems.has(subsystemName) && !selectedSubsystems.has("full")}
+                        checked={selectedSubsystems.has("full")}
                         onChange={(e) => {
                           const newSet = new Set(selectedSubsystems);
                           if (e.target.checked) {
-                            newSet.delete("full");
-                            newSet.add(subsystemName);
-                            console.log(`✓ Selected subsystem: "${subsystemName}"`, "Current selection:", Array.from(newSet));
+                            newSet.add("full");
+                            Object.keys(decompositionAnalysis.subsystems).forEach((name) => newSet.delete(name));
                           } else {
-                            newSet.delete(subsystemName);
-                            console.log(`✗ Deselected subsystem: "${subsystemName}"`, "Current selection:", Array.from(newSet));
+                            newSet.delete("full");
                           }
                           setSelectedSubsystems(newSet);
                         }}
                         style={{ marginTop: 4, cursor: "pointer", width: 18, height: 18 }}
-                        disabled={selectedSubsystems.has("full")}
                       />
                       <div>
-                        <div style={{ fontWeight: 600, fontSize: 13 }}>{subsystemName}</div>
-                        <div style={{ fontSize: 12, color: "var(--muted)" }}>{String(description).slice(0, 80)}...</div>
+                        <div style={{ fontWeight: 600, fontSize: 13, color: "var(--primary)" }}>Full RFP Only</div>
+                        <div style={{ fontSize: 12, color: "var(--muted)" }}>Single comprehensive RFP document</div>
                       </div>
                     </label>
-                  ))}
+                    {Object.entries(decompositionAnalysis.subsystems).map(([subsystemName, description]) => (
+                      <label key={subsystemName} style={{ display: "flex", gap: 10, alignItems: "flex-start", cursor: "pointer" }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedSubsystems.has(subsystemName) && !selectedSubsystems.has("full")}
+                          onChange={(e) => {
+                            const newSet = new Set(selectedSubsystems);
+                            if (e.target.checked) { newSet.delete("full"); newSet.add(subsystemName); }
+                            else { newSet.delete(subsystemName); }
+                            setSelectedSubsystems(newSet);
+                          }}
+                          style={{ marginTop: 4, cursor: "pointer", width: 18, height: 18 }}
+                          disabled={selectedSubsystems.has("full")}
+                        />
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: 13 }}>{subsystemName}</div>
+                          <div style={{ fontSize: 12, color: "var(--muted)" }}>{String(description).slice(0, 80)}...</div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            <div style={{ fontSize: 14, fontWeight: 600, color: "var(--foreground)" }}>Choose a PDF template</div>
-            <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))" }}>
-              {(Object.keys(TEMPLATE_PREVIEWS) as PdfTemplate[]).map((template) => {
-                const preview = TEMPLATE_PREVIEWS[template];
-                const active = selectedTemplate === template;
-                return (
-                  <button
-                    key={template}
-                    type="button"
-                    onClick={() => { setSelectedTemplate(template); setTemplateTouched(true); }}
+              <div style={{ fontSize: 14, fontWeight: 600, color: "var(--foreground)" }}>Choose a PDF template</div>
+              <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))" }}>
+                {(Object.keys(TEMPLATE_PREVIEWS) as PdfTemplate[]).map((template) => {
+                  const preview = TEMPLATE_PREVIEWS[template];
+                  const active = selectedTemplate === template;
+                  return (
+                    <button
+                      key={template}
+                      type="button"
+                      onClick={() => { setSelectedTemplate(template); setTemplateTouched(true); }}
+                      style={{
+                        textAlign: "left", padding: 0,
+                        border: active ? "2px solid var(--primary)" : "1px solid var(--card-border)",
+                        borderRadius: 16, overflow: "hidden", background: "var(--surface)",
+                        boxShadow: active ? "0 10px 28px rgba(0,0,0,0.12)" : "none",
+                      }}
+                    >
+                      <div style={{ height: 84, background: preview.accent, padding: 14, color: "#EFECE3", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+                        <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 1.4, opacity: 0.8 }}>Template Preview</div>
+                        <div style={{ fontWeight: 700, fontSize: 15, lineHeight: 1.2 }}>{preview.title}</div>
+                      </div>
+                      <div style={{ padding: 14 }}>
+                        <div style={{ fontSize: 12, color: "var(--muted)", minHeight: 42 }}>{preview.subtitle}</div>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+                          {preview.chips.map((chip) => (
+                            <span key={chip} style={{ fontSize: 11, padding: "4px 8px", borderRadius: 999, background: "var(--surface-hover)", color: "var(--foreground-secondary)" }}>{chip}</span>
+                          ))}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              <button className="btn-primary" style={{ width: "100%", padding: "12px 20px", fontSize: 15 }} onClick={runQaReview} disabled={qaLoading}>
+                <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0L19.2 12l-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/></svg>
+                {qaLoading ? "Reviewing..." : "Next"}
+              </button>
+            </div>
+          )}
+
+          {wizardStep === 1 && flowState === "idle" && intakeComplete && decompositionLoading && (
+            <div style={{ marginTop: 14, padding: 12, borderRadius: 12, border: "1px solid var(--card-border)", background: "var(--surface)", color: "var(--muted)", fontSize: 13 }}>
+              Analyzing project structure before showing subsystem options and template selection...
+            </div>
+          )}
+
+          {wizardStep === 3 && flowState === "generating" && (
+            <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 13, padding: 8 }}>
+              Pipeline running... {formatTime(elapsed)} elapsed
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Sidebar: Question Progress ── */}
+      {/*
+       * KEY FIX: flex changed to "0 0 300px" (was "0 0 320px" with minWidth 280),
+       * and minWidth removed so it never pushes to a new row.
+       * position: sticky keeps it anchored to the right of the chat while scrolling.
+       */}
+      {wizardStep === 1 && (
+        <aside style={{
+          flex: "0 0 340px",
+          width: 340,
+          background: "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(239,236,227,0.96))",
+          border: "1px solid var(--card-border)",
+          borderRadius: 18,
+          padding: 16,
+          position: "sticky",
+          top: 14,
+          alignSelf: "flex-start",
+          boxShadow: "0 18px 44px rgba(15, 23, 42, 0.08)",
+        }}>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--muted)" }}>Intake Progress</div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: "var(--foreground)", marginTop: 4 }}>{completionPercent}%</div>
+              <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>{completedCount} answered · {skippedCount} skipped · {RFP_QUESTIONS.length - completedCount - skippedCount} remaining</div>
+            </div>
+            <button className="btn-ghost" onClick={handleStartOver} style={{ fontSize: 12, padding: "6px 10px" }}>Reset</button>
+          </div>
+
+          <div style={{ display: "grid", gap: 8, marginBottom: 14 }}>
+            <div style={{ height: 10, borderRadius: 999, background: "rgba(15, 23, 42, 0.08)", overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${completionPercent}%`, borderRadius: 999, background: "linear-gradient(90deg, var(--primary) 0%, #16a34a 100%)", transition: "width 0.25s ease" }} />
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, fontSize: 11, color: "var(--muted)" }}>
+              <span style={{ padding: "4px 8px", borderRadius: 999, background: "rgba(16, 185, 129, 0.12)", color: "#0f766e" }}>Answered</span>
+              <span style={{ padding: "4px 8px", borderRadius: 999, background: "rgba(245, 158, 11, 0.14)", color: "#b45309" }}>Skipped</span>
+              <span style={{ padding: "4px 8px", borderRadius: 999, background: "rgba(79, 70, 229, 0.12)", color: "#4338ca" }}>Current</span>
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${questionProgress.length}, minmax(0, 1fr))`, gap: 4, marginBottom: 12 }}>
+            {questionProgress.map((item) => {
+              const isAnswered = item.status === "answered";
+              const isSkipped = item.status === "skipped";
+              const isCurrent = item.status === "current";
+              const stripColor = isAnswered ? "#16a34a" : isSkipped ? "#f59e0b" : isCurrent ? "var(--primary)" : "rgba(15, 23, 42, 0.16)";
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => {
+                    if (!isAnswered && !isSkipped) return;
+                    setForcedQuestionKey(item.key);
+                    setMessages((prev) => [...prev, { role: "bot", text: `Let's revisit this one: ${item.label}` }]);
+                  }}
+                  title={item.label}
+                  style={{
+                    height: 10, borderRadius: 999,
+                    border: `1px solid ${isCurrent ? "var(--primary)" : "transparent"}`,
+                    background: stripColor,
+                    cursor: isAnswered || isSkipped ? "pointer" : "default",
+                    boxShadow: isCurrent ? "0 0 0 2px rgba(79, 70, 229, 0.12)" : "none",
+                  }}
+                />
+              );
+            })}
+          </div>
+
+          <div style={{ display: "grid", gap: 8, maxHeight: 460, overflowY: "auto", paddingRight: 4 }}>
+            {questionProgress.map((item) => {
+              const isCurrent = item.status === "current";
+              const isAnswered = item.status === "answered";
+              const isSkipped = item.status === "skipped";
+              const statusColor = isAnswered ? "#16a34a" : isSkipped ? "#f59e0b" : isCurrent ? "var(--primary)" : "#94a3b8";
+              const statusLabel = isAnswered ? "Done" : isSkipped ? "Skip" : isCurrent ? "Now" : String(item.index + 1).padStart(2, "0");
+              return (
+                <button
+                  key={item.key}
+                  ref={isCurrent ? (element) => { activeProgressItemRef.current = element; } : undefined}
+                  type="button"
+                  onClick={() => {
+                    if (!isSkipped && !isAnswered) return;
+                    setForcedQuestionKey(item.key);
+                    setMessages((prev) => [...prev, { role: "bot", text: `Let's revisit this one: ${item.label}` }]);
+                  }}
+                  style={{
+                    width: "100%", display: "flex", alignItems: "flex-start", gap: 10,
+                    textAlign: "left", padding: "10px 11px", borderRadius: 12,
+                    border: `1px solid ${isCurrent ? "var(--primary)" : isAnswered ? "rgba(16, 185, 129, 0.24)" : isSkipped ? "rgba(245, 158, 11, 0.24)" : "var(--card-border)"}`,
+                    background: isCurrent ? "rgba(79, 70, 229, 0.08)" : isAnswered ? "rgba(16, 185, 129, 0.08)" : isSkipped ? "rgba(245, 158, 11, 0.09)" : "rgba(255,255,255,0.75)",
+                    color: "var(--foreground)",
+                    cursor: isSkipped || isAnswered ? "pointer" : "default",
+                  }}
+                  title={isSkipped ? "Go back to this question" : isAnswered ? "Answered" : isCurrent ? "Current question" : "Pending"}
+                >
+                  <span
                     style={{
-                      textAlign: "left",
-                      padding: 0,
-                      border: active ? "2px solid var(--primary)" : "1px solid var(--card-border)",
-                      borderRadius: 16,
-                      overflow: "hidden",
-                      background: "var(--surface)",
-                      boxShadow: active ? "0 10px 28px rgba(0,0,0,0.12)" : "none",
+                      width: 26, height: 26, borderRadius: 999, flexShrink: 0,
+                      display: "inline-flex", alignItems: "center", justifyContent: "center",
+                      background: statusColor, color: isCurrent ? "#EFECE3" : "#fff", fontSize: 10, fontWeight: 800,
                     }}
                   >
-                    <div style={{ height: 84, background: preview.accent, padding: 14, color: "#EFECE3", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
-                      <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 1.4, opacity: 0.8 }}>Template Preview</div>
-                      <div style={{ fontWeight: 700, fontSize: 15, lineHeight: 1.2 }}>{preview.title}</div>
+                    {statusLabel}
+                  </span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.35 }}>{item.label}</div>
+                    <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>
+                      {isAnswered && "Answered and included in generation"}
+                      {isSkipped && "Skipped for now - click to revisit"}
+                      {isCurrent && "Current question"}
+                      {!isAnswered && !isSkipped && !isCurrent && "Pending"}
                     </div>
-                    <div style={{ padding: 14 }}>
-                      <div style={{ fontSize: 12, color: "var(--muted)", minHeight: 42 }}>{preview.subtitle}</div>
-                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
-                        {preview.chips.map((chip) => (
-                          <span key={chip} style={{ fontSize: 11, padding: "4px 8px", borderRadius: 999, background: "var(--surface-hover)", color: "var(--foreground-secondary)" }}>{chip}</span>
-                        ))}
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-            <button className="btn-primary" style={{ width: "100%", padding: "12px 20px", fontSize: 15 }} onClick={runQaReview} disabled={qaLoading}>
-              <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0L19.2 12l-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/></svg>
-              {qaLoading ? "Reviewing..." : "Next"}
-            </button>
+                  </div>
+                </button>
+              );
+            })}
           </div>
-        )}
-
-        {wizardStep === 1 && flowState === "idle" && intakeComplete && decompositionLoading && (
-          <div style={{ marginTop: 14, padding: 12, borderRadius: 12, border: "1px solid var(--card-border)", background: "var(--surface)", color: "var(--muted)", fontSize: 13 }}>
-            Analyzing project structure before showing subsystem options and template selection...
-          </div>
-        )}
-
-        {wizardStep === 3 && flowState === "generating" && (
-          <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 13, padding: 8 }}>
-            Pipeline running... {formatTime(elapsed)} elapsed
-          </div>
-        )}
-      </div>
+        </aside>
+      )}
     </div>
   );
 }
-

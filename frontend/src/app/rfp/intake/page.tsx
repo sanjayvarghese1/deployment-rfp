@@ -10,7 +10,7 @@ import RfpUploadIntake from "@/components/RfpUploadIntake";
 import SubNavBar from "@/components/SubNavBar";
 
 function RfpIntakeRouteContent() {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const mode = searchParams?.get("mode");
@@ -39,6 +39,18 @@ function RfpIntakeRouteContent() {
     router.push("/postrfp");
   };
 
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#EFECE3] flex items-center justify-center px-4">
+        <div className="card w-full max-w-md p-6 text-center">
+          <div className="mx-auto mb-4 h-10 w-10 rounded-full border-2 border-[var(--primary)] border-t-transparent animate-spin" />
+          <div className="text-lg font-semibold text-[var(--foreground)]">Loading intake...</div>
+          <p className="mt-2 text-sm text-[var(--muted)]">Checking your session and restoring the RFP workspace.</p>
+        </div>
+      </div>
+    );
+  }
+
   // Show upload intake if in upload mode
   if (mode === "upload") {
     return (
@@ -57,7 +69,7 @@ function RfpIntakeRouteContent() {
   }
 
   // Show 3-tab interface for normal RFP generation
-  if (!user) {
+  if (!user && mainTab !== "generate") {
     return (
       <div className="min-h-[60vh] flex items-center justify-center">
         <div className="text-center">
@@ -81,7 +93,7 @@ function RfpIntakeRouteContent() {
         Back
       </button>
       {mainTab !== "generate" && <SubNavBar currentTab={mainTab === "blank" ? "contracts" : "responses"} />}
-      <div className="max-w-4xl mx-auto px-4 py-8">
+      <div className="max-w-7xl mx-auto px-4 py-8">
         {mainTab === "generate" && <RfpTab onSaved={() => handleTabChange("blank")} />}
         {mainTab === "blank" && <MyContractsTab />}
         {mainTab === "responses" && <VendorResponsesTab />}
