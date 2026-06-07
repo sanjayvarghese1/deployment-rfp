@@ -12,6 +12,22 @@ const QUESTION_LABELS: Record<string, string> = Object.fromEntries(
   RFP_QUESTIONS.map((question) => [question.key, question.label]),
 );
 
+function looksLikeGreeting(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+  if (!normalized) return false;
+  if (normalized.length > 40) return false;
+  return /^(hi|hello|hey|good morning|good afternoon|good evening|greetings)([!,.?\s]+.*)?$/.test(normalized);
+}
+
+function normalizeAssistantText(text: string | null | undefined): string {
+  if (!text) return "";
+  return text
+    .replace(/\b(greeting received|follow[- ]?up|follow up)\b[:\s-]*/gi, "")
+    .replace(/\b(i couldn't capture that|i could not capture that|i wasn't able to capture that)\b[:\s-]*/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 interface IntakeRequestBody {
   message?: string;
   answers?: Record<string, string>;
@@ -156,6 +172,8 @@ export async function POST(req: NextRequest) {
     - If the answer is vague or too short, ask one natural follow-up to get more detail.
     - If the user seems confused, give a simple example of what would help.
     - Do not use robotic phrases like "I couldn't capture that" or "Please answer this directly." 
+    - Never write phrases like "Greeting received" or "Follow-up".
+    - If the message is only a greeting, answer with a natural greeting and continue to the current question.
     - When you are satisfied with the answer for the current topic, smoothly move to the next topic.
 
     You are analyzing one reply in a conversational RFP intake.
@@ -192,14 +210,15 @@ Rules:
             { role: "user", content: `Current known answers: ${JSON.stringify(mergedBase)}\n\nLatest user message: ${message}` },
           ],
           temperature: 0.1,
-          max_tokens: 600,
+          max_tokens: 256,
+          response_format: { type: "json_object" },
         }
       );
 
       const rawValue = extracted && typeof extracted === "object" ? extracted.value : null;
       const rawSummary = extracted && typeof extracted === "object" ? extracted.summary : "";
       const normalized = normalizeText(rawValue);
-      const normalizedSummary = normalizeText(rawSummary);
+      const normalizedSummary = normalizeAssistantText(normalizeText(rawSummary));
       if (normalized) {
         normalizedExtracted[currentQuestionKey] = currentQuestionKey === "category" ? normalizeCategory(normalized) : normalized;
         summary = normalizedSummary;
@@ -241,11 +260,10 @@ Rules:
       chatReply = "Great. I have all 19 answers. Click **Generate RFP** to continue.";
     } else if (nextQuestion) {
       if (answeredCurrent) {
-        chatReply = summary
-          ? `Understood. ${summary} ${nextQuestion}`
-          : `Understood. ${nextQuestion}`;
+        const leadIn = normalizeAssistantText(summary) || "Thanks, that helps.";
+        chatReply = `${leadIn} ${nextQuestion}`.trim();
       } else {
-        chatReply = clarifyingQuestion || nextQuestion;
+        chatReply = clarifyingQuestion || (looksLikeGreeting(message) ? `Hi there. ${nextQuestion}` : nextQuestion);
       }
     }
 
