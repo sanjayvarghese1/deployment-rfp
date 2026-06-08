@@ -5,6 +5,7 @@ import { createAnalysisJob, updateAnalysisJob } from "@/services/analysisJobs";
 import type { CachedFullPipelineResult, ProposalAnalysis } from "@/services/aiService";
 import type { MandatoryCriteriaPayload } from "@/lib/rfp/config";
 import { createClient } from "@supabase/supabase-js";
+import { parseNumber } from "@/lib/formatters/number";
 
 type BackgroundVendorInput = {
   proposal_id?: string;
@@ -156,7 +157,7 @@ async function processBackgroundAnalysis(jobId: string, origin: string, body: Ba
       });
     }
 
-    const data: CachedFullPipelineResult = await runCachedFullPipeline(contract, hydratedVendors, origin, { fastMode: false });
+    const data: CachedFullPipelineResult = await runCachedFullPipeline(contract, hydratedVendors, origin, { fastMode: false, jobId });
 
     const vendorScores = Array.isArray(data?.vendor_scores) ? data.vendor_scores : [];
     const proposalUpdates: Promise<unknown>[] = [];
@@ -171,11 +172,12 @@ async function processBackgroundAnalysis(jobId: string, origin: string, body: Ba
             ai_score: score.overall_score,
             risk_level: score.risk_flags?.length > 0 ? "High" : "Low",
           };
-          // Persist extracted price if the proposal doesn't already have a price
+          // Persist extracted price if the new price is valid and positive
           try {
-            const { data: existing } = await db.from("proposals").select("price").eq("id", vendor.proposal_id).maybeSingle();
-            if ((!existing || !existing.price) && (score as any)?.price) {
-              updatePayload.price = (score as any).price;
+            const newPrice = (score as any)?.price;
+            const newPriceParsed = parseNumber(newPrice);
+            if (newPrice && newPriceParsed > 0) {
+              updatePayload.price = newPrice;
             }
           } catch (err) {
             // ignore read errors and proceed with minimal payload

@@ -203,7 +203,8 @@ function estimateCost(model: string, usage: any): CostBreakdown {
 
 async function callOpenRouter(
   payload: any,
-  timeoutMs: number
+  timeoutMs: number,
+  signal?: AbortSignal | null
 ): Promise<Response> {
   const controller =
     new AbortController();
@@ -226,9 +227,12 @@ async function callOpenRouter(
           "Content-Type": "application/json",
         },
         body: JSON.stringify(payload),
-        signal: controller.signal,
+        signal: signal || controller.signal,
       });
     } catch (err) {
+      if (signal?.aborted) {
+        throw new Error("Analysis cancelled");
+      }
       const msg = err instanceof Error ? err.message : String(err);
       throw new Error(`Network request to OpenRouter failed: ${msg}`);
     }
@@ -250,6 +254,7 @@ export async function openRouterChat(
     temperature = 0.5,
     max_tokens = 2048,
     response_format,
+    signal,
   } = opts;
 
   if (
@@ -364,7 +369,8 @@ export async function openRouterChat(
             requestPayload(
               selectedModel
             ),
-            timeoutMs
+            timeoutMs,
+            signal
           );
 
         if (
@@ -680,6 +686,7 @@ export async function openRouterChatJSON<T = any>(
       ],
       temperature: 0,
       max_tokens: Math.max(512, opts?.max_tokens || 2048),
+      signal: opts?.signal,
     });
 
   const repairedParsed =

@@ -6,7 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 export type AnalysisJobStatus = {
   id: string;
   contract_id: string;
-  status: "queued" | "running" | "completed" | "failed";
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
   progress: string | null;
   result: FullPipelineResult | null;
   error: string | null;

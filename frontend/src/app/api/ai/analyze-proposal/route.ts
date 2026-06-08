@@ -5,6 +5,7 @@ import { saveProposalAnalysisResult } from "@/services/aiService";
 import type { MandatoryCriteriaPayload } from "@/lib/rfp/config";
 import type { AnalysisScoringCriterion, CriterionScore, JudgeResult, ProposalAnalysis } from "@/services/aiService";
 import computeComparativeMetrics from "@/lib/comparativeMetrics";
+import { clearAnalysisJob, isAnalysisJobCancelled, registerAnalysisController } from "./analysisCancellation";
 
 export const maxDuration = 240; // Conservative limit for Vercel Hobby (max 300)
 
@@ -286,14 +287,14 @@ function extractMonetaryToken(text: string): string | null {
   const lines = String(text).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   for (const line of lines) {
     const hasMoneyCue = /(budget|price|cost|investment|estimate|fee|amount|total)/i.test(line);
-    const amountMatch = line.match(/(?:\$|usd|gbp|eur)?\s*([0-9][0-9,]*(?:\.[0-9]+)?(?:\s?(?:k|m|bn))?)/i);
+    const amountMatch = line.match(/(?:^|[^a-zA-Z0-9])(?:\$|usd|gbp|eur|inr|₹|€|£)?\s*([0-9][0-9,]*(?:\.[0-9]+)?(?:\s*(?:k|m|bn|lakh|crore|million|billion)\b)?)/i);
     const token = amountMatch?.[1]?.trim();
     if (hasMoneyCue && token && /[0-9]/.test(token)) return token;
   }
 
-  const moneyMatch = String(text).match(/(?:\$|usd|gbp|eur)\s*[0-9][0-9,]*(?:\.[0-9]+)?(?:\s?(?:k|m|bn))?/i);
+  const moneyMatch = String(text).match(/(?:\b(?:usd|gbp|eur|inr)\b|[\$\u00A2-\u00A5\u20A0-\u20CF\uFE69\uFF04\uFFE0\uFFE1\uFFE5\uFFE6₹€£])\s*[0-9][0-9,]*(?:\.[0-9]+)?(?:\s*(?:k|m|bn|lakh|crore|million|billion)\b)?/i);
   if (moneyMatch) {
-    const digits = moneyMatch[0].match(/[0-9][0-9,]*(?:\.[0-9]+)?(?:\s?(?:k|m|bn))?/i)?.[0];
+    const digits = moneyMatch[0].match(/[0-9][0-9,]*(?:\.[0-9]+)?(?:\s*(?:k|m|bn|lakh|crore|million|billion)\b)?/i)?.[0];
     if (digits) return digits.trim();
   }
 
@@ -316,7 +317,7 @@ function extractBudgetFromText(text: string): string | null {
   const lines = String(text).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   for (const line of lines) {
     if (budgetKeywords.some((keyword) => line.toLowerCase().includes(keyword))) {
-      const amountMatch = line.match(/(?:\$|usd|gbp|eur)?\s*([0-9][0-9,]*(?:\.[0-9]+)?(?:\s?(?:k|m|bn))?)/i);
+      const amountMatch = line.match(/(?:^|[^a-zA-Z0-9])(?:\$|usd|gbp|eur|inr|₹|€|£)?\s*([0-9][0-9,]*(?:\.[0-9]+)?(?:\s*(?:k|m|bn|lakh|crore|million|billion)\b)?)/i);
       const candidate = amountMatch?.[1]?.trim();
       if (candidate && /[0-9]/.test(candidate)) return candidate;
     }
@@ -328,11 +329,11 @@ function extractBudgetFromText(text: string): string | null {
 
 function extractPriceFromText(text: string): string | null {
   if (!text) return null;
-  const priceKeywords = ["proposed price", "total price", "price", "cost", "total investment", "bid", "quote", "quoted"];
+  const priceKeywords = ["proposed price", "total price", "price", "cost", "total investment", "bid", "quote", "quoted", "budget", "proposed budget", "total budget", "tco", "total cost of ownership"];
   const lines = String(text).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   for (const line of lines) {
     if (!priceKeywords.some((keyword) => line.toLowerCase().includes(keyword))) continue;
-    const amountMatch = line.match(/(?:\$|usd|gbp|eur)?\s*([0-9][0-9,]*(?:\.[0-9]+)?(?:\s?(?:k|m|bn))?)/i);
+    const amountMatch = line.match(/(?:^|[^a-zA-Z0-9])(?:\$|usd|gbp|eur|inr|₹|€|£)?\s*([0-9][0-9,]*(?:\.[0-9]+)?(?:\s*(?:k|m|bn|lakh|crore|million|billion)\b)?)/i);
     const candidate = amountMatch?.[1]?.trim();
     if (candidate && /[0-9]/.test(candidate)) return candidate;
   }
@@ -383,6 +384,7 @@ async function selectBestTimelineWithLLM(input: {
   vendorMarkdown: string;
   vendorText: string;
   timelineCandidates: string[];
+  signal?: AbortSignal;
 }): Promise<{ timeline: string; timeline_confidence: "explicit" | "partial" | "inferred"; timeline_evidence?: string }> {
   const combinedText = [input.vendorMarkdown, input.vendorText].filter(Boolean).join("\n\n").slice(0, 18000);
   const candidateBlock = input.timelineCandidates.length > 0
@@ -422,6 +424,7 @@ Return STRICT JSON only:
       ],
       max_tokens: 500,
       temperature: 0,
+      signal: input.signal,
     }) as { timeline?: string; timeline_confidence?: string; timeline_evidence?: string };
 
     const timeline = String(result?.timeline || "").trim();
@@ -443,6 +446,112 @@ Return STRICT JSON only:
       timeline_confidence: fallback ? "partial" : "inferred",
       timeline_evidence: fallback || undefined,
     };
+  }
+}
+
+function extractPriceCandidates(text: string): string[] {
+  if (!text) return [];
+  const candidates = new Set<string>();
+
+  // 1. Global money prefix patterns (with word boundaries and all currencies + suffixes)
+  const moneyPrefixRe = /(?:\b(?:usd|gbp|eur|inr)\b|[\$\u00A2-\u00A5\u20A0-\u20CF\uFE69\uFF04\uFFE0\uFFE1\uFFE5\uFFE6₹€£])\s*\b[0-9][0-9,]*(?:\.[0-9]+)?(?:\s*(?:k|m|bn|lakh|crore|million|billion)\b)?/gi;
+  for (const m of String(text).matchAll(moneyPrefixRe)) {
+    candidates.add(m[0].trim());
+  }
+
+  // 2. Global money suffix patterns (number followed by currency code/symbol)
+  const moneySuffixRe = /\b[0-9][0-9,]*(?:\.[0-9]+)?(?:\s*(?:k|m|bn|lakh|crore|million|billion)\b)?\s*\b(?:usd|gbp|eur|inr)\b/gi;
+  for (const m of String(text).matchAll(moneySuffixRe)) {
+    candidates.add(m[0].trim());
+  }
+
+  // 3. Lines with explicit price cues
+  const lines = String(text).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  for (const line of lines) {
+    if (/(price|cost|total|budget|quote|bid|investment|fee)/i.test(line)) {
+      const numberMatches = line.matchAll(/(?:^|[^a-zA-Z0-9])(?:\$|usd|gbp|eur|inr|₹|€|£)?\s*([0-9][0-9,]*(?:\.[0-9]+)?(?:\s*(?:k|m|bn|lakh|crore|million|billion)\b)?)/gi);
+      for (const m of numberMatches) {
+        const value = m[0].trim().replace(/^[^a-zA-Z0-9\$\u00A2-\u00A5\u20A0-\u20CF\uFE69\uFF04\uFFE0\uFFE1\uFFE5\uFFE6₹€£]+/, "");
+        if (value && /[0-9]/.test(value)) {
+          candidates.add(value);
+        }
+      }
+    }
+  }
+
+  // 4. Fallback numeric-only matches near price cues
+  const numericRe = /\b[0-9][0-9,]*(?:\.[0-9]+)?(?:\s*(?:k|m|bn|lakh|crore|million|billion)\b)?/g;
+  for (const m of String(text).matchAll(numericRe)) {
+    const ctxIdx = Math.max(0, (String(text).indexOf(m[0]) - 40));
+    const ctx = String(text).slice(ctxIdx, String(text).indexOf(m[0]) + m[0].length + 40);
+    if (/(price|cost|total|budget|quote|bid|investment|fee)/i.test(ctx)) {
+      candidates.add(m[0].trim());
+    }
+  }
+
+  return Array.from(candidates).slice(0, 6);
+}
+
+async function selectBestPriceWithLLM(input: {
+  vendorName: string;
+  vendorMarkdown: string;
+  vendorText: string;
+  priceCandidates: string[];
+  signal?: AbortSignal;
+}): Promise<{ price: string; price_confidence: "explicit" | "partial" | "inferred"; price_evidence?: string }> {
+  const combinedText = [input.vendorMarkdown, input.vendorText].filter(Boolean).join("\n\n").slice(0, 16000);
+  const candidateBlock = input.priceCandidates.length > 0
+    ? input.priceCandidates.map((item, index) => `${index + 1}. ${item}`).join("\n")
+    : "None found by heuristics";
+
+  const prompt = `You are extracting the most appropriate proposed price from a vendor proposal.
+
+Rules:
+- Return the single best quoted price that the vendor actually committed to in the proposal.
+- Prefer an explicit total quoted price ("Total: $12,000" or "Quoted price: USD 12,000").
+- If line-item totals are shown but no final total exists, return the most defensible aggregate or the clearest stated total.
+- Do not invent or normalize beyond what the proposal says; return an empty string if unsure.
+
+Proposal vendor: ${input.vendorName}
+
+Heuristic candidates:
+${candidateBlock}
+
+Proposal text:
+${combinedText}
+
+Return STRICT JSON only:
+{
+  "price": "<string>",
+  "price_confidence": "<explicit|partial|inferred>",
+  "price_evidence": "<short supporting quote or note>"
+}`;
+
+  try {
+    const result = await openRouterChatJSON({
+      model: AGENT_MODEL.QUALITY_ASSURANCE,
+      messages: [
+        { role: "system", content: "You are a JSON-only extraction API. Return raw valid JSON only, with no markdown or commentary." },
+        { role: "user", content: prompt },
+      ],
+      max_tokens: 300,
+      temperature: 0,
+      signal: input.signal,
+    }) as { price?: string; price_confidence?: string; price_evidence?: string };
+
+    const price = String(result?.price || "").trim();
+    const confRaw = String(result?.price_confidence || "inferred").toLowerCase();
+    const price_confidence = confRaw === "explicit" || confRaw === "partial" || confRaw === "inferred" ? confRaw : "inferred";
+
+    return {
+      price,
+      price_confidence,
+      price_evidence: typeof result?.price_evidence === "string" ? result.price_evidence.trim().slice(0, 220) : undefined,
+    };
+  } catch (error) {
+    console.warn("Price extraction LLM failed, falling back to heuristics:", error instanceof Error ? error.message : String(error));
+    const fallback = input.priceCandidates[0] || "";
+    return { price: fallback, price_confidence: fallback ? "partial" : "inferred", price_evidence: fallback || undefined };
   }
 }
 
@@ -677,6 +786,7 @@ async function scoreCriterion(input: {
   retry?: boolean;
   lenient?: boolean;
   strictness?: ScoringStrictness;
+  signal?: AbortSignal;
 }): Promise<CriterionScore> {
   const prompt = buildCriterionEvidencePrompt(input);
   const temperature = input.lenient
@@ -692,6 +802,7 @@ async function scoreCriterion(input: {
     ],
     max_tokens: 1200,
     temperature,
+    signal: input.signal,
   })) as OpenRouterCriterionResponse;
 
   let score = clampScore(response.score, input.criterion.max_score);
@@ -791,7 +902,7 @@ function criteriaToMandatoryCriteria(criteria: ScoringCriterion[]): MandatoryCri
    Reads messy text and converts it into clean structured Markdown
    focused only on evaluation-relevant content.
    ═══════════════════════════════════════════════════════════════════ */
-async function runExtractor(docType: "RFP" | "Vendor Proposal", text: string): Promise<string> {
+async function runExtractor(docType: "RFP" | "Vendor Proposal", text: string, signal?: AbortSignal): Promise<string> {
   const prompt = `You are Agent 1: The Extractor.
 Your job is to read a messy procurement document and convert it into a clean structured Markdown extraction focused only on evaluation-relevant content.
 
@@ -869,6 +980,7 @@ ${text}`;
     ],
     max_tokens: 4000,
     temperature: 0,
+    signal,
   });
   return response;
 }
@@ -884,7 +996,7 @@ async function runScorer(
   vendorText: string,
   budget: string,
   mandatoryCriteria?: MandatoryCriteriaPayload,
-  options?: { llmOnly?: boolean },
+  options?: { llmOnly?: boolean; signal?: AbortSignal },
 ): Promise<ProposalAnalysis> {
   const scoringCriteria = normalizeRubric(mandatoryCriteria);
   const strictness = getScoringStrictness();
@@ -897,6 +1009,7 @@ async function runScorer(
       vendorMarkdown,
       vendorText,
       strictness,
+      signal: options?.signal,
     });
     const tightened = tightenCriterionScore({
       criterion,
@@ -967,6 +1080,7 @@ async function runScorer(
         vendorText,
         retry: true,
         strictness,
+        signal: options?.signal,
       });
       const tightened = tightenCriterionScore({
         criterion,
@@ -1033,6 +1147,7 @@ async function runScorer(
         retry: true,
         lenient: true,
         strictness,
+        signal: options?.signal,
       });
       const tightened = tightenCriterionScore({
         criterion,
@@ -1068,6 +1183,7 @@ async function runScorer(
         retry: true,
         lenient: true,
         strictness,
+        signal: options?.signal,
       });
       const tightened = tightenCriterionScore({
         criterion,
@@ -1141,6 +1257,16 @@ async function runScorer(
     vendorMarkdown,
     vendorText,
     timelineCandidates,
+    signal: options?.signal,
+  });
+  // Price candidates & LLM selection
+  const priceCandidates = extractPriceCandidates(`${vendorMarkdown}\n${vendorText}`).slice(0, 5);
+  const selectedPrice = await selectBestPriceWithLLM({
+    vendorName,
+    vendorMarkdown,
+    vendorText,
+    priceCandidates,
+    signal: options?.signal,
   });
 
   const baseSummary = overall_score === 0
@@ -1180,6 +1306,11 @@ async function runScorer(
     timeline_confidence: selectedTimeline.timeline_confidence,
     timeline_evidence: selectedTimeline.timeline_evidence,
     timeline_candidates: timelineCandidates,
+    // Price fields: LLM-chosen price with confidence and evidence, plus candidate list
+    price: selectedPrice.price || undefined,
+    price_confidence: selectedPrice.price_confidence || undefined,
+    price_evidence: selectedPrice.price_evidence || undefined,
+    price_candidates: priceCandidates,
   };
 }
 
@@ -1187,7 +1318,7 @@ async function runScorer(
    Agent 3 — Judge
    Compares multiple scored vendors and selects the best one.
    ═══════════════════════════════════════════════════════════════════ */
-async function runJudge(rfpMarkdown: string, vendorScores: ProposalAnalysis[], comparativeMetrics?: any[]): Promise<JudgeResult> {
+async function runJudge(rfpMarkdown: string, vendorScores: ProposalAnalysis[], comparativeMetrics?: any[], signal?: AbortSignal): Promise<JudgeResult> {
   const buildFallbackJudge = (): JudgeResult => {
     const ranking = [...vendorScores]
       .sort((left, right) => (right.overall_score || 0) - (left.overall_score || 0))
@@ -1377,8 +1508,12 @@ RETURN STRICT JSON:
       ],
       max_tokens: 8000,
       temperature: 0,
+      signal,
     });
   } catch (error) {
+    if (signal?.aborted || (error instanceof Error && error.message === "Analysis cancelled")) {
+      throw error;
+    }
     console.warn("Judge model failed, using fallback ranking:", error instanceof Error ? error.message : String(error));
     return buildFallbackJudge();
   }
@@ -1482,12 +1617,13 @@ function isWeakProposalText(text: string | null | undefined): boolean {
 }
 
 // ─ Re-extract proposal from PDF if current text looks like a storage pointer ─
-async function reExtractProposalFromPdf(origin: string, pdfUrl: string): Promise<string | null> {
+async function reExtractProposalFromPdf(origin: string, pdfUrl: string, signal?: AbortSignal): Promise<string | null> {
   try {
     const response = await fetch(`${origin}/api/extract-pdf`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pdfUrl }),
+      signal,
     });
 
     if (!response.ok) {
@@ -1516,11 +1652,15 @@ async function reExtractProposalFromPdf(origin: string, pdfUrl: string): Promise
 export async function POST(req: NextRequest) {
   const requestStartedAt = Date.now();
   let trace: ReturnType<typeof langfuse.trace> | null = null;
+  let analysisJobId = "";
+  let analysisController: AbortController | null = null;
 
   console.log(`[AI:POST] === REQUEST START === time=${new Date().toISOString()}`);
 
   try {
     const body = await req.json();
+    analysisJobId = String(body.job_id || body.jobId || "").trim();
+    analysisController = analysisJobId ? registerAnalysisController(analysisJobId) : null;
     const { mode } = body;
     console.log(`[AI:POST] mode=${mode} vendors=${Array.isArray(body.vendors)?body.vendors.length:0}`);
 
@@ -1534,7 +1674,7 @@ export async function POST(req: NextRequest) {
       // ── Detect weak proposal text and attempt re-extraction ──
       if (isWeakProposalText(proposal_data) && proposal_file) {
         console.log(`[AI:score_single] Detected weak proposal text (JSON storage pointer or insufficient content), attempting re-extraction from PDF`);
-        const reExtracted = await reExtractProposalFromPdf(req.nextUrl.origin, proposal_file);
+        const reExtracted = await reExtractProposalFromPdf(req.nextUrl.origin, proposal_file, analysisController?.signal);
         if (reExtracted && !isWeakProposalText(reExtracted)) {
           console.log(`[AI:score_single] Successfully re-extracted ${reExtracted.length} chars from PDF`);
           proposal_data = reExtracted;
@@ -1595,9 +1735,13 @@ export async function POST(req: NextRequest) {
       });
 
       // Agent 1: Extract both documents
+      if (isAnalysisJobCancelled(analysisJobId)) {
+        return NextResponse.json({ error: "Analysis cancelled" }, { status: 499 });
+      }
+
       const [rfpMarkdown, vendorMarkdownRaw] = await Promise.all([
-        runExtractor("RFP", rfpText),
-        runExtractor("Vendor Proposal", vendorText),
+        runExtractor("RFP", rfpText, analysisController?.signal),
+        runExtractor("Vendor Proposal", vendorText, analysisController?.signal),
       ]);
 
       const resolvedBudget = contract_budget || extractBudgetFromText(rfpMarkdown) || extractBudgetFromText(rfpText);
@@ -1648,7 +1792,7 @@ export async function POST(req: NextRequest) {
           price_confidence: extractedPriceForVendor ? "extracted" : "unknown",
         } as ProposalAnalysis & any;
       } else {
-        scorerResult = await runScorer(rfpMarkdown, vendorMarkdown, vendor_name || "Unknown", vendorText, resolvedBudget || "", mandatoryCriteria, { llmOnly: !!body.llmOnly });
+        scorerResult = await runScorer(rfpMarkdown, vendorMarkdown, vendor_name || "Unknown", vendorText, resolvedBudget || "", mandatoryCriteria, { llmOnly: !!body.llmOnly, signal: analysisController?.signal });
         // If the analysis didn't return a price, attach heuristic extraction
         if (!((scorerResult as any).price) && extractedPriceForVendor) {
           (scorerResult as any).price = extractedPriceForVendor;
@@ -1712,7 +1856,7 @@ export async function POST(req: NextRequest) {
         },
       });
       const metrics = computeComparativeMetrics(vendor_scores || []);
-      const judgeResult = await runJudge(rfp_extract, vendor_scores, metrics);
+      const judgeResult = await runJudge(rfp_extract, vendor_scores, metrics, analysisController?.signal);
       judgeSpan.end({
         output: {
           bestVendor: judgeResult?.comparative_analysis?.best_vendor || "",
@@ -1748,7 +1892,11 @@ export async function POST(req: NextRequest) {
 
       // Agent 1: Extract RFP once
       console.log(`[AI:POST:full_pipeline] Calling runExtractor for RFP`);
-      const rfpMarkdown = await runExtractor("RFP", rfpText);
+      if (isAnalysisJobCancelled(analysisJobId)) {
+        return NextResponse.json({ error: "Analysis cancelled" }, { status: 499 });
+      }
+
+      const rfpMarkdown = await runExtractor("RFP", rfpText, analysisController?.signal);
       console.log(`[AI:POST:full_pipeline] runExtractor completed. rfpMarkdown length=${rfpMarkdown.length}`);
       const resolvedBudget = contract_budget || extractBudgetFromText(rfpMarkdown) || extractBudgetFromText(rfpText);
 
@@ -1814,7 +1962,11 @@ export async function POST(req: NextRequest) {
         });
 
         try {
-          const vendorMarkdownRaw = await runExtractor("Vendor Proposal", vendorText);
+          if (isAnalysisJobCancelled(analysisJobId)) {
+            throw new Error("Analysis cancelled");
+          }
+
+          const vendorMarkdownRaw = await runExtractor("Vendor Proposal", vendorText, analysisController?.signal);
           readVendorSpan.end({ output: { vendorExtractChars: vendorMarkdownRaw.length } });
 
           // Try to extract price from the vendor markdown
@@ -1850,7 +2002,7 @@ export async function POST(req: NextRequest) {
             } as ProposalAnalysis & any;
           } else {
             console.log(`[AI:POST:full_pipeline] Calling runScorer for vendor=${v.vendor_name}`);
-            scoreResult = await runScorer(rfpMarkdown, vendorMarkdown, v.vendor_name || "Unknown", vendorText, resolvedBudget || "", mandatoryCriteria);
+            scoreResult = await runScorer(rfpMarkdown, vendorMarkdown, v.vendor_name || "Unknown", vendorText, resolvedBudget || "", mandatoryCriteria, { signal: analysisController?.signal });
             console.log(`[AI:POST:full_pipeline] runScorer completed for vendor=${v.vendor_name} score=${scoreResult.overall_score}`);
             // If scorer did not include price, attach heuristic extraction
             if (!scoreResult?.price && extractedPrice) {
@@ -1881,6 +2033,14 @@ export async function POST(req: NextRequest) {
           return { vendor_name: v.vendor_name || "Unknown", vendorMarkdown, scoreResult };
         } catch (vendorErr: unknown) {
           const msg = vendorErr instanceof Error ? vendorErr.message : String(vendorErr);
+          const isCancelled = isAnalysisJobCancelled(analysisJobId) || 
+                              (analysisController && analysisController.signal.aborted) ||
+                              /cancelled|aborted|aborterror/i.test(msg) ||
+                              (vendorErr instanceof Error && vendorErr.name === "AbortError");
+          if (isCancelled) {
+            console.log(`[AI:POST:full_pipeline] Cancellation detected during scoring of ${v.vendor_name}. Propagating error.`);
+            throw vendorErr;
+          }
           console.error(`Failed to score vendor ${v.vendor_name}:`, msg);
           readVendorSpan.end({ level: "ERROR", statusMessage: msg.slice(0, 500) });
           vendorTrace.update({
@@ -1913,11 +2073,14 @@ export async function POST(req: NextRequest) {
         }
       };
 
-      const batchSize = fastMode ? Math.max(1, vendors.length) : Math.min(2, Math.max(1, vendors.length));
+      const batchSize = analysisJobId ? 1 : (fastMode ? Math.max(1, vendors.length) : Math.min(2, Math.max(1, vendors.length)));
       for (let index = 0; index < vendors.length; index += batchSize) {
         const batch = vendors.slice(index, index + batchSize);
         const batchResults = await Promise.all(batch.map(analyzeVendor));
         for (const result of batchResults) {
+            if (isAnalysisJobCancelled(analysisJobId)) {
+              throw new Error("Analysis cancelled");
+            }
           if (result.vendorMarkdown) {
             vendorExtracts[result.vendor_name] = result.vendorMarkdown;
           }
@@ -1928,6 +2091,9 @@ export async function POST(req: NextRequest) {
       // Agent 3: Judge all vendors
       let judgeResult = null;
       if (vendorScores.length > 0) {
+        if (isAnalysisJobCancelled(analysisJobId)) {
+          throw new Error("Analysis cancelled");
+        }
         const recommendationSpan = trace.span({
           name: "Generate Final Recommendation",
           input: {
@@ -1936,7 +2102,7 @@ export async function POST(req: NextRequest) {
           },
         });
         const metrics = computeComparativeMetrics(vendorScores || []);
-        judgeResult = await runJudge(rfpMarkdown, vendorScores, metrics);
+        judgeResult = await runJudge(rfpMarkdown, vendorScores, metrics, analysisController?.signal);
         recommendationSpan.end({
           output: {
             bestVendor: judgeResult?.comparative_analysis?.best_vendor || "",
@@ -1992,6 +2158,7 @@ export async function POST(req: NextRequest) {
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Failed to analyze proposal";
     const stack = error instanceof Error ? error.stack : "";
+    const cancelled = isAnalysisJobCancelled(analysisJobId) || /cancelled|aborted|aborterror/i.test(message) || (error instanceof Error && error.name === "AbortError");
     console.error(`[AI:POST] ERROR: ${message}`);
     console.error(`[AI:POST] Stack:`, stack);
     if (trace) {
@@ -2002,8 +2169,9 @@ export async function POST(req: NextRequest) {
         },
       });
     }
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: cancelled ? "Analysis cancelled" : message }, { status: cancelled ? 499 : 500 });
   } finally {
+    clearAnalysisJob(analysisJobId);
     await langfuse.flushAsync();
   }
 }

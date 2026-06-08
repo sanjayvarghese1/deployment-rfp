@@ -31,6 +31,7 @@ class AnalysisJobState:
 
 _jobs: dict[str, AnalysisJobState] = {}
 _job_store = JobStore(settings.job_store_path)
+_tasks: dict[str, asyncio.Task] = {}
 
 
 def _to_store(job: AnalysisJobState) -> StoredJob:
@@ -69,7 +70,8 @@ def create_analysis_job(input: dict[str, Any], origin: str) -> AnalysisJobState:
     job = AnalysisJobState(id=uuid4().hex, contract_id=contract_id, request=input)
     _jobs[job.id] = job
     _job_store.upsert_job(_to_store(job))
-    asyncio.create_task(_run_background_analysis(job.id, origin, input))
+    task = asyncio.create_task(_run_background_analysis(job.id, origin, input))
+    _tasks[job.id] = task
     return job
 
 
@@ -118,6 +120,7 @@ async def _run_background_analysis(job_id: str, origin: str, body: dict[str, Any
             response = await client.post(
                 remote_url,
                 json={
+                    "job_id": job_id,
                     "mode": "full_pipeline",
                     "contract_id": body.get("contract_id"),
                     "contract_title": (body.get("contract") or {}).get("title"),
@@ -133,9 +136,53 @@ async def _run_background_analysis(job_id: str, origin: str, body: dict[str, Any
             response.raise_for_status()
             data = response.json()
             update_analysis_job(job_id, status="completed", progress="Analysis complete", result=data)
+            # cleanup task record on normal completion
+            try:
+                _tasks.pop(job_id, None)
+            except Exception:
+                pass
     except Exception as error:  # noqa: BLE001
         update_analysis_job(job_id, status="failed", progress="Analysis failed", error=str(error))
+        try:
+            _tasks.pop(job_id, None)
+        except Exception:
+            pass
 
 
 def serialize_job(job: AnalysisJobState) -> dict[str, Any]:
     return asdict(job)
+
+
+def cancel_analysis_job(job_id: str) -> bool:
+    """Attempt to cancel a running analysis job.
+
+    Returns True if cancellation was initiated, False otherwise.
+    """
+    task = _tasks.get(job_id)
+    job = _jobs.get(job_id) or _job_store.get_job(job_id)
+    if not job:
+        return False
+
+    # Mark job as failed/cancelled in store
+    try:
+        update_analysis_job(job_id, status="failed", progress="Cancelled by user", error="Cancelled by user")
+    except Exception:
+        pass
+
+    if task and not task.done():
+        try:
+            task.cancel()
+        except Exception:
+            pass
+        try:
+            _tasks.pop(job_id, None)
+        except Exception:
+            pass
+        return True
+
+    return True
+
+
+def has_running_analysis_job(job_id: str) -> bool:
+    task = _tasks.get(job_id)
+    return bool(task and not task.done())

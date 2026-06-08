@@ -1,25 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/services/supabase';
-import { extractCurrencyLikeText, extractPriceLikeText, extractTimelineLikeText, formatCurrency } from '@/lib/formatters/number';
+import { extractCurrencyLikeText, extractPriceLikeText, extractTimelineLikeText, formatCurrency, formatCurrencyWithOriginal, parseNumber } from '@/lib/formatters/number';
 import { createClient } from '@supabase/supabase-js';
 
 function normalizeCurrencyWithSuffix(text: string){
   if(!text) return '';
   // remove currency labels
-  const cleaned = String(text).replace(/(?:USD|usd)\s*/i, '').trim();
-  // match number and optional suffix (k,m,b,million,billion,thousand)
-  const m = cleaned.match(/([\d,.]+)\s*(k|m|b|thousand|million|billion)?/i);
+  const cleaned = String(text).replace(/(?:USD|usd|INR|inr|₹)\s*/i, '').trim();
+  // match number and optional suffix (k,m,b,thousand,million,billion,lakh,crore)
+  const m = cleaned.match(/([\d,.]+)\s*(k|m|b|thousand|million|billion|lakh|crore)?/i);
   if(!m) return cleaned;
   const numStr = m[1].replace(/,/g,'');
   const val = parseFloat(numStr);
   if(!Number.isFinite(val)) return cleaned;
+  
   const suffix = (m[2] || '').toLowerCase();
   let multiplier = 1;
-  if(suffix === 'k' || suffix === 'thousand') multiplier = 1e3;
-  if(suffix === 'm' || suffix === 'million') multiplier = 1e6;
-  if(suffix === 'b' || suffix === 'billion') multiplier = 1e9;
+  if (suffix === 'k' || suffix === 'thousand') multiplier = 1e3;
+  else if (suffix === 'lakh') multiplier = 1e5;
+  else if (suffix === 'm' || suffix === 'million') multiplier = 1e6;
+  else if (suffix === 'crore') multiplier = 1e7;
+  else if (suffix === 'b' || suffix === 'billion') multiplier = 1e9;
+  
   const scaled = val * multiplier;
-  return formatCurrency(scaled);
+  return formatCurrencyWithOriginal(scaled, text);
 }
 
 // Use the same parser used in scripts
@@ -120,7 +124,10 @@ export async function POST(req: NextRequest){
 
         // Prepare update payload: always save extracted text/proposal_data; only set price/timeline if missing
         const updateObj: any = { proposal_data: safe };
-        if (!proposal?.price && extractedPrice) updateObj.price = normalizedPrice || extractedPrice;
+        const priceParsed = parseNumber(extractedPrice);
+        if (!proposal?.price && extractedPrice && priceParsed > 0) {
+          updateObj.price = normalizedPrice || extractedPrice;
+        }
         if (!proposal?.timeline && extractedTimeline) updateObj.timeline = extractedTimeline;
 
         const { data: updateData, error: updateError } = await svc.from('proposals').update(updateObj).eq('id', p.id).select();

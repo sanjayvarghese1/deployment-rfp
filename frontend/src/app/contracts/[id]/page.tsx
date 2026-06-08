@@ -9,11 +9,11 @@ import { generateProposalPDF } from "@/services/pdfGenerator";
 import VendorComparisonChart from "@/components/VendorComparisonChart";
 import ProposalMetricsComparison from "@/components/ProposalMetricsComparison";
 import ProposalPairwiseComparison from "@/components/ProposalPairwiseComparison";
-import formatCurrency, { firstNonEmptyText, extractCurrencyLikeText, extractPriceLikeText, extractTimelineLikeText, parseNumber } from "@/lib/formatters/number";
+import formatCurrency, { firstNonEmptyText, extractCurrencyLikeText, extractPriceLikeText, extractTimelineLikeText, parseNumber, formatPriceDisplay } from "@/lib/formatters/number";
 import { randomUUID } from '@/lib/uuid';
 import { startBackgroundAnalysisJob, getBackgroundAnalysisJob } from "@/services/aiService";
 import { supabase } from "@/services/supabase";
-import { apiUrl } from "@/lib/api";
+import { apiUrl, getBackendBaseUrl } from "@/lib/api";
 
 function normalizeDoc(data: any): any {
   return data;
@@ -80,6 +80,27 @@ export default function ContractDetailPage() {
     created_at: "",
     cache_key: "",
   } : null;
+
+  const cancelAnalysisNow = async (jobId?: string | null) => {
+    const trimmedJobId = String(jobId || "").trim();
+    if (!trimmedJobId) return;
+
+    const cancelPayload = JSON.stringify({ job_id: trimmedJobId });
+    const requests = [
+      fetch(apiUrl("/api/ai/analyze-proposal/cancel"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: cancelPayload,
+      }),
+      fetch(`${getBackendBaseUrl().replace(/\/$/, "")}/api/ai/analysis-jobs/${trimmedJobId}/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: cancelPayload,
+      }),
+    ];
+
+    await Promise.allSettled(requests);
+  };
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -241,6 +262,11 @@ export default function ContractDetailPage() {
           setAnalyzing(false);
           setBackgroundJobId(null);
           window.localStorage.removeItem(`analysis-job:${contractId}`);
+        } else if (job.status === "cancelled") {
+          setAnalysisProgress("Analysis stopped.");
+          setAnalyzing(false);
+          setBackgroundJobId(null);
+          window.localStorage.removeItem(`analysis-job:${contractId}`);
         }
       } catch (error) {
         console.warn("Failed to poll analysis job:", error);
@@ -350,6 +376,25 @@ export default function ContractDetailPage() {
     } finally {
       setAnalyzing(false);
     }
+  };
+
+  const stopAnalysis = () => {
+    (async () => {
+      try {
+        await cancelAnalysisNow(backgroundJobId);
+      } catch (err) {
+        console.warn("Failed to cancel background job on server:", err);
+      }
+      try { window.localStorage.removeItem(`analysis-job:${contractId}`); } catch {}
+      setBackgroundJobId(null);
+      setAnalyzing(false);
+      setAnalysisProgress("Analysis stopped by user. Showing previous results.");
+      // Restore saved analysis from contract if present
+      if (contract?.last_analysis_result?.analyses_by_proposal_id) {
+        setAnalyses(contract.last_analysis_result.analyses_by_proposal_id);
+        setJudgeResult(contract.last_analysis_result.judge_result ?? null);
+      }
+    })();
   };
 
   const vendorScorePoints = proposals
@@ -708,9 +753,16 @@ export default function ContractDetailPage() {
                       <p className="text-sm text-[var(--muted)]">{proposals.length} proposal{proposals.length !== 1 ? "s" : ""} received</p>
                       {analysisProgress && <p className="text-xs text-[var(--primary)] mt-1">{analysisProgress}</p>}
                     </div>
-                    <button onClick={runAIAnalysis} disabled={analyzing || backgroundJobId !== null} className="inline-flex items-center gap-2 bg-[var(--primary)] text-[#EFECE3] px-5 py-2 rounded-lg text-sm font-medium hover:bg-[var(--primary-hover)] disabled:opacity-50 transition-all shadow-sm">
-                      {analyzing || backgroundJobId !== null ? <><div className="w-3.5 h-3.5 border-2 border-[#EFECE3]/30 border-t-[#EFECE3] rounded-full animate-spin" />Analyzing...</> : <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>Run AI Analysis</>}
-                    </button>
+                        <div className="inline-flex items-center gap-2">
+                          <button onClick={runAIAnalysis} disabled={analyzing || backgroundJobId !== null} className="inline-flex items-center gap-2 bg-[var(--primary)] text-[#EFECE3] px-5 py-2 rounded-lg text-sm font-medium hover:bg-[var(--primary-hover)] disabled:opacity-50 transition-all shadow-sm">
+                            {analyzing || backgroundJobId !== null ? <><div className="w-3.5 h-3.5 border-2 border-[#EFECE3]/30 border-t-[#EFECE3] rounded-full animate-spin" />Analyzing...</> : <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>Run AI Analysis</>}
+                          </button>
+                          {(analyzing || backgroundJobId) && (
+                            <button onClick={stopAnalysis} className="ml-2 inline-flex items-center gap-2 bg-[#F3F2F1] text-[#1A1916] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#E9E8E6] transition-all border">
+                              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" strokeWidth="1.5"/></svg> Stop
+                            </button>
+                          )}
+                        </div>
                   </div>
 
                   {activeAnalysis?.analyses_by_proposal_id && (
@@ -910,11 +962,12 @@ export default function ContractDetailPage() {
                         </div>
                         <div className="flex gap-4 text-sm text-[var(--muted)] mb-2">
                           <span>Price: <span className="font-medium text-[var(--foreground)]">{(() => {
-                            if (p.price) return p.price;
-                            const extractedPrice = extractPriceLikeText(p.extracted_text ?? p.proposal_data);
-                            const priceValue = parseNumber(extractedPrice);
-                            return priceValue > 0 ? formatCurrency(priceValue) : "N/A";
-                          })()}</span></span>
+                             const analysisPrice = analysis?.price;
+                             if (analysisPrice && String(analysisPrice).trim()) return formatPriceDisplay(String(analysisPrice));
+                             if (p.price) return formatPriceDisplay(p.price);
+                             const extractedPrice = extractPriceLikeText(p.extracted_text ?? p.proposal_data);
+                             return formatPriceDisplay(extractedPrice);
+                           })()}</span></span>
                         </div>
                         {p.experience && <p className="text-sm text-[var(--muted)] leading-relaxed mb-3">{p.experience}</p>}
 
@@ -1020,7 +1073,7 @@ export default function ContractDetailPage() {
                           <div className="mt-4 pt-3 border-t border-[var(--divider)] flex justify-end">
                             <button
                               onClick={() => acceptProposal(p.proposal_id)}
-                              disabled={!!acceptingId}
+                              disabled={!!acceptingId || analyzing || !!backgroundJobId}
                               className="inline-flex items-center gap-2 bg-[var(--success)] text-[#EFECE3] px-5 py-2 rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-all shadow-sm"
                             >
                               {acceptingId === p.proposal_id ? (

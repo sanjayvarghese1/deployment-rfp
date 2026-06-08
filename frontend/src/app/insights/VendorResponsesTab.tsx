@@ -3,16 +3,24 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import Link from "next/link";
-import jsPDF from "jspdf";
 import { saveProposalAnalysisResult, ProposalAnalysis, JudgeResult, startBackgroundAnalysisJob, getBackgroundAnalysisJob } from "@/services/aiService";
 import { generateProposalPDF } from "@/services/pdfGenerator";
 import ProposalPairwiseComparison from "@/components/ProposalPairwiseComparison";
 import VendorComparisonChart from "@/components/VendorComparisonChart";
 import ProposalMetricsComparison from "@/components/ProposalMetricsComparison";
 import { supabase } from "@/services/supabase";
-import formatCurrency, { extractCurrencyLikeText, extractPriceLikeText, extractTimelineLikeText, parseNumber } from "@/lib/formatters/number";
+import formatCurrency, { extractCurrencyLikeText, extractPriceLikeText, extractTimelineLikeText, parseNumber, formatPriceDisplay, formatCurrencyWithOriginal } from "@/lib/formatters/number";
 import { randomUUID } from '@/lib/uuid';
-import { apiUrl } from "@/lib/api";
+import { apiUrl, getBackendBaseUrl } from "@/lib/api";
+import { downloadPdfReport } from "@/services/pdfReports";
+
+const isSafeShortText = (value: unknown) => {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text || text.length > 80) return false;
+  return !/confidentiality notice|table of contents|executive summary|appendix|proposal/i.test(text);
+};
+
+
 
 function normalizeDoc(data: any): any {
   return data;
@@ -69,6 +77,28 @@ export default function VendorResponsesTab() {
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [restoredAnalysisFor, setRestoredAnalysisFor] = useState<string | null>(null);
   const [backgroundJobId, setBackgroundJobId] = useState<string | null>(null);
+  const [stopping, setStopping] = useState(false);
+
+  const cancelAnalysisNow = async (jobId?: string | null) => {
+    const trimmedJobId = String(jobId || "").trim();
+    if (!trimmedJobId) return;
+
+    const cancelPayload = JSON.stringify({ job_id: trimmedJobId });
+    const requests = [
+      fetch(apiUrl("/api/ai/analyze-proposal/cancel"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: cancelPayload,
+      }),
+      fetch(`${getBackendBaseUrl().replace(/\/$/, "")}/api/ai/analysis-jobs/${trimmedJobId}/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: cancelPayload,
+      }),
+    ];
+
+    await Promise.allSettled(requests);
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -201,6 +231,11 @@ export default function VendorResponsesTab() {
           setAnalyzing(false);
           setBackgroundJobId(null);
           window.localStorage.removeItem(`analysis-job:${selectedContract}`);
+        } else if (job.status === "cancelled") {
+          setAnalysisProgress("Analysis stopped.");
+          setAnalyzing(false);
+          setBackgroundJobId(null);
+          window.localStorage.removeItem(`analysis-job:${selectedContract}`);
         }
       } catch (error) {
         console.error("Failed to poll analysis job:", error);
@@ -270,127 +305,62 @@ export default function VendorResponsesTab() {
       alert("Run AI Analysis first, then try downloading the report.");
       return;
     }
-
-    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 14;
-    const contentWidth = pageWidth - margin * 2;
-    let y = 18;
-
-    const ensureSpace = (neededHeight: number) => {
-      if (y + neededHeight > pageHeight - 16) {
-        doc.addPage();
-        y = 18;
-      }
-    };
-
-    const addSectionTitle = (text: string) => {
-      ensureSpace(10);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(11);
-      doc.setTextColor(37, 99, 235);
-      doc.text(text, margin, y);
-      y += 6;
-      doc.setDrawColor(209, 213, 219);
-      doc.setLineWidth(0.2);
-      doc.line(margin, y, pageWidth - margin, y);
-      y += 5;
-    };
-
-    const addWrappedText = (text: string, fontSize = 9, lineHeight = 4.6) => {
-      if (!text) return;
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(fontSize);
-      doc.setTextColor(55, 65, 81);
-      const lines = doc.splitTextToSize(text, contentWidth);
-      ensureSpace(lines.length * lineHeight + 2);
-      doc.text(lines, margin, y);
-      y += lines.length * lineHeight + 2;
-    };
-
-    const addKeyValue = (label: string, value: string) => {
-      const text = `${label}: ${value}`;
-      const lines = doc.splitTextToSize(text, contentWidth);
-      ensureSpace(lines.length * 4.6 + 2);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(9);
-      doc.setTextColor(17, 24, 39);
-      doc.text(lines, margin, y);
-      y += lines.length * 4.6 + 1.5;
-    };
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(18);
-    doc.setTextColor(17, 24, 39);
-    doc.text("Vendor Analysis Report", margin, y);
-    y += 8;
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-    doc.setTextColor(107, 114, 128);
-    doc.text([proposal.vendor_name, selectedContractData?.title || "Contract"].filter(Boolean).join(" · "), margin, y);
-    y += 10;
-
-    addKeyValue("Overall score", `${analysis.overall_score}/100`);
-    addKeyValue("Recommendation", analysis.independent_recommendation || "Not provided");
-    addKeyValue("Price", analysis.price ? formatCurrency(analysis.price) : (proposal.price || "Not provided"));
-    addKeyValue("Risk flags", `${analysis.risk_flags?.length || 0}`);
-
-    addSectionTitle("Executive Summary");
-    addWrappedText(analysis.analysis_summary || "No summary available.");
-
-    addSectionTitle("Strengths");
-    if ((analysis.strengths || []).length > 0) {
-      analysis.strengths!.forEach((item) => addWrappedText(`- ${item}`));
-    } else {
-      addWrappedText("No strengths captured.");
-    }
-
-    addSectionTitle("Weaknesses");
-    if ((analysis.weaknesses || []).length > 0) {
-      analysis.weaknesses!.forEach((item) => addWrappedText(`- ${item}`));
-    } else {
-      addWrappedText("No weaknesses captured.");
-    }
-
-    addSectionTitle("Risk Flags");
-    if ((analysis.risk_flags || []).length > 0) {
-      analysis.risk_flags!.forEach((item) => addWrappedText(`- ${item}`));
-    } else {
-      addWrappedText("No risk flags captured.");
-    }
-
-    addSectionTitle("Mandatory Criteria");
-    const criterionRows = Array.isArray(analysis.scoring_criteria) && analysis.scoring_criteria.length > 0
-      ? analysis.scoring_criteria
-      : [
-          { id: "technical_fit", label: "Technical fit", max_score: 30, score: analysis.criterion_scores?.technical_fit?.score ?? 0, reason: analysis.criterion_scores?.technical_fit?.reason ?? "" },
-          { id: "cost_efficiency", label: "Cost efficiency", max_score: 20, score: analysis.criterion_scores?.cost_efficiency?.score ?? 0, reason: analysis.criterion_scores?.cost_efficiency?.reason ?? "" },
-          { id: "relevant_experience", label: "Relevant experience", max_score: 20, score: analysis.criterion_scores?.relevant_experience?.score ?? 0, reason: analysis.criterion_scores?.relevant_experience?.reason ?? "" },
-          { id: "timeline_fit", label: "Timeline fit", max_score: 15, score: analysis.criterion_scores?.timeline_fit?.score ?? 0, reason: analysis.criterion_scores?.timeline_fit?.reason ?? "" },
-          { id: "compliance_completeness", label: "Compliance completeness", max_score: 15, score: analysis.criterion_scores?.compliance_completeness?.score ?? 0, reason: analysis.criterion_scores?.compliance_completeness?.reason ?? "" },
-        ];
-
-    criterionRows.forEach((row, index) => {
-      ensureSpace(12);
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(9);
-      doc.setTextColor(17, 24, 39);
-      doc.text(`${index + 1}. ${row.label} (${row.score}/${row.max_score})`, margin, y);
-      y += 4.8;
-      if (row.reason) {
-        addWrappedText(row.reason, 8.5, 4.3);
-      }
+    void downloadPdfReport({
+      kind: "proposal-analysis",
+      data: {
+        proposal,
+        analysis,
+        contract: selectedContractData,
+        judge_result: savedAnalysis?.judge_result ?? null,
+      },
+    }, sanitizeFileName(`${proposal.vendor_name || "vendor"}-analysis-report.pdf`)).catch((error) => {
+      console.error("PDF export failed:", error);
+      alert("Failed to generate PDF report.");
     });
-
-    if (savedAnalysis?.judge_result?.comparative_analysis) {
-      addSectionTitle("Overall Comparison Context");
-      addWrappedText(savedAnalysis.judge_result.comparative_analysis.selection_summary || "No comparison summary available.");
-      addWrappedText(`Best vendor overall: ${savedAnalysis.judge_result.comparative_analysis.best_vendor || "Not provided"}`);
-    }
-
-    doc.save(sanitizeFileName(`${proposal.vendor_name || "vendor"}-analysis-report.pdf`));
   };
+
+  const downloadComparisonSheet = () => {
+    const rows = [...allProposals]
+      .map((proposal) => {
+          const analysis = analyses[proposal.proposal_id];
+          const extractedPrice = extractPriceLikeText(proposal.extracted_text ?? proposal.proposal_data);
+          const priceText = analysis?.price ? analysis.price : isSafeShortText(extractedPrice) ? extractedPrice : isSafeShortText(proposal.price) ? proposal.price : "";
+          const priceFormatted = formatPriceDisplay(priceText) === "N/A" ? "Not provided" : formatPriceDisplay(priceText);
+          
+          return {
+            vendor_name: proposal.vendor_name,
+            final_score: analysis?.overall_score ?? proposal.ai_score ?? 0,
+            comparative_recommendation: analysis?.independent_recommendation || proposal.status || "Not provided",
+            independent_recommendation: analysis?.independent_recommendation || "",
+            price: priceFormatted,
+            timeline: analysis?.timeline || proposal.timeline || "Not provided",
+            strengths: analysis?.strengths || [],
+            weaknesses: analysis?.weaknesses || [],
+            risk_flags: analysis?.risk_flags || [],
+          };
+      })
+      .sort((left, right) => Number(right.final_score) - Number(left.final_score));
+
+    const activeJudge = judgeResult || savedAnalysis?.judge_result || null;
+
+    void downloadPdfReport({
+      kind: "comparison-sheet",
+      data: {
+        contractTitle: selectedContractData?.title || "Consolidated Vendor Comparison",
+        contractBudget: selectedContractData?.budget || selectedContractData?.budget_range || "Not provided",
+        contractDeadline: selectedContractData?.deadline || "Not provided",
+        bestVendor: activeJudge?.comparative_analysis?.best_vendor || "N/A",
+        summary: activeJudge?.comparative_analysis?.selection_summary || "",
+        rows,
+        decisionNotes: activeJudge?.final_recommendation_view?.summary || "",
+        judgeResult: activeJudge,
+      },
+    }, sanitizeFileName(`${selectedContractData?.title || "contract"}-comparison-sheet.pdf`)).catch((error) => {
+      console.error("Comparison sheet export failed:", error);
+      alert("Failed to generate comparison sheet.");
+    });
+  };
+
 
   const runAIAnalysis = async () => {
     const contract = myContracts.find((c) => c.contract_id === selectedContract);
@@ -408,7 +378,7 @@ export default function VendorResponsesTab() {
           const extractedPriceValue = parseNumber(extractedPriceMatch);
           const updatePayload: Record<string, unknown> = { extracted_text: proposalData };
           if (extractedPriceValue > 0 && !p.price) {
-            updatePayload.price = formatCurrency(extractedPriceValue);
+            updatePayload.price = formatCurrencyWithOriginal(extractedPriceValue, extractedPriceMatch);
           }
           const { error: updateErr } = await (supabase.from("proposals").update(updatePayload).eq("id", p.proposal_id) as any);
           if (updateErr) console.warn(`Failed to save extracted text for ${p.vendor_name}:`, updateErr);
@@ -416,7 +386,10 @@ export default function VendorResponsesTab() {
         return {
           proposal_id: p.proposal_id,
           vendor_name: p.vendor_name,
-          price: p.price || (typeof proposalData === "string" ? formatCurrency(parseNumber(extractPriceLikeText(proposalData))) : "") || "",
+          price: (p.price && parseNumber(p.price) > 0) ? p.price : 
+                 (typeof proposalData === "string" && parseNumber(extractPriceLikeText(proposalData)) > 0) 
+                   ? formatCurrencyWithOriginal(parseNumber(extractPriceLikeText(proposalData)), extractPriceLikeText(proposalData)) 
+                   : "",
           timeline: p.timeline || "",
           experience: p.experience || "",
           proposal_data: proposalData,
@@ -614,9 +587,47 @@ export default function VendorResponsesTab() {
                   <p className="text-sm text-[var(--muted)]">{allProposals.length} proposal{allProposals.length !== 1 ? "s" : ""} received</p>
                   {analysisProgress && <p className="text-xs text-[var(--primary)] mt-1">{analysisProgress}</p>}
                 </div>
-                <button onClick={runAIAnalysis} disabled={analyzing || backgroundJobId !== null} className="inline-flex items-center gap-2 bg-[var(--primary)] text-[#EFECE3] px-5 py-2 rounded-full text-sm font-medium hover:bg-[var(--primary-hover)] disabled:opacity-50 transition-all shadow-sm">
-                  {analyzing || backgroundJobId !== null ? <><div className="w-3.5 h-3.5 border-2 border-[#EFECE3]/30 border-t-[#EFECE3] rounded-full animate-spin" />Analyzing...</> : <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>Run AI Analysis</>}
-                </button>
+                <div className="inline-flex items-center gap-2">
+                  <button onClick={runAIAnalysis} disabled={analyzing || backgroundJobId !== null} className="inline-flex items-center gap-2 bg-[var(--primary)] text-[#EFECE3] px-5 py-2 rounded-full text-sm font-medium hover:bg-[var(--primary-hover)] disabled:opacity-50 transition-all shadow-sm">
+                    {analyzing || backgroundJobId !== null ? <><div className="w-3.5 h-3.5 border-2 border-[#EFECE3]/30 border-t-[#EFECE3] rounded-full animate-spin" />Analyzing...</> : <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>Run AI Analysis</>}
+                  </button>
+                  {(analyzing || backgroundJobId) && (
+                    <button
+                      disabled={stopping}
+                      onClick={async () => {
+                        setStopping(true);
+                        setAnalysisProgress("Stopping analysis...");
+                        try {
+                          await cancelAnalysisNow(backgroundJobId);
+                        } catch (err) {
+                          console.warn("Failed to cancel analysis:", err);
+                        }
+                        try { window.localStorage.removeItem(`analysis-job:${selectedContract}`); } catch {}
+                        setBackgroundJobId(null);
+                        setAnalyzing(false);
+                        setStopping(false);
+                        setAnalysisProgress("Analysis stopped.");
+                        if (selectedContractData?.last_analysis_result?.analyses_by_proposal_id) {
+                          setAnalyses(selectedContractData.last_analysis_result.analyses_by_proposal_id);
+                          setJudgeResult(selectedContractData.last_analysis_result.judge_result ?? null);
+                        }
+                      }}
+                      className="ml-2 inline-flex items-center gap-2 bg-[#F3F2F1] text-[#1A1916] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#E9E8E6] disabled:opacity-60 disabled:cursor-not-allowed transition-all border"
+                    >
+                      {stopping ? (
+                        <>
+                          <div className="w-3.5 h-3.5 border-2 border-[#1A1916]/30 border-t-[#1A1916] rounded-full animate-spin" />
+                          Stopping...
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" strokeWidth="1.5"/></svg>
+                          Stop
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
               </div>
 
               {activeAnalysis?.analyses_by_proposal_id && (
@@ -628,9 +639,17 @@ export default function VendorResponsesTab() {
                         {activeAnalysis.created_at ? `Saved ${activeAnalysis.created_at}` : "Latest analysis"} · {activeAnalysis.vendor_count || allProposals.length} vendor(s)
                       </p>
                     </div>
-                    <span className="text-xs font-medium text-[var(--primary)] bg-white/70 rounded-full px-3 py-1">
-                      {activeAnalysis.cache_key ? "Stored in Supabase" : "Current run"}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-[var(--primary)] bg-white/70 rounded-full px-3 py-1">
+                        {activeAnalysis.cache_key ? "Stored in Supabase" : "Current run"}
+                      </span>
+                      <button
+                        onClick={downloadComparisonSheet}
+                        className="rounded-full border border-[var(--primary)]/20 bg-white px-3 py-1 text-xs font-semibold text-[var(--primary)] transition-colors hover:bg-[var(--primary)] hover:text-white"
+                      >
+                        Download Comparison Sheet
+                      </button>
+                    </div>
                   </div>
 
                   {activeAnalysis.judge_result?.final_recommendation_view && (
@@ -751,14 +770,14 @@ export default function VendorResponsesTab() {
                         )}
                       </div>
                     </div>
-                      <div className="flex gap-4 text-sm text-[var(--muted)] mb-2">
-                      <span>Price: <span className="font-medium text-[var(--foreground)]">{(() => {
-                        if (p.price) return p.price;
-                        const extractedPrice = extractPriceLikeText(p.extracted_text ?? p.proposal_data);
-                        const priceValue = parseNumber(extractedPrice);
-                        return priceValue > 0 ? formatCurrency(priceValue) : "N/A";
-                      })()}</span></span>
-                    </div>
+                    <div className="flex gap-4 text-sm text-[var(--muted)] mb-2">
+                        <span>Price: <span className="font-medium text-[var(--foreground)]">{(() => {
+                          const analysisPrice = analyses[p.proposal_id]?.price;
+                          const extractedPrice = extractPriceLikeText(p.extracted_text ?? p.proposal_data);
+                          const priceText = analysisPrice ? analysisPrice : isSafeShortText(extractedPrice) ? extractedPrice : isSafeShortText(p.price) ? p.price : "";
+                          return formatPriceDisplay(priceText);
+                        })()}</span></span>
+                      </div>
                     {p.experience && <p className="text-sm text-[var(--muted)] leading-relaxed mb-3">{p.experience}</p>}
 
                     {p.proposal_data && (() => {
@@ -831,7 +850,7 @@ export default function VendorResponsesTab() {
                       <div className="mt-4 pt-3 border-t border-[var(--divider)] flex justify-end">
                         <button
                           onClick={() => acceptProposal(p.proposal_id)}
-                          disabled={!!acceptingId}
+                          disabled={!!acceptingId || analyzing || backgroundJobId !== null}
                           className="inline-flex items-center gap-2 bg-[var(--success)] text-[#EFECE3] px-5 py-2 rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-all shadow-sm"
                         >
                           {acceptingId === p.proposal_id ? (
