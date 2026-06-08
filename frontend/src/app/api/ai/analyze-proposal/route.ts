@@ -7,7 +7,7 @@ import type { AnalysisScoringCriterion, CriterionScore, JudgeResult, ProposalAna
 import computeComparativeMetrics from "@/lib/comparativeMetrics";
 import { clearAnalysisJob, isAnalysisJobCancelled, registerAnalysisController } from "./analysisCancellation";
 
-export const maxDuration = 240; // Conservative limit for Vercel Hobby (max 300)
+export const maxDuration = 300; // Maximum limit for Vercel Hobby (max 300)
 
 type ScoringCriterion = {
   id: string;

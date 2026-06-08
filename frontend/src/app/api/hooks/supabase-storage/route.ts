@@ -1,7 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { supabase } from '@/services/supabase';
 import { extractCurrencyLikeText, extractPriceLikeText, extractTimelineLikeText, formatCurrency, formatCurrencyWithOriginal, parseNumber } from '@/lib/formatters/number';
 import { createClient } from '@supabase/supabase-js';
+
+export const maxDuration = 300; // Allow up to 5 minutes on Vercel
+
 
 function normalizeCurrencyWithSuffix(text: string){
   if(!text) return '';
@@ -143,8 +146,8 @@ export async function POST(req: NextRequest){
       // Return response immediately without waiting for analysis (fire-and-forget)
       const responseJson = { updated: proposals.length, results, message: 'Extraction complete; analysis running asynchronously' };
       
-      // Trigger analysis in background (do not await)
-      (async ()=>{
+      // Trigger analysis in background (do not await) using after to prevent serverless freezing
+      after(async ()=>{
         try{
           for(const p of proposals){
             const { data: proposal } = await svc.from('proposals').select('id,contract_id,vendor_name,price,timeline,experience,proposal_file').eq('id', p.id).single();
@@ -195,7 +198,7 @@ export async function POST(req: NextRequest){
         }catch(err){
           console.error('[webhook-bg] Analysis background error:', err);
         }
-      })();
+      });
       
       return NextResponse.json(responseJson);
     }
