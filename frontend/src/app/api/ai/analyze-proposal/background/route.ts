@@ -1,4 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
+
+export const maxDuration = 300; // Allow up to 5 minutes on Vercel
 import { supabase } from "@/services/supabase";
 import { runCachedFullPipeline, saveProposalAnalysisResult } from "@/services/aiService";
 import { createAnalysisJob, updateAnalysisJob } from "@/services/analysisJobs";
@@ -232,7 +234,9 @@ export async function POST(req: NextRequest) {
 
   console.log(`[AI] created analysis job ${inserted.id} for contract ${contractId}`);
 
-  void processBackgroundAnalysis(inserted.id, req.nextUrl.origin, body);
+  after(() => {
+    processBackgroundAnalysis(inserted.id, req.nextUrl.origin, body);
+  });
 
   return NextResponse.json({ job_id: inserted.id, status: "queued" }, { status: 202 });
 }
