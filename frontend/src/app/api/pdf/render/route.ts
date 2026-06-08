@@ -722,7 +722,25 @@ export async function POST(req: NextRequest) {
     const body = (await req.json()) as PdfReportRequest;
     const kind = body.kind;
     const data = body.data || {};
+    const format = (body as any).format || "pdf";
+
     const html = kind === "comparison-sheet" ? renderComparisonSheetHtml(data) : renderProposalAnalysisHtml(data);
+
+    if (format === "html") {
+      return new NextResponse(html, {
+        status: 200,
+        headers: { "Content-Type": "text/html", "Cache-Control": "no-store" },
+      });
+    }
+
+    const apiKey = process.env.PDFSHIFT_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json(
+        { error: "PDFSHIFT_API_KEY_MISSING", message: "PDFShift API key is not configured on the server." },
+        { status: 412 }
+      );
+    }
+
     const pdf = await convertHtmlToPdf(html);
     const filename = kind === "comparison-sheet" ? "comparison-sheet.pdf" : "vendor-analysis-report.pdf";
     return new NextResponse(pdf, {
