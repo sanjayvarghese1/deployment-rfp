@@ -88,13 +88,15 @@ function cleanTimeline(value: string): string {
 function extractPriceCandidates(text: string): string[] {
   const ranked: RankedCandidate[] = [];
 
+  const currencyPattern = `(?:(?:\\$|usd|gbp|eur|inr|[\\$\\u00A2-\\u00A5\\u20A0-\\u20CF\\uFE69\\uFF04\\uFFE0\\uFFE1\\uFFE5\\uFFE6₹€£])\\s*[\\d,]+(?:\\.\\d+)?(?:\\s*(?:k|m|bn|lakh|crore|million|billion))?|[\\d,]+(?:\\.\\d+)?(?:\\s*(?:k|m|bn|lakh|crore|million|billion))?\\s*(?:usd|gbp|eur|inr|[\\$\\u00A2-\\u00A5\\u20A0-\\u20CF\\uFE69\\uFF04\\uFFE0\\uFFE1\\uFFE5\\uFFE6₹€£]))`;
+
   const labeledPatterns: Array<{ pattern: RegExp; score: number }> = [
     {
-      pattern: /(?:total\s+contract\s+value|total\s+price|total\s+cost|grand\s+total|lump\s+sum|bid\s+price|quoted\s+price)\s*[:\-]?\s*(\$\s?[\d,]+(?:\.\d{1,2})?(?:\s*(?:to|\-|–)\s*\$\s?[\d,]+(?:\.\d{1,2})?)?)/gi,
+      pattern: new RegExp(`(?:total\\s+contract\\s+value|total\\s+price|total\\s+cost|grand\\s+total|lump\\s+sum|bid\\s+price|quoted\\s+price)\\s*[:\\-]?\\s*(${currencyPattern})`, "gi"),
       score: 100,
     },
     {
-      pattern: /(?:price|budget|cost\s+proposal)\s*[:\-]?\s*(\$\s?[\d,]+(?:\.\d{1,2})?(?:\s*(?:to|\-|–)\s*\$\s?[\d,]+(?:\.\d{1,2})?)?)/gi,
+      pattern: new RegExp(`(?:price|budget|cost\\s+proposal)\\s*[:\\-]?\\s*(${currencyPattern})`, "gi"),
       score: 75,
     },
     {
@@ -105,15 +107,17 @@ function extractPriceCandidates(text: string): string[] {
 
   for (const { pattern, score } of labeledPatterns) {
     for (const match of text.matchAll(pattern)) {
-      const value = String(match[1] ?? "").replace(/\s+/g, "").trim();
+      const value = String(match[1] ?? "").replace(/\s+/g, " ").trim();
       if (!value) continue;
-      ranked.push({ value: value.startsWith("$") ? value : `$${value}`, score });
+      const hasCurrencyIndicator = /[$\u00A2-\u00A5\u20A0-\u20CF\uFE69\uFF04\uFFE0\uFFE1\uFFE5\uFFE6₹€£]/.test(value) || /\b(?:usd|gbp|eur|inr)\b/i.test(value);
+      ranked.push({ value: hasCurrencyIndicator ? value : `$${value}`, score });
     }
   }
 
   if (ranked.length === 0) {
-    for (const match of text.matchAll(/\$\s?[\d,]+(?:\.\d{1,2})?/g)) {
-      const value = String(match[0] ?? "").replace(/\s+/g, "").trim();
+    const fallbackCurrencyRe = new RegExp(currencyPattern, "gi");
+    for (const match of text.matchAll(fallbackCurrencyRe)) {
+      const value = String(match[0] ?? "").replace(/\s+/g, " ").trim();
       if (value) ranked.push({ value, score: 40 });
     }
   }

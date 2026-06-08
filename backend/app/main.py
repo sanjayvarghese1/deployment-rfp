@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+import httpx
 from pydantic import BaseModel
 
 from .analysis_jobs import create_analysis_job, get_analysis_job, serialize_job as serialize_analysis_job
@@ -79,6 +80,26 @@ async def get_analysis_background_job(job_id: str):
     if not job:
         return {"error": "Analysis job not found"}
     return {"job": serialize_analysis_job(job)}
+
+
+@app.post("/api/ai/analysis-jobs/{job_id}/cancel")
+async def cancel_analysis_background_job(job_id: str):
+    # Attempt to cancel a running analysis job
+    from .analysis_jobs import cancel_analysis_job
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            await client.post(
+                settings.frontend_base_url.rstrip("/") + "/api/ai/analyze-proposal/cancel",
+                json={"job_id": job_id},
+            )
+    except Exception:
+        pass
+
+    ok = cancel_analysis_job(job_id)
+    if not ok:
+        return {"error": "Analysis job not found or could not be cancelled"}
+    return {"status": "cancelled"}
 
 
 @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])

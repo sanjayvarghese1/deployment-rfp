@@ -88,6 +88,11 @@ export interface ProposalAnalysis {
   risk_flags: string[];
   analysis_summary: string;
   timeline_candidates?: string[];
+  // Optional price extraction fields
+  price?: string;
+  price_confidence?: "explicit" | "partial" | "inferred" | string;
+  price_evidence?: string;
+  price_candidates?: string[];
 }
 
 // ─── Agent 3 (Judge) output types ──────────────────────────────
@@ -269,7 +274,7 @@ export async function runFullPipeline(
   contract: PipelineContract,
   vendors: VendorInput[],
   apiBaseUrl?: string,
-  options?: { fastMode?: boolean }
+  options?: { fastMode?: boolean; jobId?: string }
 ): Promise<FullPipelineResult> {
   // Set a 15-minute timeout for the full pipeline (matching the API's maxDuration)
   const controller = new AbortController();
@@ -281,6 +286,7 @@ export async function runFullPipeline(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         mode: "full_pipeline",
+        job_id: options?.jobId || "",
         contract_title: contract.title,
         contract_description: contract.description,
         contract_budget: contract.budget,
@@ -308,7 +314,7 @@ export async function runCachedFullPipeline(
   contract: PipelineContract,
   vendors: VendorInput[],
   apiBaseUrl?: string,
-  options?: { fastMode?: boolean }
+  options?: { fastMode?: boolean; jobId?: string }
 ): Promise<CachedFullPipelineResult> {
   const cacheKey = buildPipelineCacheKey(contract, vendors);
 
@@ -343,7 +349,7 @@ export async function runCachedFullPipeline(
     console.warn("Failed to read analysis cache:", error);
   }
 
-  const result = await runFullPipeline(contract, vendors, apiBaseUrl, options);
+  const result = await runFullPipeline(contract, vendors, apiBaseUrl, { ...options, jobId: options?.jobId });
 
   try {
     // Use a service-role Supabase client when available to avoid RLS failures on server-side writes

@@ -8,6 +8,7 @@ import {
   extractCurrencyLikeText,
   extractPriceLikeText,
   extractTimelineLikeText,
+  formatPriceDisplay,
 } from "@/lib/formatters/number";
 import MetricCard from "@/components/MetricCard";
 
@@ -50,23 +51,26 @@ export default function ProposalMetricsComparison({
     const analysis = analyses[proposal.proposal_id];
     const extractedPrice = extractPriceLikeText(proposal.extracted_text ?? proposal.proposal_data);
     const extractedTimeline = extractTimelineLikeText(proposal.extracted_text ?? proposal.proposal_data);
-    // Prefer the explicit uploaded `proposal.price` to match the proposal card display;
-    // fall back to extracted price when the uploaded price isn't safe/available.
-    const priceText = isSafeShortText(proposal.price)
-      ? proposal.price
+    // Prefer the AI analyzed price, then extracted price, then fallback to uploaded price
+    const priceText = analysis?.price
+      ? analysis.price
       : isSafeShortText(extractedPrice)
         ? extractedPrice
-        : "";
-    const timelineText = isSafeShortText(extractedTimeline)
-      ? extractedTimeline
-      : isSafeShortText(proposal.timeline)
-        ? proposal.timeline
-        : "";
+        : isSafeShortText(proposal.price)
+          ? proposal.price
+          : "";
+    const timelineText = analysis?.timeline
+      ? analysis.timeline
+      : isSafeShortText(extractedTimeline)
+        ? extractedTimeline
+        : isSafeShortText(proposal.timeline)
+          ? proposal.timeline
+          : "";
     const priceNumber = parseNumber(priceText);
     const riskLevel =
       analysis?.risk_flags && analysis.risk_flags.length > 0 ? "High" : "Low";
     const score = analysis?.overall_score ?? proposal.ai_score ?? 0;
-    const priceFormatted = priceNumber > 0 ? formatCurrency(priceNumber) : "N/A";
+    const priceFormatted = formatPriceDisplay(priceText);
     return {
       vendor_name: proposal.vendor_name || "Unknown",
       price: priceFormatted,

@@ -32,7 +32,7 @@ export default function AnalysisProgressModal({
         if (result) {
           setJob(result);
 
-          if (result.status === "completed" || result.status === "failed") {
+          if (result.status === "completed" || result.status === "failed" || result.status === "cancelled") {
             setPolling(false);
             clearInterval(pollInterval);
 

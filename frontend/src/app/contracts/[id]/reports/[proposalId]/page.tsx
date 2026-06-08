@@ -3,10 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import jsPDF from "jspdf";
 import { supabase } from "@/services/supabase";
 import type { ProposalAnalysis, SavedProposalAnalysisResult } from "@/services/aiService";
 import formatCurrency from "@/lib/formatters/number";
+import { downloadPdfReport } from "@/services/pdfReports";
 
 function normalizeDoc(data: any): any {
   return data;
@@ -43,10 +43,10 @@ function formatDisplayDate(value?: string): string {
 
 function formatAnalysisPrice(analysis: ProposalAnalysis | null, proposal: any): string {
   const price = (analysis as any)?.price;
-  if (price !== null && price !== undefined && Number.isFinite(price)) {
+  if (price !== null && price !== undefined && String(price).trim()) {
     return formatCurrency(price, "en-US", (analysis as any)?.price_currency || "USD");
   }
-  return proposal?.price || "Not provided";
+  return String(proposal?.price || "Not provided");
 }
 
 function formatAnalysisTimeline(analysis: ProposalAnalysis | null, proposal: any): string {
@@ -193,18 +193,17 @@ export default function VendorReportPage() {
 
   const downloadReport = () => {
     if (!analysis || !proposal) return;
-    const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-    doc.setFontSize(18);
-    doc.text("Vendor Analysis Report", 14, 18);
-    doc.setFontSize(10);
-    doc.text(`${analysis.vendor_name || proposal.vendor_name || "Vendor"} · ${contract?.title || "Contract"}`, 14, 26);
-    doc.setFontSize(11);
-    doc.text(`Score: ${analysis.overall_score}/100`, 14, 38);
-    doc.text(`Recommendation: ${analysis.independent_recommendation || "Not provided"}`, 14, 45);
-    doc.text(`Budget: ${contract?.budget || contract?.budget_range || "Not provided"}`, 14, 52);
-    doc.text(`Price: ${formatAnalysisPrice(analysis, proposal)}`, 14, 59);
-    doc.text(`Timeline: ${formatAnalysisTimeline(analysis, proposal)}`, 14, 66);
-    doc.save(`${String(analysis.vendor_name || proposal.vendor_name || "vendor").replace(/\s+/g, "_")}_report.pdf`);
+    void downloadPdfReport({
+      kind: "proposal-analysis",
+      data: {
+        analysis,
+        proposal,
+        contract,
+        judge_result: savedAnalysis?.judge_result ?? null,
+      },
+    }, `${String(analysis.vendor_name || proposal.vendor_name || "vendor").replace(/\s+/g, "_")}_report.pdf`).catch((error) => {
+      console.error("PDF export failed:", error);
+    });
   };
 
   if (loading) {
