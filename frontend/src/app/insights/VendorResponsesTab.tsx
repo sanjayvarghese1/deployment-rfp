@@ -192,8 +192,19 @@ export default function VendorResponsesTab() {
     if (!backgroundJobId || !selectedContract) return;
 
     let active = true;
+    const startTime = Date.now();
     const poll = async () => {
       try {
+        // Safe timeout: Vercel Free tier has a 10s execution timeout. Persistent analyses take ~3 mins.
+        // If polling takes more than 8 minutes, the serverless worker has definitely crashed or timed out.
+        if (Date.now() - startTime > 8 * 60 * 1000) {
+          setAnalysisProgress("❌ Error: The analysis timed out. This occurs because the Vercel Free (Hobby) tier enforces a strict 10-second limit on serverless functions, terminating the background agent pipeline midway. Please deploy the frontend to Render or upgrade to Vercel Pro to run long analyses.");
+          setAnalyzing(false);
+          setBackgroundJobId(null);
+          window.localStorage.removeItem(`analysis-job:${selectedContract}`);
+          return;
+        }
+
         const job = await getBackgroundAnalysisJob(backgroundJobId);
         if (!active) return;
 
@@ -207,9 +218,20 @@ export default function VendorResponsesTab() {
 
         setAnalysisProgress(job.progress || "Analysis running in background...");
         if (job.status === "completed" && job.result?.vendor_scores) {
+          let proposals = allProposals;
+          if (proposals.length === 0) {
+            const { data: propData, error: propError } = await supabase.from("proposals").select("*").eq("contract_id", selectedContract);
+            if (propError) {
+              console.warn("Failed to load proposals on completion:", propError);
+            } else if (propData) {
+              proposals = propData.map((row) => ({ proposal_id: row.id, ...normalizeDoc(row) }));
+              setAllProposals(proposals);
+            }
+          }
+
           const newAnalyses: Record<string, ProposalAnalysis> = {};
-          for (let i = 0; i < allProposals.length; i++) {
-            const proposal = allProposals[i];
+          for (let i = 0; i < proposals.length; i++) {
+            const proposal = proposals[i];
             const score = job.result.vendor_scores[i];
             if (proposal && score) {
               newAnalyses[proposal.proposal_id] = score;
@@ -217,6 +239,27 @@ export default function VendorResponsesTab() {
           }
           setAnalyses(newAnalyses);
           setJudgeResult(job.result.judge ?? null);
+
+          // Save the result to Supabase from the client as a fallback/safeguard
+          const analysisPayload = {
+            cache_key: job.result.cache_key || `${backgroundJobId}`,
+            created_at: new Date().toISOString(),
+            analyses_by_proposal_id: newAnalyses,
+            judge_result: job.result.judge ?? null,
+            vendor_count: proposals.length,
+            mandatory_criteria: selectedContractData?.rfp_metadata?.mandatory_criteria,
+            rfp_extract: job.result.rfp_extract || "",
+            vendor_extracts: job.result.vendor_extracts || {},
+            vendor_scores: job.result.vendor_scores || [],
+          };
+
+          try {
+            await saveProposalAnalysisResult(selectedContract, analysisPayload);
+            console.log("Analysis results successfully saved to database from client.");
+          } catch (saveError) {
+            console.warn("Failed to save analysis result from client:", saveError);
+          }
+
           void (async () => {
             const { data } = await supabase.from("contracts").select("*").eq("id", selectedContract).maybeSingle();
             if (data) {
