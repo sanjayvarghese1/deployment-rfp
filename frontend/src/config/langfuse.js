@@ -20,8 +20,9 @@ console.log(
 );
 
 export const langfuse =
-  globalForLangfuse.__langfuse ??
-  (langfuseConfigOk
+  (globalForLangfuse.__langfuse && typeof globalForLangfuse.__langfuse.trace === "function")
+    ? globalForLangfuse.__langfuse
+    : (langfuseConfigOk
     ? (() => {
         console.log("[Langfuse] Creating Langfuse client with baseUrl:", baseUrl);
         const client = new Langfuse({

@@ -301,19 +301,25 @@ export async function openRouterChat(
 
   console.log(`[OpenRouter] openRouterChat request started for model ${primaryModel}`);
 
-  const trace =
-    langfuse.trace({
-      name: "OpenRouter Call",
-      metadata: {
-        modelRequested:
-          primaryModel,
-        fallbackModel,
-        messageSummary:
-          summarizeMessages(
-            normalizedMessages
-          ),
-      },
-    });
+  let trace: any = null;
+  try {
+    if (typeof langfuse?.trace === "function") {
+      trace = langfuse.trace({
+        name: "OpenRouter Call",
+        metadata: {
+          modelRequested:
+            primaryModel,
+          fallbackModel,
+          messageSummary:
+            summarizeMessages(
+              normalizedMessages
+            ),
+        },
+      });
+    }
+  } catch (e) {
+    console.warn("[OpenRouter] Failed to initialize Langfuse trace:", e);
+  }
 
   const requestPayload =
     (selectedModel: string) => ({
@@ -336,17 +342,23 @@ export async function openRouterChat(
 
       console.log(`[OpenRouter] attempt ${attemptName} starting for model ${selectedModel}`);
 
-      const generation =
-        trace.generation({
-          name:
-            attemptName,
-          model:
-            selectedModel,
-          input:
-            summarizeMessages(
-              normalizedMessages
-            ),
-        });
+      let generation: any = null;
+      try {
+        if (trace && typeof trace.generation === "function") {
+          generation = trace.generation({
+            name:
+              attemptName,
+            model:
+              selectedModel,
+            input:
+              summarizeMessages(
+                normalizedMessages
+              ),
+          });
+        }
+      } catch (e) {
+        console.warn("[OpenRouter] Failed to create Langfuse generation:", e);
+      }
 
       let finalized =
         false;
@@ -358,9 +370,15 @@ export async function openRouterChat(
           return;
 
         finalized = true;
-        generation.end(
-          body
-        );
+        try {
+          if (generation && typeof generation.end === "function") {
+            generation.end(
+              body
+            );
+          }
+        } catch (e) {
+          console.warn("[OpenRouter] Failed to end Langfuse generation:", e);
+        }
       };
 
       try {
@@ -515,30 +533,42 @@ export async function openRouterChat(
         "Primary Model Attempt"
       );
 
-    trace.update({
-      metadata: {
-        modelUsed:
-          primaryModel,
-        tokenUsage: result.usage,
-        inputTokens: result.usage?.input || 0,
-        outputTokens: result.usage?.output || 0,
-        totalTokens: (result.usage?.input || 0) + (result.usage?.output || 0),
-        estimatedCostUsd: result.cost,
-        costBreakdown: {
-          input: result.cost !== 0 ? result.cost * 0.25 : 0, // approx split
-          output: result.cost !== 0 ? result.cost * 0.75 : 0,
-        },
-        latencyMs:
-          Date.now() -
-          requestStartedAt,
-      },
-    });
+    try {
+      if (trace && typeof trace.update === "function") {
+        trace.update({
+          metadata: {
+            modelUsed:
+              primaryModel,
+            tokenUsage: result.usage,
+            inputTokens: result.usage?.input || 0,
+            outputTokens: result.usage?.output || 0,
+            totalTokens: (result.usage?.input || 0) + (result.usage?.output || 0),
+            estimatedCostUsd: result.cost,
+            costBreakdown: {
+              input: result.cost !== 0 ? result.cost * 0.25 : 0, // approx split
+              output: result.cost !== 0 ? result.cost * 0.75 : 0,
+            },
+            latencyMs:
+              Date.now() -
+              requestStartedAt,
+          },
+        });
+      }
+    } catch (e) {
+      console.warn("[OpenRouter] Failed to update Langfuse trace:", e);
+    }
 
     console.log(`[OpenRouter] primary result tokens=${JSON.stringify(result.usage)} cost=${String(result.cost)}`);
 
-    console.log(`[OpenRouter] Flushing trace to Langfuse...`);
-    await langfuse.flushAsync();
-    console.log(`[OpenRouter] Trace flushed successfully to Langfuse`);
+    try {
+      if (typeof langfuse?.flushAsync === "function") {
+        console.log(`[OpenRouter] Flushing trace to Langfuse...`);
+        await langfuse.flushAsync();
+        console.log(`[OpenRouter] Trace flushed successfully to Langfuse`);
+      }
+    } catch (e) {
+      console.warn("[OpenRouter] Failed to flush Langfuse trace:", e);
+    }
 
     return result.content;
   } catch {
@@ -548,30 +578,42 @@ export async function openRouterChat(
         "Fallback Model Attempt"
       );
 
-    trace.update({
-      metadata: {
-        modelUsed:
-          fallbackModel,
-        tokenUsage: result.usage,
-        inputTokens: result.usage?.input || 0,
-        outputTokens: result.usage?.output || 0,
-        totalTokens: (result.usage?.input || 0) + (result.usage?.output || 0),
-        estimatedCostUsd: result.cost,
-        costBreakdown: {
-          input: result.cost !== 0 ? result.cost * 0.25 : 0, // approx split
-          output: result.cost !== 0 ? result.cost * 0.75 : 0,
-        },
-        latencyMs:
-          Date.now() -
-          requestStartedAt,
-      },
-    });
+    try {
+      if (trace && typeof trace.update === "function") {
+        trace.update({
+          metadata: {
+            modelUsed:
+              fallbackModel,
+            tokenUsage: result.usage,
+            inputTokens: result.usage?.input || 0,
+            outputTokens: result.usage?.output || 0,
+            totalTokens: (result.usage?.input || 0) + (result.usage?.output || 0),
+            estimatedCostUsd: result.cost,
+            costBreakdown: {
+              input: result.cost !== 0 ? result.cost * 0.25 : 0, // approx split
+              output: result.cost !== 0 ? result.cost * 0.75 : 0,
+            },
+            latencyMs:
+              Date.now() -
+              requestStartedAt,
+          },
+        });
+      }
+    } catch (e) {
+      console.warn("[OpenRouter] Failed to update Langfuse trace:", e);
+    }
 
     console.log(`[OpenRouter] fallback result tokens=${JSON.stringify(result.usage)} cost=${String(result.cost)}`);
 
-    console.log(`[OpenRouter] Flushing fallback trace to Langfuse...`);
-    await langfuse.flushAsync();
-    console.log(`[OpenRouter] Fallback trace flushed successfully to Langfuse`);
+    try {
+      if (typeof langfuse?.flushAsync === "function") {
+        console.log(`[OpenRouter] Flushing fallback trace to Langfuse...`);
+        await langfuse.flushAsync();
+        console.log(`[OpenRouter] Fallback trace flushed successfully to Langfuse`);
+      }
+    } catch (e) {
+      console.warn("[OpenRouter] Failed to flush Langfuse trace:", e);
+    }
 
     return result.content;
   }

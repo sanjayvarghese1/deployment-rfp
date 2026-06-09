@@ -804,14 +804,18 @@ export async function runGeneratePipeline(
     decompositionData.inferredRequirements = analysis.inferredRequirements || [];
     decompositionData.needsDecomposition = true;
 
-    // Update totalStages to include subsystem generation
-    totalStages = baseStages + 1 + entries.length; // +1 analysis + N subsystem calls
+    // Update totalStages:
+    // base (batches + template + QA + PDF) + 1 analysis + N subsystem-generate + N subsystem-pdf
+    totalStages = baseStages + 1 + (fastMode ? GENERATION_BATCHES.length - 1 : 0) + entries.length * 2;
 
     decompositionContext = "PROJECT DECOMPOSITION ANALYSIS:\n";
     for (const [name, desc] of entries) {
       decompositionContext += `- ${name}: ${desc}\n`;
     }
   } else {
+    // In fast mode each batch fires its own progress event; account for those extra slots.
+    if (fastMode) totalStages = baseStages + GENERATION_BATCHES.length - 1;
+
     decompositionContext = "PROJECT CONTEXT:\n";
     decompositionContext += analysis.projectIntent || input.project_title;
     if (subsystemCount > 0) {
@@ -868,21 +872,32 @@ export async function runGeneratePipeline(
   let consecutiveErrors = 0;
 
   if (fastMode) {
-    progress("Content Generation", "Generating all sections in parallel draft mode...");
-    const batchResults = await Promise.all(
-      GENERATION_BATCHES.map(async (batchKeys, batchIndex) => {
-        const batchLabels = batchKeys.map((k) => SECTION_LABELS[k]).join(", ");
-        try {
-          const batchResult = await generateBatch(batchKeys, seeds, metadata, {}, decompositionContext, true);
-          return { batchIndex, batchKeys, batchLabels, batchResult };
-        } catch (err) {
-          console.error(`Batch ${batchIndex + 1} failed in fast mode:`, err);
-          return { batchIndex, batchKeys, batchLabels, batchResult: {} as Partial<Record<SectionKey, string>> };
-        }
-      }),
-    );
+    // In fast mode all batches run in parallel for speed, but we still emit one
+    // progress event per batch as it completes so the UI bar moves visibly.
+    // We pre-claim 5 stage slots (one per batch) in totalStages so percentages are accurate.
+    const batchPromises = GENERATION_BATCHES.map(async (batchKeys, batchIndex) => {
+      const batchLabels = batchKeys.map((k) => SECTION_LABELS[k]).join(", ");
+      try {
+        const batchResult = await generateBatch(batchKeys, seeds, metadata, {}, decompositionContext, true);
+        // Fire a progress event once this specific batch is done
+        progress(
+          "Content Generation",
+          `Batch ${batchIndex + 1}/${GENERATION_BATCHES.length} done: ${batchLabels}`,
+        );
+        return { batchIndex, batchKeys, batchResult };
+      } catch (err) {
+        console.error(`Batch ${batchIndex + 1} failed in fast mode:`, err);
+        progress(
+          "Content Generation",
+          `Batch ${batchIndex + 1}/${GENERATION_BATCHES.length} (fallback): ${batchLabels}`,
+        );
+        return { batchIndex, batchKeys, batchResult: {} as Partial<Record<SectionKey, string>> };
+      }
+    });
 
-    for (const { batchKeys, batchResult } of batchResults.sort((left, right) => left.batchIndex - right.batchIndex)) {
+    const batchResults = await Promise.all(batchPromises);
+
+    for (const { batchKeys, batchResult } of batchResults.sort((a, b) => a.batchIndex - b.batchIndex)) {
       for (const key of batchKeys) {
         if (batchResult[key] && batchResult[key]!.length >= 100) {
           allSections[key] = batchResult[key]!;
@@ -1022,7 +1037,7 @@ export async function runGeneratePipeline(
         `Generating ${subsystemEntries.length} subsystem RFP(s) in parallel…`,
       );
 
-      // Generate all subsystems in parallel (3-4 at a time) instead of sequential
+      // Generate all subsystems in parallel then report individual progress
       const subsystemPromises = subsystemEntries.map(async ([subsystemName, subsystemDesc], idx) => {
         try {
           let parsedSections = await generateSubsystemRfp(
@@ -1030,6 +1045,10 @@ export async function runGeneratePipeline(
             subsystemDesc,
             metadata,
             decompositionData.inferredRequirements,
+          );
+          progress(
+            "Subsystem RFPs",
+            `Generated content for "${subsystemName}" (${idx + 1}/${subsystemEntries.length})`,
           );
 
           // Fallback 1: if fewer than 5 valid sections, copy from main RFP
