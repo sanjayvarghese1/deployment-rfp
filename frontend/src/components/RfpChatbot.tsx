@@ -333,6 +333,9 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
   const [editTarget, setEditTarget] = useState<TargetRfp>("full");
   const uploadInitRef = useRef(false);
 
+  // Pre-fetch QA cache: keyed by a fingerprint of answers+skipped so stale results are discarded.
+  const qaPrefetchRef = useRef<{ fingerprint: string; promise: Promise<QaReviewResponse> | null; result: QaReviewResponse | null }>({ fingerprint: "", promise: null, result: null });
+
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const progressScrollRef = useRef<HTMLDivElement>(null);
   const activeProgressItemRef = useRef<HTMLButtonElement | null>(null);
@@ -565,7 +568,10 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     };
   }, [applyEditedDraft]);
 
-  const intakeComplete = getNextRequiredKey(answers, skippedQuestions) === null;
+  // Intake is complete when every question is either answered OR intentionally skipped.
+  // We use getNextConversationKey (which covers all 20 RFP questions + the final optional
+  // one) so that skipping the last question also reveals the subsystem/template panel.
+  const intakeComplete = getNextConversationKey(answers, skippedQuestions) === null;
   const qaSuggestionsResolved = !qaReview || qaReview.improvements.every((_, index) => qaSuggestionStates[index]?.mode);
 
   const buildQaRevisionNotes = useCallback(() => {
@@ -864,6 +870,66 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     }
   }, [selectedSubsystems]);
 
+  // Auto-select "full" when intake is complete and there are no decomposition subsystems.
+  // We wait until decompositionLoading is false so that if the decomposition API returns
+  // subsystems we don't silently pre-select "full" and hide the subsystem picker from the user.
+  // The dep array uses `selectedSubsystems` (the Set reference) rather than `.size` so that
+  // React sees a real change when the Set is replaced.
+  useEffect(() => {
+    if (!intakeComplete || decompositionLoading) return;
+    const hasSubsystems = decompositionAnalysis?.subsystems && Object.keys(decompositionAnalysis.subsystems).length > 0;
+    if (!hasSubsystems && selectedSubsystems.size === 0) {
+      setSelectedSubsystems(new Set(["full"]));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intakeComplete, decompositionLoading, decompositionAnalysis, selectedSubsystems]);
+
+  // ─── Background QA pre-fetch ───────────────────────────────────────────────
+  // The moment intake is complete AND we're on step 1, silently kick off the QA
+  // API call in the background. When the user clicks "Run QA Analysis" the result
+  // is ready instantly (or the in-flight request is awaited rather than duplicated).
+  useEffect(() => {
+    if (!intakeComplete || wizardStep !== 1) return;
+    // Build a stable fingerprint to detect when answers change and we need a fresh fetch.
+    const skippedArr = Array.from(skippedQuestions).sort();
+    const fingerprint = JSON.stringify({ answers, skipped: skippedArr, template: selectedTemplate });
+    const cache = qaPrefetchRef.current;
+    // Already have a valid cached result or in-flight promise for this exact fingerprint.
+    if (cache.fingerprint === fingerprint && (cache.result || cache.promise)) return;
+    // Kick off a new background fetch.
+    const promise = fetch(apiUrl("/api/rfp/qa-review"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        answers,
+        selectedTemplate,
+        selectedSubsystems: Array.from(selectedSubsystems),
+        projectTitle: answers.project_title || profile?.company_name || "Project",
+        organizationName: answers.organization_name || profile?.company_name || "Organization",
+        category: answers.category || "software",
+        additionalDetails: answers[FINAL_INTAKE_KEY] || "",
+      }),
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("prefetch failed");
+        const data = (await res.json()) as QaReviewResponse;
+        // Only store if the fingerprint hasn't changed while we were fetching.
+        if (qaPrefetchRef.current.fingerprint === fingerprint) {
+          qaPrefetchRef.current = { fingerprint, promise: null, result: data };
+        }
+        return data;
+      })
+      .catch(() => {
+        // Silently discard prefetch errors — runQaReview will retry.
+        if (qaPrefetchRef.current.fingerprint === fingerprint) {
+          qaPrefetchRef.current = { fingerprint: "", promise: null, result: null };
+        }
+        return null as unknown as QaReviewResponse;
+      });
+    qaPrefetchRef.current = { fingerprint, promise, result: null };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intakeComplete, wizardStep, answers, skippedQuestions, selectedTemplate, selectedSubsystems]);
+
   const handleSkipCurrentQuestion = useCallback(() => {
     const currentKey = currentPromptKey;
     if (!currentKey || intaking || flowState !== "idle") return;
@@ -969,6 +1035,37 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     }
   };
 
+  // Helper: build the QA fetch payload (shared by prefetch + runQaReview)
+  const buildQaPayload = useCallback(() => ({
+    answers,
+    selectedTemplate,
+    selectedSubsystems: Array.from(selectedSubsystems),
+    projectTitle: answers.project_title || profile?.company_name || "Project",
+    organizationName: answers.organization_name || profile?.company_name || "Organization",
+    category: answers.category || "software",
+    additionalDetails: answers[FINAL_INTAKE_KEY] || "",
+  }), [answers, profile?.company_name, selectedSubsystems, selectedTemplate]);
+
+  // Fingerprint of current intake state — used to invalidate the prefetch cache when answers change.
+  const qaFingerprint = useMemo(() => {
+    const skippedArr = Array.from(skippedQuestions).sort();
+    return JSON.stringify({ answers, skipped: skippedArr, template: selectedTemplate });
+  }, [answers, skippedQuestions, selectedTemplate]);
+
+  // Internal fetch that returns the raw QaReviewResponse (used by both prefetch and runQaReview)
+  const fetchQaReview = useCallback(async (): Promise<QaReviewResponse> => {
+    const res = await fetch(apiUrl("/api/rfp/qa-review"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildQaPayload()),
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "Failed to review the intake");
+      throw new Error(errText);
+    }
+    return res.json() as Promise<QaReviewResponse>;
+  }, [buildQaPayload]);
+
   const runQaReview = useCallback(async () => {
     const missingKey = getNextRequiredKey(answers, skippedQuestions);
     if (missingKey) {
@@ -979,24 +1076,23 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     setQaLoading(true);
     setError(null);
     try {
-      const res = await fetch(apiUrl("/api/rfp/qa-review"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          answers,
-          selectedTemplate,
-          selectedSubsystems: Array.from(selectedSubsystems),
-          projectTitle: answers.project_title || profile?.company_name || "Project",
-          organizationName: answers.organization_name || profile?.company_name || "Organization",
-          category: answers.category || "software",
-          additionalDetails: answers[FINAL_INTAKE_KEY] || "",
-        }),
-      });
-      if (!res.ok) {
-        const errText = await res.text().catch(() => "Failed to review the intake");
-        throw new Error(errText);
+      // Use the prefetch cache if the fingerprint still matches (answers haven't changed).
+      const cache = qaPrefetchRef.current;
+      let data: QaReviewResponse;
+      if (cache.result && cache.fingerprint === qaFingerprint) {
+        // Instant result from background prefetch!
+        data = cache.result;
+      } else if (cache.promise && cache.fingerprint === qaFingerprint) {
+        // Prefetch is in-flight — await it instead of starting a new request.
+        data = await cache.promise;
+      } else {
+        // No valid cache — fetch now.
+        data = await fetchQaReview();
       }
-      const data = (await res.json()) as QaReviewResponse;
+      // Clear the cache after consuming it.
+      qaPrefetchRef.current = { fingerprint: "", promise: null, result: null };
+
+      // Only block progression if there are still-unanswered (non-skipped) required fields.
       if (data.missingRequired?.length) {
         const remainingMissing = data.missingRequired.filter((key) => !skippedQuestions.has(key));
         if (remainingMissing.length > 0) {
@@ -1008,11 +1104,19 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
           setError(`Before I score the draft, I still need: ${getMissingQuestionLabel(key, data.missingQuestionLabel || "one missing answer")}`);
           setInputValue("");
           scrollChatToBottom("auto");
+          return;
         }
-        return;
       }
-      setQaReview(data.qa);
-      initializeQaSuggestionStates(data.qa);
+      const qaResult = data.qa ?? {
+        overallScore: 60,
+        missingSections: [],
+        improvements: [],
+        strengths: ["Intake completed with user-selected skips applied."],
+        readinessLevel: "needs_minor_edits" as const,
+        scoreExplanation: "Score estimated — some intake fields were intentionally skipped.",
+      };
+      setQaReview(qaResult);
+      initializeQaSuggestionStates(qaResult);
       setWizardStep(2);
       setError(null);
     } catch (err) {
@@ -1021,7 +1125,7 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     } finally {
       setQaLoading(false);
     }
-  }, [answers, initializeQaSuggestionStates, profile?.company_name, selectedSubsystems, selectedTemplate, skippedQuestions]);
+  }, [answers, fetchQaReview, initializeQaSuggestionStates, qaFingerprint, scrollChatToBottom, skippedQuestions]);
 
   const startGeneration = async () => {
     const organizationName = answers.organization_name || profile?.company_name || "Organization";
@@ -1446,16 +1550,31 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
         )}
 
         {wizardStep === 3 && generationSnapshot.status === "running" && activeGenerationProgress && (
-          <div style={{ background: "var(--surface)", border: "1px solid var(--card-border)", borderRadius: 12, padding: 14, margin: "12px 20px", fontSize: 13, color: "var(--muted)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 8 }}>
-              <strong style={{ color: "var(--foreground)" }}>{activeGenerationProgress.stage}</strong>
-              <span>{activeGenerationProgress.percent}%</span>
+          <div style={{ background: "var(--surface)", border: "1px solid var(--card-border)", borderRadius: 14, padding: 16, margin: "12px 20px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {/* Pulsing dot */}
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--primary)", display: "inline-block", animation: "pulse 1.4s ease-in-out infinite" }} />
+                <strong style={{ color: "var(--foreground)", fontSize: 13 }}>{activeGenerationProgress.stage}</strong>
+              </div>
+              <span style={{ fontVariantNumeric: "tabular-nums", fontSize: 12, color: "var(--muted)" }}>
+                {activeGenerationProgress.percent}% &bull; {formatTime(elapsed)}
+              </span>
             </div>
-            <div style={{ height: 6, borderRadius: 999, background: "var(--surface-hover)", overflow: "hidden", marginBottom: 8 }}>
-              <div style={{ height: "100%", width: `${activeGenerationProgress.percent}%`, background: "var(--primary)", borderRadius: 999, transition: "width 0.4s ease" }} />
+            {/* Segmented progress bar */}
+            <div style={{ height: 8, borderRadius: 999, background: "var(--surface-hover)", overflow: "hidden", marginBottom: 8, position: "relative" }}>
+              <div style={{
+                height: "100%",
+                width: `${activeGenerationProgress.percent}%`,
+                background: activeGenerationProgress.percent >= 90
+                  ? "linear-gradient(90deg, var(--primary), #16a34a)"
+                  : "linear-gradient(90deg, var(--primary), #60a5fa)",
+                borderRadius: 999,
+                transition: "width 0.6s cubic-bezier(0.4, 0, 0.2, 1)",
+              }} />
             </div>
-            <div>{activeGenerationProgress.message}</div>
-            <div style={{ marginTop: 8 }}>Generation is running in the background. You can leave this page and keep exploring while it finishes.</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>{activeGenerationProgress.message}</div>
+            <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)", opacity: 0.75 }}>Generation is running in the background. You can leave this page and come back.</div>
           </div>
         )}
 
@@ -1480,15 +1599,19 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
                   </div>
                 </div>
               </div>
-              {qaReview.strengths.length > 0 && (
-                <div style={{ fontSize: 12 }}><strong>Strengths:</strong> {qaReview.strengths.slice(0, 3).join(", ")}</div>
-              )}
-              {qaReview.improvements.length > 0 && (
-                <div style={{ fontSize: 12, marginTop: 4 }}>
-                  <strong>Suggestions:</strong>
-                  <ul style={{ margin: "6px 0 0 18px", padding: 0, display: "grid", gap: 4 }}>
-                    {qaReview.improvements.slice(0, 5).map((item, index) => <li key={index}>{item}</li>)}
-                  </ul>
+              {qaReview.strengths && qaReview.strengths.length > 0 && (
+                <div style={{ fontSize: 13, lineHeight: 1.5, marginTop: 10, marginBottom: 8, color: "var(--foreground-secondary)" }}>
+                  <strong style={{ display: "block", marginBottom: 6, color: "var(--primary)", fontSize: 12, textTransform: "uppercase", letterSpacing: "0.05em" }}>Mentor Assessment</strong>
+                  <div style={{ 
+                    fontStyle: "italic", 
+                    background: "rgba(224, 219, 203, 0.25)", 
+                    padding: "12px 14px", 
+                    borderRadius: 8, 
+                    borderLeft: "4px solid var(--primary)",
+                    whiteSpace: "pre-wrap"
+                  }}>
+                    "{Array.isArray(qaReview.strengths) ? qaReview.strengths.join("\n\n") : qaReview.strengths}"
+                  </div>
                 </div>
               )}
             </div>
@@ -1554,7 +1677,7 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
                     Continue without changes
                   </button>
                 )}
-                <button className="btn-outline" onClick={() => setWizardStep(1)}>Back to intake</button>
+                <button className="btn-outline" onClick={() => { setWizardStep(1); setQaReview(null); setQaSuggestionStates({}); }}>Back to intake</button>
               </div>
             </div>
           </div>
@@ -1781,7 +1904,7 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
               </div>
               <button className="btn-primary" style={{ width: "100%", padding: "12px 20px", fontSize: 15 }} onClick={runQaReview} disabled={qaLoading}>
                 <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0L19.2 12l-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/></svg>
-                {qaLoading ? "Reviewing..." : "Next"}
+                {qaLoading ? "Analysing intake..." : qaReview ? "Re-run QA Analysis" : "Run QA Analysis"}
               </button>
             </div>
           )}
@@ -1793,8 +1916,10 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
           )}
 
           {wizardStep === 3 && flowState === "generating" && (
-            <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 13, padding: 8 }}>
-              Pipeline running... {formatTime(elapsed)} elapsed
+            <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 12, padding: "6px 8px" }}>
+              {activeGenerationProgress
+                ? `${activeGenerationProgress.stage} — ${activeGenerationProgress.percent}% • ${formatTime(elapsed)} elapsed`
+                : `Generating... ${formatTime(elapsed)} elapsed`}
             </div>
           )}
         </div>

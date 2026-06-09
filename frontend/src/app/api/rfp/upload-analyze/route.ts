@@ -21,7 +21,7 @@ interface UploadedRfpAnalysis {
 interface AiScoreResult {
   overallScore: number;
   improvements: string[];
-  strengths: string[];
+  mentorFeedback: string;
   readinessLevel: string;
   scoreBreakdown?: {
     completeness?: number;
@@ -170,7 +170,7 @@ async function scoreRfpWithAi(analysis: UploadedRfpAnalysis): Promise<RfpScoreRe
           {
             role: "system",
             content:
-              "You are a senior procurement QA scorer. Evaluate RFP documents for completeness, clarity, technical depth, compliance coverage, and vendor-readiness. Return JSON only. Scores must be on a 0-100 scale, where 100 is excellent and 0 is unusable.",
+              "You are a senior procurement mentor and QA analyst. Evaluate RFP documents for completeness, clarity, technical depth, compliance coverage, and vendor-readiness. Return JSON only. Scores must be on a 0-100 scale, where 100 is excellent and 0 is unusable.",
           },
           {
             role: "user",
@@ -191,10 +191,11 @@ Evaluate the RFP for:
 3. Technical Depth - Does it include sufficient technical requirements and specifications?
 4. Compliance - Are compliance, security, and regulatory requirements adequately covered?
 
-Provide actionable improvements and identify strengths. Use short, concrete suggestions.
+Provide actionable improvements.
+Also provide "mentorFeedback" — a paragraph (3–5 sentences) of your expert analysis. Formulate it like a professional mentor: evaluate what is strong/detailed (pros), where the document is lacking or vague (cons), and explain how addressing the suggestions below will make this a highly competitive RFP for vendors.
 
 Return JSON with this exact shape:
-{"overallScore":number,"improvements":string[],"strengths":string[],"readinessLevel":"ready|needs_minor_edits|needs_major_revisions","scoreBreakdown":{"completeness":number,"clarity":number,"technicalDepth":number,"complianceReadiness":number}}`,
+{"overallScore":number,"improvements":string[],"mentorFeedback":string,"readinessLevel":"ready|needs_minor_edits|needs_major_revisions","scoreBreakdown":{"completeness":number,"clarity":number,"technicalDepth":number,"complianceReadiness":number}}`,
           },
         ],
         temperature: 0.2,
@@ -212,8 +213,8 @@ Return JSON with this exact shape:
 
     return {
       overallScore: Math.max(0, Math.min(100, Math.round(aiScore.overallScore))),
-       suggestions: (Array.isArray(aiScore.improvements) ? aiScore.improvements : []).slice(0, 6),
-       strengths: (Array.isArray(aiScore.strengths) ? aiScore.strengths : []).slice(0, 3),
+      suggestions: (Array.isArray(aiScore.improvements) ? aiScore.improvements : []).slice(0, 6),
+      strengths: [aiScore.mentorFeedback || ""],
       analysis,
     };
   } catch (error) {
@@ -296,7 +297,9 @@ function scoreRfpFallback(analysis: UploadedRfpAnalysis): RfpScoreResult {
   return {
     overallScore: Math.min(100, overallScore),
     suggestions: [...new Set(suggestions)].slice(0, 6), // Remove duplicates, limit to 6
-    strengths: ["Well-structured document", "Comprehensive content"],
+    strengths: [
+      "This uploaded RFP was processed using a basic rule-based analyzer because the AI service was temporarily unavailable. While it contains structured sections, it should be reviewed by a human mentor to ensure completeness, technical accuracy, and vendor-readiness."
+    ],
     analysis,
   };
 }
