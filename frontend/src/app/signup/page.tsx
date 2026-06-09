@@ -55,6 +55,11 @@ export default function SignupPage() {
           emailRedirectTo: `${window.location.origin}/login?verified=1`,
           data: {
             company_name: form.company_name,
+            user_type: userType,
+            industry: form.industry,
+            location: form.location,
+            website: form.website,
+            description: form.description,
           },
         },
       });
@@ -106,8 +111,23 @@ export default function SignupPage() {
         registration_number: "",
       };
 
+      // Destructure username out of profilePayload since public.users does not have a username column
+      const { username: payloadUsername, ...userPayload } = profilePayload;
+
       if (signUpData.session) {
-        const { error: profileError } = await supabase.from("profiles").upsert(profilePayload, {
+        const { error: userError } = await supabase.from("users").upsert(userPayload, {
+          onConflict: "id",
+        });
+
+        if (userError) {
+          throw userError;
+        }
+
+        const { error: profileError } = await supabase.from("profiles").upsert({
+          id: userId,
+          email: form.email,
+          username,
+        }, {
           onConflict: "id",
         });
 
