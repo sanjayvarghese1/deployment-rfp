@@ -36,11 +36,11 @@ function RfpIntakeRouteContent() {
   };
 
   const handleBackToOptions = () => {
-    router.push("/postrfp");
+    router.push("/rfp");
   };
 
   const handleBackToIntakeTabs = () => {
-    router.push("/postrfp");
+    router.push("/rfp");
   };
 
   if (authLoading || !user) {
