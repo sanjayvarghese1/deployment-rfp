@@ -3,6 +3,7 @@
 import type { ProposalAnalysis } from "@/services/aiService";
 import computeComparativeMetrics from "@/lib/comparativeMetrics";
 import computePairwiseComparisons from "@/lib/pairwiseComparator";
+import { extractPriceLikeText, formatPriceDisplay } from "@/lib/formatters/number";
 
 interface ProposalPairwiseComparisonProps {
   proposals: any[];
@@ -12,13 +13,31 @@ interface ProposalPairwiseComparisonProps {
 export default function ProposalPairwiseComparison({ proposals, analyses }: ProposalPairwiseComparisonProps) {
   if (!proposals || proposals.length === 0) return null;
 
-  const vendorScores = proposals.map((p) => ({
-    vendor_name: p.vendor_name || "Unknown",
-    price: p.price,
-    overall_score: analyses[p.proposal_id]?.overall_score ?? p.ai_score ?? 0,
-    risk_flags: analyses[p.proposal_id]?.risk_flags ?? [],
-    scoring_criteria: analyses[p.proposal_id]?.scoring_criteria ?? [],
-  }));
+  const isSafeShortText = (value: unknown) => {
+    const text = typeof value === "string" ? value.trim() : "";
+    if (!text || text.length > 80) return false;
+    return !/confidentiality notice|table of contents|executive summary|appendix|proposal/i.test(text);
+  };
+
+  const vendorScores = proposals.map((p) => {
+    const analysis = analyses[p.proposal_id];
+    const extractedPrice = extractPriceLikeText(p.extracted_text ?? p.proposal_data);
+    const priceText = analysis?.price
+      ? analysis.price
+      : isSafeShortText(extractedPrice)
+        ? extractedPrice
+        : isSafeShortText(p.price)
+          ? p.price
+          : "";
+
+    return {
+      vendor_name: p.vendor_name || "Unknown",
+      price: priceText,
+      overall_score: analysis?.overall_score ?? p.ai_score ?? 0,
+      risk_flags: analysis?.risk_flags ?? [],
+      scoring_criteria: analysis?.scoring_criteria ?? [],
+    };
+  });
 
   const metrics = computeComparativeMetrics(vendorScores as any);
   const overallMap: Record<string, number> = {};
@@ -102,7 +121,7 @@ export default function ProposalPairwiseComparison({ proposals, analyses }: Prop
         <div className="bg-[var(--surface)] rounded-lg p-3 border border-[var(--divider)]">
           <p className="text-xs uppercase tracking-wide font-semibold text-[var(--muted)] mb-1">Lowest Price</p>
           <p className="text-sm font-bold text-[var(--foreground)]">{lowestPrice?.vendor_name ?? "N/A"}</p>
-          <p className="text-xs text-[var(--success)]">{lowestPrice?.price_raw ?? "N/A"}</p>
+          <p className="text-xs text-[var(--success)]">{lowestPrice?.price_raw ? formatPriceDisplay(lowestPrice.price_raw) : "N/A"}</p>
         </div>
 
         <div className="bg-[var(--surface)] rounded-lg p-3 border border-[var(--divider)]">

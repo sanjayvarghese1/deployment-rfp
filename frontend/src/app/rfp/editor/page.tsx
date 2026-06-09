@@ -243,7 +243,7 @@ export default function RfpEditorPage() {
         if (typeof destination === "string") {
           const lower = destination.toLowerCase();
           if (lower.includes("mandatory") || lower.includes("criteria") || lower.includes("targets")) {
-            destination = "/postrfp";
+            destination = "/rfp";
           }
         }
         try {
@@ -283,16 +283,16 @@ export default function RfpEditorPage() {
           if (typeof dest === "string") {
             const lower = dest.toLowerCase();
             if (lower.includes("mandatory") || lower.includes("criteria") || lower.includes("targets")) {
-              dest = "/postrfp";
+              dest = "/rfp";
             }
           }
           if (dest) {
             router.push(dest);
           } else {
-            router.push("/insights");
+            router.push("/rfp");
           }
         } catch {
-          router.push("/insights");
+          router.push("/rfp");
         }
       }
     } catch (error) {
@@ -365,7 +365,7 @@ export default function RfpEditorPage() {
                   if (typeof dest === "string") {
                     const lower = dest.toLowerCase();
                     if (lower.includes("mandatory") || lower.includes("criteria") || lower.includes("targets")) {
-                      dest = "/postrfp";
+                      dest = "/rfp";
                     }
                   }
                   if (dest) {

@@ -468,9 +468,17 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
         setProgress(null);
       }
       if (snapshot.status === "error" && snapshot.error) {
-        setError(snapshot.error);
-        setFlowState("review");
-        setWizardStep(3);
+        if (snapshot.error.includes("expired")) {
+          // Reset the background generation immediately to clear the expired error
+          resetBackgroundGeneration();
+          setError(null);
+          setFlowState("idle");
+          setWizardStep(1);
+        } else {
+          setError(snapshot.error);
+          setFlowState("review");
+          setWizardStep(3);
+        }
       }
     });
   }, []);
@@ -1545,7 +1553,50 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
         {/* Error display */}
         {error && (
           <div style={{ background: "var(--danger-light)", border: "1px solid var(--danger)", borderRadius: 8, padding: 12, margin: "8px 20px", color: "var(--danger)", fontSize: 13 }}>
-            {error}
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>Error during generation</div>
+            <div style={{ marginBottom: 10, lineHeight: 1.5 }}>{error}</div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                type="button"
+                className="btn-outline"
+                onClick={() => {
+                  setError(null);
+                  if (wizardStep === 3 && !result) {
+                    setWizardStep(1);
+                    setFlowState("idle");
+                  }
+                }}
+                style={{
+                  fontSize: 11,
+                  padding: "4px 10px",
+                  background: "#fff",
+                  border: "1px solid var(--danger)",
+                  color: "var(--danger)",
+                  borderRadius: 6,
+                  cursor: "pointer",
+                  fontWeight: 600,
+                }}
+              >
+                Back to Intake
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={handleStartOver}
+                style={{
+                  fontSize: 11,
+                  padding: "4px 10px",
+                  background: "var(--danger)",
+                  border: "none",
+                  color: "#fff",
+                  borderRadius: 6,
+                  cursor: "pointer",
+                  fontWeight: 600,
+                }}
+              >
+                Start Over
+              </button>
+            </div>
           </div>
         )}
 

@@ -34,8 +34,8 @@ export default function CompanyProfilePage() {
   }, []);
 
   const handleBack = () => {
-    if (referrer === "insights") {
-      router.push("/insights");
+    if (referrer === "insights" || referrer === "postrfp" || referrer === "rfp") {
+      router.push("/rfp");
     } else if (referrer === "contracts") {
       router.push("/contracts");
     } else {

@@ -176,17 +176,8 @@ export default function VendorResponsesTab() {
     }
   }, [selectedContract]);
 
-  useEffect(() => {
-    if (!selectedContract || !selectedContractData || allProposals.length === 0) return;
-    if (selectedContractData.last_analysis_result?.analyses_by_proposal_id) return;
-    if (backgroundJobId || analyzing) return;
-
-    const autoKey = `analysis-auto-started:${selectedContract}`;
-    if (window.localStorage.getItem(autoKey) === "1") return;
-
-    window.localStorage.setItem(autoKey, "1");
-    void runAIAnalysis();
-  }, [selectedContract, selectedContractData, allProposals, backgroundJobId, analyzing]);
+  // Automatic analysis trigger removed to prevent unexpected serverless execution and cost.
+  // Analysis should only be initiated when the user clicks the "Run AI Analysis" button.
 
   useEffect(() => {
     if (!backgroundJobId || !selectedContract) return;

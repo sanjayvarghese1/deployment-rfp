@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -60,7 +60,7 @@ export default function RfpUploadReviewPage() {
       <div className="fixed left-4 top-2 z-40">
         <button
           type="button"
-          onClick={() => router.push("/postrfp")}
+          onClick={() => router.push("/rfp")}
           className="inline-flex items-center gap-2 rounded-full border border-[var(--card-border)] bg-[var(--surface)] px-4 py-2 text-sm font-semibold text-[var(--foreground)] shadow-sm transition-colors hover:border-[var(--primary)] hover:text-[var(--primary)]"
         >
           <span aria-hidden="true">←</span>

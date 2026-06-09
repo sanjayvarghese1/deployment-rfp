@@ -60,16 +60,29 @@ export default function ApplyPage() {
   const [quickPdfFileName, setQuickPdfFileName] = useState("");
   const [submitMessage, setSubmitMessage] = useState("");
 
-  /* ─── Fetch contract ─── */
+  /* ─── Fetch contract and check for existing proposal ─── */
   useEffect(() => {
-    if (!contractId) return;
-    const fetchContract = async () => {
-      const { data, error } = await supabase.from("contracts").select("*").eq("id", contractId).single();
-      if (!error && data) setContract({ contract_id: data.id, ...normalizeDoc(data as Record<string, unknown>) });
+    if (!contractId || !user) return;
+    const fetchData = async () => {
+      const [contractRes, proposalRes] = await Promise.all([
+        supabase.from("contracts").select("*").eq("id", contractId).single(),
+        supabase.from("proposals").select("id").eq("contract_id", contractId).eq("vendor_id", user.id).maybeSingle()
+      ]);
+
+      if (!contractRes.error && contractRes.data) {
+        setContract({ contract_id: contractRes.data.id, ...normalizeDoc(contractRes.data as Record<string, unknown>) });
+      }
+
+      if (proposalRes.data) {
+        // Already submitted, redirect back to contract details where already-applied banner is shown
+        router.push(`/contracts/${contractId}`);
+        return;
+      }
+
       setLoading(false);
     };
-    fetchContract();
-  }, [contractId]);
+    fetchData();
+  }, [contractId, user, router]);
 
   useEffect(() => {
     if (!authLoading && !user) router.push("/login");

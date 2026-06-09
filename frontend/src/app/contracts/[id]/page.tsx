@@ -69,7 +69,12 @@ export default function ContractDetailPage() {
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [cachedAnalysisLoadedFor, setCachedAnalysisLoadedFor] = useState<string | null>(null);
   const [restoredFromContract, setRestoredFromContract] = useState(false);
-  const [referrer, setReferrer] = useState("");
+  const [referrer, setReferrer] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      return new URLSearchParams(window.location.search).get("from") || "";
+    }
+    return "";
+  });
   const [backgroundJobId, setBackgroundJobId] = useState<string | null>(null);
 
   const savedAnalysis = contract?.last_analysis_result;
@@ -143,6 +148,7 @@ export default function ContractDetailPage() {
   }, [contractId]);
 
   useEffect(() => {
+    if (referrer === "my-contracts") return;
     const loadCachedAnalysis = async () => {
       if (!contract || proposals.length === 0) return;
 
@@ -184,10 +190,10 @@ export default function ContractDetailPage() {
     };
 
     loadCachedAnalysis();
-  }, [contract, proposals, contractId, cachedAnalysisLoadedFor]);
+  }, [contract, proposals, contractId, cachedAnalysisLoadedFor, referrer]);
 
   useEffect(() => {
-    if (!contract || proposals.length === 0 || restoredFromContract) return;
+    if (referrer === "my-contracts" || !contract || proposals.length === 0 || restoredFromContract) return;
 
     const stored = contract.last_analysis_result;
     if (!stored?.analyses_by_proposal_id) return;
@@ -204,19 +210,19 @@ export default function ContractDetailPage() {
     setJudgeResult(stored.judge_result ?? null);
     setAnalysisProgress("Loaded saved analysis from Supabase.");
     setRestoredFromContract(true);
-  }, [contract, proposals, restoredFromContract]);
+  }, [contract, proposals, restoredFromContract, referrer]);
 
   useEffect(() => {
-    if (!contractId) return;
+    if (!contractId || referrer === "my-contracts") return;
     const storedJobId = window.localStorage.getItem(`analysis-job:${contractId}`);
     if (storedJobId) {
       setBackgroundJobId(storedJobId);
       setAnalysisProgress("Analysis is running in the background...");
     }
-  }, [contractId]);
+  }, [contractId, referrer]);
 
   useEffect(() => {
-    if (!backgroundJobId || proposals.length === 0) return;
+    if (!backgroundJobId || proposals.length === 0 || referrer === "my-contracts") return;
 
     let active = true;
     const poll = async () => {
@@ -282,7 +288,7 @@ export default function ContractDetailPage() {
       active = false;
       window.clearInterval(interval);
     };
-  }, [backgroundJobId, proposals, contractId, savedAnalysis]);
+  }, [backgroundJobId, proposals, contractId, savedAnalysis, referrer]);
 
   useEffect(() => {
     if (!authLoading && !user) router.push("/login");
@@ -525,6 +531,7 @@ export default function ContractDetailPage() {
   if (!contract) return <div className="flex justify-center py-20 text-[var(--muted)]">Contract not found.</div>;
 
   const isOwner = user?.id === contract.posted_by;
+  const hasSubmitted = proposals.some((p) => p.vendor_id === user?.id);
   const sortedProposals = [...proposals].sort((a, b) => {
     const sA = analyses[a.proposal_id]?.overall_score ?? a.ai_score ?? 0;
     const sB = analyses[b.proposal_id]?.overall_score ?? b.ai_score ?? 0;
@@ -566,6 +573,8 @@ export default function ContractDetailPage() {
         onClick={() => {
           if (referrer === "insights") {
             router.push("/insights?tab=blank");
+          } else if (referrer === "my-contracts") {
+            router.push("/my-contracts");
           } else {
             router.push("/contracts");
           }
@@ -573,8 +582,9 @@ export default function ContractDetailPage() {
         className="inline-flex items-center gap-1 text-sm text-[var(--muted)] hover:text-[var(--primary)] mb-5 transition-colors"
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7"/></svg>
-        Back to {referrer === "insights" ? "My Contracts" : "Contracts"}
+        Back to {referrer === "insights" ? "My Contracts" : referrer === "my-contracts" ? "My Contracts" : "Contracts"}
       </button>
+
 
       {/* Contract Header */}
       <div className="card mb-4">
@@ -707,8 +717,28 @@ export default function ContractDetailPage() {
         </div>
       )}
 
+      {/* Already Applied Banner */}
+      {user && !isOwner && hasSubmitted && (
+        <div className="bg-[var(--success-light)] rounded-xl border border-[var(--success)]/20 p-6 mb-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold text-[var(--success)] flex items-center gap-2">
+              <svg className="w-5 h-5 text-[var(--success)]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+              </svg>
+              Proposal Submitted
+            </h2>
+            <p className="text-sm text-[var(--success)]/80 mt-1">
+              You have already submitted a proposal for this contract. We will notify you once the RFP company reviews it.
+            </p>
+          </div>
+          <span className="px-3.5 py-1.5 rounded-lg bg-white/70 border border-[var(--success)]/30 text-xs font-semibold text-[var(--success)] shrink-0 capitalize">
+            Status: {proposals.find(p => p.vendor_id === user.id)?.status || "pending"}
+          </span>
+        </div>
+      )}
+
       {/* Apply Button for vendors */}
-      {user && !isOwner && contract.status === "open" && (
+      {user && !isOwner && !hasSubmitted && contract.status === "open" && (
         <div className="bg-[var(--surface)] rounded-xl border border-[var(--divider)] p-6 mb-4">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div>
@@ -767,19 +797,23 @@ export default function ContractDetailPage() {
                       <p className="text-sm text-[var(--muted)]">{proposals.length} proposal{proposals.length !== 1 ? "s" : ""} received</p>
                       {analysisProgress && <p className="text-xs text-[var(--primary)] mt-1">{analysisProgress}</p>}
                     </div>
-                        <div className="inline-flex items-center gap-2">
-                          <button onClick={runAIAnalysis} disabled={analyzing || backgroundJobId !== null} className="inline-flex items-center gap-2 bg-[var(--primary)] text-[#EFECE3] px-5 py-2 rounded-lg text-sm font-medium hover:bg-[var(--primary-hover)] disabled:opacity-50 transition-all shadow-sm">
-                            {analyzing || backgroundJobId !== null ? <><div className="w-3.5 h-3.5 border-2 border-[#EFECE3]/30 border-t-[#EFECE3] rounded-full animate-spin" />Analyzing...</> : <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>Run AI Analysis</>}
+                    {/* Run AI Analysis — only shown when coming from Post RFP, not My Contracts */}
+                    {referrer !== "my-contracts" && (
+                      <div className="inline-flex items-center gap-2">
+                        <button onClick={runAIAnalysis} disabled={analyzing || backgroundJobId !== null} className="inline-flex items-center gap-2 bg-[var(--primary)] text-[#EFECE3] px-5 py-2 rounded-lg text-sm font-medium hover:bg-[var(--primary-hover)] disabled:opacity-50 transition-all shadow-sm">
+                          {analyzing || backgroundJobId !== null ? <><div className="w-3.5 h-3.5 border-2 border-[#EFECE3]/30 border-t-[#EFECE3] rounded-full animate-spin" />Analyzing...</> : <><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>Run AI Analysis</>}
+                        </button>
+                        {(analyzing || backgroundJobId) && (
+                          <button onClick={stopAnalysis} className="ml-2 inline-flex items-center gap-2 bg-[#F3F2F1] text-[#1A1916] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#E9E8E6] transition-all border">
+                            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" strokeWidth="1.5"/></svg> Stop
                           </button>
-                          {(analyzing || backgroundJobId) && (
-                            <button onClick={stopAnalysis} className="ml-2 inline-flex items-center gap-2 bg-[#F3F2F1] text-[#1A1916] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#E9E8E6] transition-all border">
-                              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" strokeWidth="1.5"/></svg> Stop
-                            </button>
-                          )}
-                        </div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
-                  {activeAnalysis?.analyses_by_proposal_id && (
+                  {/* Analysis results — only shown when coming from Post RFP, not My Contracts */}
+                  {referrer !== "my-contracts" && activeAnalysis?.analyses_by_proposal_id && (
                     <div className="rounded-xl border border-[var(--primary)]/20 bg-[var(--primary-light)] p-5 space-y-4">
                       <div className="flex items-center justify-between gap-3">
                         <div>
@@ -829,8 +863,8 @@ export default function ContractDetailPage() {
                     </div>
                   )}
 
-                  {/* ═══ Agent 3 — Judge Recommendation View ═══ */}
-                  {judgeResult?.final_recommendation_view && (
+                  {/* Judge recommendation — only shown when coming from Post RFP, not My Contracts */}
+                  {referrer !== "my-contracts" && judgeResult?.final_recommendation_view && (
                     <div className="bg-[var(--success-light)] border border-[var(--success)]/30 rounded-xl p-5 space-y-3">
                       <div className="flex items-center gap-2 mb-1">
                         <svg className="w-5 h-5 text-[var(--success)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -879,7 +913,7 @@ export default function ContractDetailPage() {
                   )}
 
                   {/* ═══ Agent 3 — Comparative Ranking (collapsible) ═══ */}
-                  {judgeResult?.comparative_analysis && (
+                  {referrer !== "my-contracts" && judgeResult?.comparative_analysis && (
                     <details className="group">
                       <summary className="text-sm text-[var(--primary)] hover:text-[var(--primary-hover)] cursor-pointer font-medium flex items-center gap-1.5">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
@@ -913,7 +947,7 @@ export default function ContractDetailPage() {
                   )}
 
                   {/* ═══ Fallback: Simple best vendor when no Judge yet ═══ */}
-                  {!judgeResult && sortedProposals.length > 0 && (analyses[sortedProposals[0].proposal_id]) && (
+                  {referrer !== "my-contracts" && !judgeResult && sortedProposals.length > 0 && (analyses[sortedProposals[0].proposal_id]) && (
                     <div className="bg-[var(--success-light)] border border-[var(--success)]/30 rounded-xl p-5">
                       <p className="text-sm font-semibold text-[var(--success)] mb-1">Top Scored Vendor</p>
                       <p className="text-[var(--success)] font-medium">{sortedProposals[0].vendor_name}</p>
@@ -935,7 +969,7 @@ export default function ContractDetailPage() {
                       <div key={p.proposal_id} className={`border rounded-xl p-5 ${
                         isAccepted ? "border-[var(--success)] bg-[var(--success-light)] ring-2 ring-[var(--success)]/30" :
                         isRejected ? "border-[var(--danger)]/40 bg-[var(--danger-light)] opacity-70" :
-                        idx === 0 && score ? "border-[var(--divider)] ring-2 ring-[var(--success)]/30" :
+                        referrer !== "my-contracts" && idx === 0 && score ? "border-[var(--divider)] ring-2 ring-[var(--success)]/30" :
                         "border-[var(--divider)]"
                       }`}>
                         {/* Status banner */}
@@ -959,7 +993,7 @@ export default function ContractDetailPage() {
                             <p className="text-xs text-[var(--muted)]">{p.proposal_type === "generated" ? "Generated proposal" : "Uploaded proposal"} · {p.created_at}</p>
                           </div>
                           <div className="flex items-center gap-2">
-                            {analysis?.independent_recommendation && (
+                            {referrer !== "my-contracts" && analysis?.independent_recommendation && (
                               <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
                                 analysis.independent_recommendation === "Strongly Recommended" ? "bg-[var(--success-light)] text-[var(--success)]" :
                                 analysis.independent_recommendation === "Recommended" ? "bg-[var(--primary-light)] text-[var(--primary)]" :
@@ -968,8 +1002,10 @@ export default function ContractDetailPage() {
                                 "bg-[var(--surface)] text-[var(--muted)]"
                               }`}>{analysis.independent_recommendation}</span>
                             )}
-                            <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${risk === "Low" ? "bg-[var(--success-light)] text-[var(--success)]" : risk === "High" ? "bg-[var(--danger-light)] text-[var(--danger)]" : "bg-[var(--surface)] text-[var(--muted)]"}`}>{risk}</span>
-                            {score != null && (
+                            {referrer !== "my-contracts" && (
+                              <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${risk === "Low" ? "bg-[var(--success-light)] text-[var(--success)]" : risk === "High" ? "bg-[var(--danger-light)] text-[var(--danger)]" : "bg-[var(--surface)] text-[var(--muted)]"}`}>{risk}</span>
+                            )}
+                            {referrer !== "my-contracts" && score != null && (
                               <span className={`text-sm font-bold ${score >= 70 ? "text-[var(--success)]" : score >= 50 ? "text-[var(--warning)]" : "text-[var(--danger)]"}`}>{score}/100</span>
                             )}
                           </div>
@@ -1017,7 +1053,7 @@ export default function ContractDetailPage() {
                           </div>
                         )}
 
-                        {analysis && (
+                        {referrer !== "my-contracts" && analysis && (
                           <details className="mt-3 pt-3 border-t border-[var(--divider)] group">
                             <summary className="cursor-pointer text-sm font-medium text-[var(--primary)] hover:text-[var(--primary-hover)]">
                               View detailed AI breakdown

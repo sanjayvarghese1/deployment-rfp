@@ -44,9 +44,11 @@ function downloadPdfFromBase64(base64: string, filename: string) {
 }
 
 export default function ContractsPage() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, profile, loading: authLoading } = useAuth();
   const router = useRouter();
-  const [tab, setTab] = useState<"marketplace" | "my">("marketplace");
+  const isRfpCompany = profile?.user_type === "rfp_company";
+  // RFP Companies land on their own contracts by default
+  const [tab, setTab] = useState<"marketplace" | "my">(isRfpCompany ? "my" : "marketplace");
   const [contracts, setContracts] = useState<any[]>([]);
   const [myContracts, setMyContracts] = useState<any[]>([]);
   const [search, setSearch] = useState("");
@@ -94,6 +96,14 @@ export default function ContractsPage() {
     if (!authLoading && !user) router.push("/login");
   }, [user, authLoading, router]);
 
+  // Sync tab when profile loads asynchronously (RFP Companies → "my" tab)
+  useEffect(() => {
+    if (profile?.user_type === "rfp_company") {
+      setTab("my");
+    }
+  }, [profile]);
+
+
   if (authLoading || !user) {
     return (
       <div className="min-h-screen bg-[#EFECE3] flex items-center justify-center">
@@ -120,12 +130,16 @@ export default function ContractsPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-[var(--foreground)] tracking-tight">Contracts</h1>
-          <p className="text-sm text-[var(--muted)] mt-0.5">Browse opportunities or manage your postings</p>
+          <h1 className="text-2xl font-bold text-[var(--foreground)] tracking-tight">
+            {isRfpCompany ? "My Contracts" : "Contracts"}
+          </h1>
+          <p className="text-sm text-[var(--muted)] mt-0.5">
+            {isRfpCompany ? "Your posted RFPs and contracts" : "Browse opportunities and apply for contracts"}
+          </p>
         </div>
-        {user && (
+        {isRfpCompany && user && (
           <Link
-            href="/insights"
+            href="/rfp"
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[var(--primary)] text-[#EFECE3] text-sm font-semibold hover:opacity-90 transition-opacity"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
@@ -136,19 +150,21 @@ export default function ContractsPage() {
         )}
       </div>
 
-      {/* Tabs */}
-      <div className="flex items-center gap-1 p-1 rounded-xl bg-[var(--surface)] w-fit mb-6">
-        <button
-          onClick={() => setTab("marketplace")}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-            tab === "marketplace"
-              ? "bg-[var(--card)] text-[var(--foreground)] shadow-sm"
-              : "text-[var(--muted)] hover:text-[var(--foreground)]"
-          }`}
-        >
-          Marketplace
-        </button>
-      </div>
+      {/* Tabs — Vendors see Marketplace; RFP Companies see only My Contracts */}
+      {!isRfpCompany && (
+        <div className="flex items-center gap-1 p-1 rounded-xl bg-[var(--surface)] w-fit mb-6">
+          <button
+            onClick={() => setTab("marketplace")}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              tab === "marketplace"
+                ? "bg-[var(--card)] text-[var(--foreground)] shadow-sm"
+                : "text-[var(--muted)] hover:text-[var(--foreground)]"
+            }`}
+          >
+            Marketplace
+          </button>
+        </div>
+      )}
 
       {/* ═══ Marketplace Tab ═══ */}
       {tab === "marketplace" && (
@@ -321,7 +337,7 @@ export default function ContractsPage() {
               </div>
               <p className="font-semibold text-[var(--foreground)]">No contracts yet</p>
               <p className="text-sm text-[var(--muted)] mt-1 mb-4">Create your first contract to start receiving proposals</p>
-              <Link href="/insights" className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[var(--primary)] text-[#EFECE3] text-sm font-semibold hover:opacity-90 transition-opacity">
+              <Link href="/rfp" className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[var(--primary)] text-[#EFECE3] text-sm font-semibold hover:opacity-90 transition-opacity">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                 </svg>

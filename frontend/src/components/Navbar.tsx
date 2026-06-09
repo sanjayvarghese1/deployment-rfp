@@ -12,13 +12,22 @@ export default function Navbar() {
   const [unreadNotifications, setUnreadNotifications] = useState(0);
   const pathname = usePathname();
 
+  const isVendor = profile?.user_type === "vendor";
+  const isRfpCompany = profile?.user_type === "rfp_company";
+
   const navItems = [
     { label: "Companies", href: "/companies" },
-    { label: "Contracts", href: "/contracts" },
-    { label: "Post RFP", href: "/postrfp" },
+    // RFP Companies go to dedicated My Contracts page; Vendors browse the marketplace
+    isRfpCompany
+      ? { label: "My Contracts", href: "/my-contracts" }
+      : { label: "Contracts", href: "/contracts" },
+    // Only RFP Companies see "RFP"
+    ...(!isVendor ? [{ label: "RFP", href: "/rfp" }] : []),
     { label: "Messages", href: "/messages" },
     { label: "Notifications", href: "/notifications", badge: unreadNotifications },
   ];
+
+
 
   useEffect(() => {
     if (!user) {

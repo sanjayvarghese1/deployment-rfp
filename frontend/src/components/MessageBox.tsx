@@ -126,8 +126,8 @@ export default function MessageBox({
           </div>
         )}
 
-        {groups.map((g) => (
-          <div key={g.label}>
+        {groups.map((g, gi) => (
+          <div key={g.label ? g.label : `group-${gi}`}>
             {g.label && (
               <div className="flex items-center gap-3 my-4">
                 <div className="flex-1 h-px bg-[var(--divider)]" />
@@ -143,7 +143,7 @@ export default function MessageBox({
                 const sameSender = prev?.sender_id === m.sender_id;
 
                 return (
-                  <div key={m.message_id} className={`flex ${isMine ? "justify-end" : "justify-start"} ${!sameSender ? "pt-2" : ""}`}>
+                  <div key={m.message_id ?? m.id ?? i} className={`flex ${isMine ? "justify-end" : "justify-start"} ${!sameSender ? "pt-2" : ""}`}>
                     <div className="group max-w-[75%]">
                       <div
                         className={`px-3.5 py-2 text-sm leading-relaxed rounded-2xl ${

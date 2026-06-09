@@ -23,6 +23,7 @@ export interface UserProfile {
   specialties: string[];
   phone: string;
   registration_number: string;
+  user_type: "vendor" | "rfp_company";
 }
 
 interface AuthContextType {
