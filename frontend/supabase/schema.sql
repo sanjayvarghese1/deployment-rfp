@@ -60,6 +60,7 @@ begin
     location,
     website,
     description,
+    user_type,
     rating,
     followers,
     created_at,
@@ -81,6 +82,7 @@ begin
     new.raw_user_meta_data->>'location',
     new.raw_user_meta_data->>'website',
     new.raw_user_meta_data->>'description',
+    coalesce(new.raw_user_meta_data->>'user_type', 'vendor'),
     0,
     '{}'::uuid[],
     now(),
@@ -100,7 +102,8 @@ begin
     industry = coalesce(excluded.industry, public.users.industry),
     location = coalesce(excluded.location, public.users.location),
     website = coalesce(excluded.website, public.users.website),
-    description = coalesce(excluded.description, public.users.description);
+    description = coalesce(excluded.description, public.users.description),
+    user_type = coalesce(excluded.user_type, public.users.user_type);
 
   return new;
 end;
