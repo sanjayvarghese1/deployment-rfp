@@ -327,8 +327,8 @@ export default function MyContractsPage() {
         {/* Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
           <div>
-            <h1 className="text-2xl font-bold text-[var(--foreground)] tracking-tight">My Contracts</h1>
-            <p className="text-sm text-[var(--muted)] mt-0.5">Manage your posted RFPs and contracts</p>
+            <h1 className="text-2xl font-bold text-[var(--foreground)] tracking-tight">My Homepage</h1>
+            <p className="text-sm text-[var(--muted)] mt-0.5">Manage your posted RFPs</p>
           </div>
           <Link
             href="/rfp"
@@ -337,7 +337,7 @@ export default function MyContractsPage() {
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
             </svg>
-            Post New Contract
+            Post New RFP
           </Link>
         </div>
 
@@ -371,7 +371,7 @@ export default function MyContractsPage() {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search your contracts..."
+              placeholder="Search your RFPs..."
               className="flex-1 bg-transparent text-sm text-[var(--foreground)] placeholder-[var(--muted)] outline-none"
             />
             {search && (
@@ -397,11 +397,11 @@ export default function MyContractsPage() {
               </svg>
             </div>
             <p className="font-semibold text-[var(--foreground)]">
-              {contracts.length === 0 ? "No contracts yet" : "No contracts match your filter"}
+              {contracts.length === 0 ? "No RFPs yet" : "No RFPs match your filter"}
             </p>
             <p className="text-sm text-[var(--muted)] mt-1 mb-5">
               {contracts.length === 0
-                ? "Create your first contract to start receiving proposals"
+                ? "Create your first RFP to start receiving proposals"
                 : "Try changing the status filter or search"}
             </p>
             {contracts.length === 0 && (
@@ -409,7 +409,7 @@ export default function MyContractsPage() {
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                 </svg>
-                Post Contract
+                Post RFP
               </Link>
             )}
           </div>

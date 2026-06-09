@@ -131,10 +131,10 @@ export default function ContractsPage() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-[var(--foreground)] tracking-tight">
-            {isRfpCompany ? "My Contracts" : "Contracts"}
+            {isRfpCompany ? "My Homepage" : "RFPs"}
           </h1>
           <p className="text-sm text-[var(--muted)] mt-0.5">
-            {isRfpCompany ? "Your posted RFPs and contracts" : "Browse opportunities and apply for contracts"}
+            {isRfpCompany ? "Your posted RFPs" : "Browse opportunities and apply for RFPs"}
           </p>
         </div>
         {isRfpCompany && user && (
@@ -180,7 +180,7 @@ export default function ContractsPage() {
                 onChange={(e) => setSearch(e.target.value)}
                 onFocus={() => setSearchFocused(true)}
                 onBlur={() => setSearchFocused(false)}
-                placeholder="Search contracts by title, description, or industry..."
+                placeholder="Search RFPs by title, description, or industry..."
                 className="flex-1 bg-transparent text-sm text-[var(--foreground)] placeholder-[var(--muted)] outline-none"
               />
               {search && (
@@ -318,7 +318,7 @@ export default function ContractsPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
                 </svg>
               </div>
-              <p className="font-semibold text-[var(--foreground)]">No contracts found</p>
+              <p className="font-semibold text-[var(--foreground)]">No RFPs found</p>
               <p className="text-sm text-[var(--muted)] mt-1">Try adjusting your search or filters</p>
             </div>
           )}
