@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/services/supabase";
+import { useAuth } from "@/contexts/AuthContext";
 import type { ProposalAnalysis, SavedProposalAnalysisResult } from "@/services/aiService";
 import formatCurrency from "@/lib/formatters/number";
 import { downloadPdfReport } from "@/services/pdfReports";
@@ -100,6 +101,7 @@ function scoreBarWidth(score: number, maxScore: number): string {
 export default function VendorReportPage() {
   const params = useParams<{ id?: string; proposalId?: string }>();
   const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
   const contractId = String(params?.id || "");
   const proposalId = String(params?.proposalId || "");
 
@@ -190,6 +192,18 @@ export default function VendorReportPage() {
     [criterionRows],
   );
   const satisfiedMandatoryCount = mandatoryConditionRows.filter((row) => row.satisfied).length;
+
+  useEffect(() => {
+    if (!authLoading && !user) router.push("/login");
+  }, [user, authLoading, router]);
+
+  if (authLoading || !user) {
+    return (
+      <div className="min-h-screen bg-[#EFECE3] flex items-center justify-center">
+        <div className="w-8 h-8 border-3 border-[var(--primary)] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   const downloadReport = () => {
     if (!analysis || !proposal) return;

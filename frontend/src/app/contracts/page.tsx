@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/services/supabase";
 
@@ -43,7 +44,8 @@ function downloadPdfFromBase64(base64: string, filename: string) {
 }
 
 export default function ContractsPage() {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
+  const router = useRouter();
   const [tab, setTab] = useState<"marketplace" | "my">("marketplace");
   const [contracts, setContracts] = useState<any[]>([]);
   const [myContracts, setMyContracts] = useState<any[]>([]);
@@ -87,6 +89,18 @@ export default function ContractsPage() {
       setMyContracts((data || []).map((row) => ({ contract_id: row.id, ...normalizeDoc(row) })));
     })();
   }, [user]);
+
+  useEffect(() => {
+    if (!authLoading && !user) router.push("/login");
+  }, [user, authLoading, router]);
+
+  if (authLoading || !user) {
+    return (
+      <div className="min-h-screen bg-[#EFECE3] flex items-center justify-center">
+        <div className="w-8 h-8 border-3 border-[var(--primary)] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   const filtered = contracts.filter((c) => {
     if (isPendingApproval(c.status)) return false;

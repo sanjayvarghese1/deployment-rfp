@@ -53,7 +53,7 @@ export default function ContractDetailPage() {
   const params = useParams<{ id?: string }>();
   const router = useRouter();
   const contractId: string = String(params?.id || "");
-  const { user, profile } = useAuth();
+  const { user, profile, loading: authLoading } = useAuth();
   const [contract, setContract] = useState<any>(null);
   const [proposals, setProposals] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -283,6 +283,18 @@ export default function ContractDetailPage() {
       window.clearInterval(interval);
     };
   }, [backgroundJobId, proposals, contractId, savedAnalysis]);
+
+  useEffect(() => {
+    if (!authLoading && !user) router.push("/login");
+  }, [user, authLoading, router]);
+
+  if (authLoading || !user) {
+    return (
+      <div className="min-h-screen bg-[#EFECE3] flex items-center justify-center">
+        <div className="w-8 h-8 border-3 border-[var(--primary)] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   const extractPdfText = async (pdfUrl: string, vendorName: string): Promise<string> => {
     try {

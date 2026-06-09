@@ -13,7 +13,7 @@ export default function CompanyProfilePage() {
   const params = useParams<{ id?: string }>();
   const router = useRouter();
   const companyId = params?.id;
-  const { user, profile } = useAuth();
+  const { user, profile, loading: authLoading } = useAuth();
   const [company, setCompany] = useState<Record<string, unknown> | null>(null);
   const [posts, setPosts] = useState<Record<string, unknown>[]>([]);
   const [contracts, setContracts] = useState<Record<string, unknown>[]>([]);
@@ -24,8 +24,6 @@ export default function CompanyProfilePage() {
   const [submittingReview, setSubmittingReview] = useState(false);
   const [showReviewForm, setShowReviewForm] = useState(false);
   const [referrer, setReferrer] = useState("");
-
-  if (!companyId) return null;
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -46,6 +44,7 @@ export default function CompanyProfilePage() {
   };
 
   useEffect(() => {
+    if (!companyId) return;
     const fetchCompany = async () => {
       try {
         const { data } = await supabase.from("users").select("*").eq("id", companyId).maybeSingle();
@@ -60,6 +59,7 @@ export default function CompanyProfilePage() {
   }, [companyId]);
 
   useEffect(() => {
+    if (!companyId) return;
     void (async () => {
       const [postsRes, contractsRes, reviewsRes] = await Promise.all([
         supabase.from("posts").select("*").eq("company_id", companyId),
@@ -71,6 +71,20 @@ export default function CompanyProfilePage() {
       setReviews((reviewsRes.data || []) as any[]);
     })();
   }, [companyId]);
+
+  useEffect(() => {
+    if (!authLoading && !user) router.push("/login");
+  }, [user, authLoading, router]);
+
+  if (authLoading || !user) {
+    return (
+      <div className="min-h-screen bg-[#EFECE3] flex items-center justify-center">
+        <div className="w-8 h-8 border-3 border-[var(--primary)] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!companyId) return null;
 
   const followers = Array.isArray((company as any)?.followers) ? ((company as any).followers as string[]) : [];
   const isFollowing = !!user && followers.length > 0 && followers.includes(user.id);
