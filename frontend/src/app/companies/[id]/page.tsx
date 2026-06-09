@@ -25,8 +25,6 @@ export default function CompanyProfilePage() {
   const [showReviewForm, setShowReviewForm] = useState(false);
   const [referrer, setReferrer] = useState("");
 
-  if (!companyId) return null;
-
   useEffect(() => {
     if (typeof window !== "undefined") {
       const urlParams = new URLSearchParams(window.location.search);
@@ -46,6 +44,7 @@ export default function CompanyProfilePage() {
   };
 
   useEffect(() => {
+    if (!companyId) return;
     const fetchCompany = async () => {
       try {
         const { data } = await supabase.from("users").select("*").eq("id", companyId).maybeSingle();
@@ -60,6 +59,7 @@ export default function CompanyProfilePage() {
   }, [companyId]);
 
   useEffect(() => {
+    if (!companyId) return;
     void (async () => {
       const [postsRes, contractsRes, reviewsRes] = await Promise.all([
         supabase.from("posts").select("*").eq("company_id", companyId),
@@ -71,6 +71,8 @@ export default function CompanyProfilePage() {
       setReviews((reviewsRes.data || []) as any[]);
     })();
   }, [companyId]);
+
+  if (!companyId) return null;
 
   const followers = Array.isArray((company as any)?.followers) ? ((company as any).followers as string[]) : [];
   const isFollowing = !!user && followers.length > 0 && followers.includes(user.id);
