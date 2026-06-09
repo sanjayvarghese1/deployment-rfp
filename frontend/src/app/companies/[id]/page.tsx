@@ -153,7 +153,7 @@ export default function CompanyProfilePage() {
         <div className="w-16 h-16 bg-[var(--surface)] rounded-2xl flex items-center justify-center mx-auto mb-4">
           <span className="text-2xl">🏢</span>
         </div>
-        <p className="text-[var(--muted)] font-medium">Company not found</p>
+        <p className="text-[var(--muted)] font-medium">Vendor not found</p>
       </div>
     </div>
   );
@@ -232,18 +232,18 @@ export default function CompanyProfilePage() {
                 <p className="text-[var(--muted)] text-sm leading-relaxed whitespace-pre-wrap">{((company as any)?.description as string) || "No description available."}</p>
               </div>
 
-              {/* Company Details Grid */}
+              {/* Vendor Details Grid */}
               <div className="card">
                 <h2 className="text-lg font-semibold text-[var(--foreground)] mb-4 flex items-center gap-2">
                   <span className="w-1 h-5 bg-[var(--primary)] rounded-full" />
-                  Company Details
+                  Vendor Details
                 </h2>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   {[
                     { label: "Industry", value: company.industry, icon: "🏢" },
                     { label: "Location", value: company.location, icon: "📍" },
                     { label: "Founded", value: company.founded_year, icon: "📅" },
-                    { label: "Company Size", value: company.company_size ? `${company.company_size} employees` : "", icon: "👥" },
+                    { label: "Vendor Size", value: company.company_size ? `${company.company_size} employees` : "", icon: "👥" },
                     { label: "Website", value: company.website, icon: "🌐", isLink: true },
                     { label: "Phone", value: company.phone, icon: "📞" },
                   ].map((item, i) => (

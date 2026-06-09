@@ -16,7 +16,7 @@ export default function Navbar() {
   const isRfpCompany = profile?.user_type === "rfp_company";
 
   const navItems = [
-    { label: "Companies", href: "/companies" },
+    { label: "Vendors", href: "/companies" },
     // RFP Companies go to dedicated My Contracts page; Vendors browse the marketplace
     isRfpCompany
       ? { label: "My Contracts", href: "/my-contracts" }
