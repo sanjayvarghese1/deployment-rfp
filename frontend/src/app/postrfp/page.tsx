@@ -17,14 +17,6 @@ export default function PostRfpPage() {
     if (!loading && !user) router.push("/login");
   }, [user, loading, router]);
 
-  if (loading || !user) {
-    return (
-      <div className="min-h-screen bg-[#EFECE3] flex items-center justify-center">
-        <div className="w-8 h-8 border-3 border-[var(--primary)] border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
-
   useEffect(() => {
     if (pathname === "/postrfp") {
       setActiveTab("rfp");
@@ -37,6 +29,14 @@ export default function PostRfpPage() {
     window.addEventListener("pageshow", resetToRfp);
     return () => window.removeEventListener("pageshow", resetToRfp);
   }, []);
+
+  if (loading || !user) {
+    return (
+      <div className="min-h-screen bg-[#EFECE3] flex items-center justify-center">
+        <div className="w-8 h-8 border-3 border-[var(--primary)] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   const handleTabClick = (tab: "rfp" | "contracts" | "responses") => {
     setActiveTab(tab);
