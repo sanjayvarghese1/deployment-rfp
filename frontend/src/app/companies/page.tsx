@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/services/supabase";
 
@@ -36,7 +37,8 @@ function getBannerGradient(id: string) {
 }
 
 export default function CompaniesPage() {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
+  const router = useRouter();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [search, setSearch] = useState("");
   const [industryFilter, setIndustryFilter] = useState("");
@@ -56,6 +58,18 @@ export default function CompaniesPage() {
       setCompanies((data || []) as Company[]);
     })();
   }, []);
+
+  useEffect(() => {
+    if (!authLoading && !user) router.push("/login");
+  }, [user, authLoading, router]);
+
+  if (authLoading || !user) {
+    return (
+      <div className="min-h-screen bg-[#EFECE3] flex items-center justify-center">
+        <div className="w-8 h-8 border-3 border-[var(--primary)] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   const toggleFollow = async (e: React.MouseEvent, companyId: string) => {
     e.preventDefault();

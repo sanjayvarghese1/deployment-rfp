@@ -44,9 +44,9 @@ type Step = "quick_upload" | "success";
 /* ═══════════════════════════════════════════════════════════ */
 export default function ApplyPage() {
   const params = useParams<{ id?: string }>();
-  const contractId = params?.id;
   const router = useRouter();
-  const { user, profile } = useAuth();
+  const contractId = params?.id;
+  const { user, profile, loading: authLoading } = useAuth();
 
   /* ─── core state ─── */
   const [contract, setContract] = useState<Record<string, unknown> | null>(null);
@@ -60,10 +60,9 @@ export default function ApplyPage() {
   const [quickPdfFileName, setQuickPdfFileName] = useState("");
   const [submitMessage, setSubmitMessage] = useState("");
 
-  if (!contractId) return null;
-
   /* ─── Fetch contract ─── */
   useEffect(() => {
+    if (!contractId) return;
     const fetchContract = async () => {
       const { data, error } = await supabase.from("contracts").select("*").eq("id", contractId).single();
       if (!error && data) setContract({ contract_id: data.id, ...normalizeDoc(data as Record<string, unknown>) });
@@ -71,6 +70,20 @@ export default function ApplyPage() {
     };
     fetchContract();
   }, [contractId]);
+
+  useEffect(() => {
+    if (!authLoading && !user) router.push("/login");
+  }, [user, authLoading, router]);
+
+  if (authLoading || !user) {
+    return (
+      <div className="min-h-screen bg-[#EFECE3] flex items-center justify-center">
+        <div className="w-8 h-8 border-3 border-[var(--primary)] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!contractId) return null;
 
   /* ═══ QUICK UPLOAD PDF HANDLER ═══ */
   const handleQuickUploadPdf = async () => {
@@ -154,7 +167,6 @@ export default function ApplyPage() {
   /* ─── Loading / auth guards ─── */
   if (loading) return <div className="flex justify-center items-center min-h-screen text-[var(--muted)]">Loading...</div>;
   if (!contract) return <div className="flex justify-center items-center min-h-screen text-[var(--muted)]">Contract not found.</div>;
-  if (!user) return <div className="flex justify-center items-center min-h-screen text-[var(--muted)]">Please sign in to apply.</div>;
 
   /* ═══════════════════════════════════════════════════════════ */
   /*                        RENDER                              */
@@ -261,7 +273,7 @@ export default function ApplyPage() {
               </div>
               <h2 className="text-2xl font-bold text-[var(--foreground)] text-center mb-2">{submitMessage}</h2>
               <p className="text-sm text-[var(--muted)] text-center max-w-md mb-4">
-                Your proposal has been submitted for <strong>{contract.title}</strong>. The contract owner has been notified.
+                Your proposal has been submitted for <strong>{contract.title as string}</strong>. The contract owner has been notified.
               </p>
               {quickPdfFileName && (
                 <p className="text-xs text-[var(--muted)] bg-[var(--surface)] px-4 py-2 rounded-lg mb-8">
