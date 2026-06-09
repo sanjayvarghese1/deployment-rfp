@@ -154,7 +154,10 @@ export async function POST(req: NextRequest){
             const { data: contract } = await svc.from('contracts').select('id,title,description,budget,deadline,required_certifications').eq('id', proposal?.contract_id).single();
             
             if(proposal && contract){
-              const analysisUrl = buildAbsoluteUrl(req.nextUrl.origin, '/api/ai/analyze-proposal');
+              const origin = req.nextUrl.origin.startsWith("https://localhost") || req.nextUrl.origin.startsWith("https://127.0.0.1")
+                ? req.nextUrl.origin.replace("https://", "http://")
+                : req.nextUrl.origin;
+              const analysisUrl = buildAbsoluteUrl(origin, '/api/ai/analyze-proposal');
               const extractedPrice = extractPriceLikeText(safe);
               const extractedTimeline = extractTimelineLikeText(safe);
               const normalizedPrice = extractedPrice ? normalizeCurrencyWithSuffix(extractedPrice) : '';

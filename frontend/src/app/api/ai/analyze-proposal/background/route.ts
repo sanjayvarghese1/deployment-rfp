@@ -221,22 +221,32 @@ async function processBackgroundAnalysis(jobId: string, origin: string, body: Ba
 }
 
 export async function POST(req: NextRequest) {
-  const body = (await req.json()) as BackgroundAnalysisRequest;
-  const contractId = body.contract_id;
-  const contract = body.contract;
-  const vendors = Array.isArray(body.vendors) ? body.vendors : [];
+  try {
+    const body = (await req.json()) as BackgroundAnalysisRequest;
+    const contractId = body.contract_id;
+    const contract = body.contract;
+    const vendors = Array.isArray(body.vendors) ? body.vendors : [];
 
-  if (!contractId || !contract || vendors.length === 0) {
-    return NextResponse.json({ error: "Missing contract_id, contract, or vendors" }, { status: 400 });
+    if (!contractId || !contract || vendors.length === 0) {
+      return NextResponse.json({ error: "Missing contract_id, contract, or vendors" }, { status: 400 });
+    }
+
+    const inserted = await createAnalysisJob({ contract_id: contractId, request: { contract, vendors } });
+
+    console.log(`[AI] created analysis job ${inserted.id} for contract ${contractId}`);
+
+    after(() => {
+      // If Render's reverse proxy forwards HTTPS but the application listens on HTTP internally,
+      // we must use http:// for localhost/127.0.0.1 to avoid TLS/SSL handshake failures.
+      const origin = req.nextUrl.origin.startsWith("https://localhost") || req.nextUrl.origin.startsWith("https://127.0.0.1")
+        ? req.nextUrl.origin.replace("https://", "http://")
+        : req.nextUrl.origin;
+      processBackgroundAnalysis(inserted.id, origin, body);
+    });
+
+    return NextResponse.json({ job_id: inserted.id, status: "queued" }, { status: 202 });
+  } catch (error) {
+    console.error("[AI] Error starting background analysis job:", error);
+    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }
-
-  const inserted = await createAnalysisJob({ contract_id: contractId, request: { contract, vendors } });
-
-  console.log(`[AI] created analysis job ${inserted.id} for contract ${contractId}`);
-
-  after(() => {
-    processBackgroundAnalysis(inserted.id, req.nextUrl.origin, body);
-  });
-
-  return NextResponse.json({ job_id: inserted.id, status: "queued" }, { status: 202 });
 }
