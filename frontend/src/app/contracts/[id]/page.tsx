@@ -294,6 +294,18 @@ export default function ContractDetailPage() {
     if (!authLoading && !user) router.push("/login");
   }, [user, authLoading, router]);
 
+  useEffect(() => {
+    if (!authLoading && !loading && contract) {
+      if (contract.status === "draft") {
+        if (user && user.id === contract.posted_by) {
+          router.push(`/contracts/${contractId}/preview?from=${referrer}`);
+        } else {
+          router.push("/contracts");
+        }
+      }
+    }
+  }, [authLoading, loading, contract, user, contractId, router, referrer]);
+
   if (authLoading || !user) {
     return (
       <div className="min-h-screen bg-[#EFECE3] flex items-center justify-center">
@@ -585,7 +597,6 @@ export default function ContractDetailPage() {
         Back to {referrer === "insights" ? "My Contracts" : referrer === "my-contracts" ? "My Contracts" : "Contracts"}
       </button>
 
-
       {/* Contract Header */}
       <div className="card mb-4">
         <div className="flex justify-between items-start mb-4">
@@ -769,7 +780,7 @@ export default function ContractDetailPage() {
       )}
 
       {/* Owner Section: Vendor Responses */}
-      {isOwner && (
+      {isOwner && contract?.status !== "draft" && (
         <div className="card !p-0 overflow-hidden">
           <div className="flex border-b border-[var(--divider)]">
             <button onClick={() => setOwnerTab("details")} className={`tab-btn flex-1 justify-center ${ownerTab === "details" ? "active" : ""}`}>

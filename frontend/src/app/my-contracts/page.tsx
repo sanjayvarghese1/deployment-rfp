@@ -431,7 +431,7 @@ export default function MyContractsPage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2.5 mb-1.5 flex-wrap">
                           <Link
-                            href={`/contracts/${c.contract_id}?from=my-contracts`}
+                            href={c.status === "draft" ? `/contracts/${c.contract_id}/preview?from=my-contracts` : `/contracts/${c.contract_id}?from=my-contracts`}
                             className="font-semibold text-[var(--foreground)] text-[15px] group-hover:text-[var(--primary)] transition-colors"
                           >
                             {c.title}
@@ -507,7 +507,7 @@ export default function MyContractsPage() {
 
                         {/* View Details */}
                         <Link
-                          href={`/contracts/${c.contract_id}?from=my-contracts`}
+                          href={c.status === "draft" ? `/contracts/${c.contract_id}/preview?from=my-contracts` : `/contracts/${c.contract_id}?from=my-contracts`}
                           className="inline-flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-lg bg-[var(--primary)] text-[#EFECE3] hover:opacity-90 transition-opacity"
                         >
                           View

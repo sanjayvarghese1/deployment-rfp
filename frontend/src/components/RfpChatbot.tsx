@@ -1377,8 +1377,9 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
             last_analysis_result: { ...result.qa, mandatory_criteria: buildMandatoryCriteriaPayload(mandatoryCriteria.criteriaByTarget, ["full"], 0) },
             rfp_metadata: { ...commonFields.rfp_metadata, mandatory_criteria: buildMandatoryCriteriaPayload(mandatoryCriteria.criteriaByTarget, ["full"], 0) },
           };
-          const { error } = await supabase.from("contracts").insert(sanitizeObject(insertData) as any).select();
+          const { data, error } = await supabase.from("contracts").insert(sanitizeObject(insertData) as any).select("id");
           if (error) throw error;
+          return data?.[0]?.id;
         })());
       }
 
@@ -1409,8 +1410,9 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
             rfp_template: subsystemData.template,
             last_analysis_result: { ...result.qa, mandatory_criteria: subsystemCriteriaPayload },
           };
-          const { error } = await supabase.from("contracts").insert(sanitizeObject(insertData) as any).select();
+          const { data, error } = await supabase.from("contracts").insert(sanitizeObject(insertData) as any).select("id");
           if (error) throw error;
+          return data?.[0]?.id;
         })());
       }
 
@@ -1429,16 +1431,16 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
         return;
       }
 
-      await Promise.all(saves);
+      const results = await Promise.all(saves);
       setSaved(true);
 
-      if (mandatoryCriteriaTargets.includes("full") && subsystemTargets.length === 0) {
-        setMessages((prev) => [...prev, { role: "bot", text: "✅ Full RFP contract saved to **My Contracts**. Go to the My Contracts tab to approve and publish it." }]);
-      } else if (subsystemTargets.length > 0) {
-        const total = subsystemTargets.length + (mandatoryCriteriaTargets.includes("full") ? 1 : 0);
-        setMessages((prev) => [...prev, { role: "bot", text: `✅ All **${total}** RFP contract${total > 1 ? "s" : ""} saved to **My Contracts** (full + subsystems). Go to the My Contracts tab to approve and publish.` }]);
+      const createdContractId = results[0] as string | undefined;
+      if (createdContractId) {
+        // Redirect directly to the newly created contract preview so the user can review and publish it
+        router.push(`/contracts/${createdContractId}/preview?from=my-contracts`);
+      } else {
+        onSaved?.();
       }
-      onSaved?.();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       setMessages((prev) => [...prev, { role: "bot", text: `❌ Failed to save: ${msg}` }]);

@@ -261,16 +261,12 @@ export default function MandatoryCriteriaPhase({
                 className="btn-primary" 
                 type="button" 
                 onClick={() => {
-                  console.log("▶ SAVE ALL BUTTON CLICKED");
-                  console.log("  Button enabled state:", { canSaveAll, ready, currentTargetTotal, allTargetsValid });
-                  console.log("  Targets:", targets);
-                  console.log("  Calling onSaveAll callback...");
                   onSaveAll();
                 }} 
                 disabled={!canSaveAll}
                 title={!canSaveAll ? `Button disabled. Ready: ${ready}, Current total: ${currentTargetTotal}%, All valid: ${allTargetsValid}` : ""}
               >
-                Save All
+                Next
               </button>
               {!canSaveAll && (
                 <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8, textAlign: "center" }}>
