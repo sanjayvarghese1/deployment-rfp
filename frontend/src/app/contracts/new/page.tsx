@@ -9,7 +9,7 @@ import { generateRFP } from "@/services/aiService";
 import { supabase } from "@/services/supabase";
 
 export default function NewContractPage() {
-  const { user, profile } = useAuth();
+  const { user, profile, loading } = useAuth();
   const router = useRouter();
   const [form, setForm] = useState({
     project_title: "",
@@ -73,10 +73,10 @@ export default function NewContractPage() {
   };
 
   useEffect(() => {
-    if (!user && !profile) router.push("/login");
-  }, [user, profile, router]);
+    if (!loading && !user) router.push("/login");
+  }, [user, loading, router]);
 
-  if (!user) {
+  if (loading || !user) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center"><div className="w-8 h-8 border-3 border-[var(--primary)] border-t-transparent rounded-full animate-spin" /></div>
     );
