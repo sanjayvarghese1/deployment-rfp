@@ -10,20 +10,22 @@ export default function Navbar() {
   const { user, profile, signOut } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
+  const [pendingMessageRequests, setPendingMessageRequests] = useState(0);
   const pathname = usePathname();
 
   const isVendor = profile?.user_type === "vendor";
   const isRfpCompany = profile?.user_type === "rfp_company";
 
   const navItems = [
-    { label: "Vendors", href: "/companies" },
+    // RFP Companies see the page as "Bidders", Vendors do not see this page/link at all
+    ...(isRfpCompany ? [{ label: "Bidders", href: "/companies" }] : []),
     // RFP Companies go to dedicated My Contracts page; Vendors browse the marketplace
     isRfpCompany
-      ? { label: "My Contracts", href: "/my-contracts" }
-      : { label: "Contracts", href: "/contracts" },
+      ? { label: "My Homepage", href: "/my-contracts" }
+      : { label: "RFPs", href: "/contracts" },
     // Only RFP Companies see "RFP"
     ...(!isVendor ? [{ label: "RFP", href: "/rfp" }] : []),
-    { label: "Messages", href: "/messages" },
+    { label: "Messages", href: "/messages", badge: isRfpCompany ? pendingMessageRequests : 0 },
     { label: "Notifications", href: "/notifications", badge: unreadNotifications },
   ];
 
@@ -53,6 +55,25 @@ export default function Navbar() {
 
     void fetchNotifications();
   }, [user]);
+
+  // Fetch pending message requests count for RFP companies (vendor→rfp + rfp→rfp)
+  useEffect(() => {
+    if (!user || !isRfpCompany) return;
+    const fetchPendingRequests = async () => {
+      try {
+        const [{ data: vendorReqs }, { data: rfpReqs }] = await Promise.all([
+          supabase.from("message_requests").select("id").eq("rfp_company_id", user.id).eq("status", "pending"),
+          supabase.from("rfp_rfp_requests").select("id").eq("target_id", user.id).eq("status", "pending"),
+        ]);
+        const total = (vendorReqs?.length ?? 0) + (rfpReqs?.length ?? 0);
+        setPendingMessageRequests(total);
+      } catch (err) {
+        console.error("Failed to fetch message requests", err);
+      }
+    };
+    void fetchPendingRequests();
+  }, [user, isRfpCompany]);
+
 
   return (
     <nav className="sticky top-0 z-50 w-full">
