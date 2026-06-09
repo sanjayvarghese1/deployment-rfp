@@ -325,11 +325,16 @@ export default function MessagesPage() {
   };
 
   const handleChannelUpdated = (updatedChannel: Channel) => {
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.userId === selectedUser?.id ? { ...c, channel: updatedChannel } : c
-      )
-    );
+    const exists = conversations.some((c) => c.userId === selectedUser?.id);
+    if (!exists) {
+      void loadConversations();
+    } else {
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.userId === selectedUser?.id ? { ...c, channel: updatedChannel } : c
+        )
+      );
+    }
     setSelectedUser((prev) => prev ? { ...prev, channel: updatedChannel } : prev);
   };
 
@@ -689,6 +694,7 @@ export default function MessagesPage() {
                 onBack={() => setShowSidebar(true)}
                 onChannelUpdated={handleChannelUpdated}
                 onRequestSent={loadConversations}
+                onMessageSent={loadConversations}
               />
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center px-6">

@@ -47,6 +47,7 @@ export default function MessageBox({
   onBack,
   onChannelUpdated,
   onRequestSent,
+  onMessageSent,
 }: {
   otherUserId: string;
   otherUserName: string;
@@ -55,6 +56,7 @@ export default function MessageBox({
   onBack?: () => void;
   onChannelUpdated?: (c: Channel) => void;
   onRequestSent?: () => void;
+  onMessageSent?: () => void;
 }) {
   const { user, profile } = useAuth();
   const isRfpCompany = profile?.user_type === "rfp_company";
@@ -375,6 +377,7 @@ export default function MessageBox({
         },
       ]);
       setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 60);
+      onMessageSent?.();
     } catch (err: any) {
       console.error(
         "Send message exception:",
