@@ -424,6 +424,8 @@ export default function ContractDetailPage() {
     if (!contract || !user || acceptingId) return;
     const confirmed = window.confirm("Accept this proposal? All other proposals will be rejected.");
     if (!confirmed) return;
+    const doubleConfirmed = window.confirm("Are you absolutely sure you want to accept this proposal? This action is permanent and cannot be undone.");
+    if (!doubleConfirmed) return;
     setAcceptingId(proposalId);
     try {
       const acceptedProposal = proposals.find((p: any) => p.proposal_id === proposalId);
