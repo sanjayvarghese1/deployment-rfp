@@ -2,14 +2,28 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { useAuth } from "@/contexts/AuthContext";
 import MyContractsTab from "@/app/insights/MyContractsTab";
 import VendorResponsesTab from "@/app/insights/VendorResponsesTab";
 
 export default function PostRfpPage() {
+  const { user, loading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const [activeTab, setActiveTab] = useState<"rfp" | "contracts" | "responses">("rfp");
   const [hoveredCard, setHoveredCard] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!loading && !user) router.push("/login");
+  }, [user, loading, router]);
+
+  if (loading || !user) {
+    return (
+      <div className="min-h-screen bg-[#EFECE3] flex items-center justify-center">
+        <div className="w-8 h-8 border-3 border-[var(--primary)] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
   useEffect(() => {
     if (pathname === "/postrfp") {
