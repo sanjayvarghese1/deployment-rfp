@@ -46,7 +46,7 @@ function getMissingQuestionLabel(key: string | null, fallback: string): string {
 
 function createInitialChatMessages(): ChatMessage[] {
   return [
-    { role: "bot", text: "Welcome! I will collect 20 RFP details one by one." },
+    { role: "bot", text: "Welcome! I will collect 19 RFP details one by one." },
     { role: "bot", text: RFP_QUESTIONS[0].label },
   ];
 }
@@ -63,6 +63,31 @@ function isSkipRequest(text: string): boolean {
 
   return /\b(can't provide|cannot provide|cant provide|can't share|cannot share|can't answer|cannot answer|won't provide|won't share|don't know|do not know|not sure|unsure|prefer not|skip this|skip it|pass|none|n\/a|na|unable|don't have|do not have|no idea|no comment)\b/i.test(normalized)
     || /^(skip|pass|none|n\/a|na|not sure|unsure|no)$/i.test(normalized);
+}
+
+/** Returns a persuasive message explaining why a mandatory question should not be skipped. */
+function getMandatorySkipMessage(key: string, label: string): string {
+  const shortLabel = label.replace(/ \(or type .*?\)/, "").replace(/\?$/, "");
+  const tips: Record<string, string> = {
+    organization_name: "Your organization\u2019s name is required \u2014 it appears throughout the RFP document and on the cover page. Please provide it (even a short name works).",
+    project_title: "A project title is essential \u2014 it identifies the RFP to vendors. Please provide a title, even a working one.",
+    category: "The project category determines the tone and template of your RFP. Please select one: software, manufacturing, logistics, construction, or other.",
+    organization_background: "Organization background helps vendors understand who they\u2019d be working with. You can type \"auto\" and the AI will generate it for you.",
+    project_overview: "The project overview is one of the first things vendors read. It\u2019s critical for context. Type \"auto\" if you prefer the AI to handle it.",
+    project_objectives: "Objectives define what success looks like \u2014 vendors need these to tailor their proposals. Type \"auto\" to have the AI draft them.",
+    scope_of_work: "Scope of work is a core RFP section that defines exactly what must be delivered. Type \"auto\" if you\u2019d like the AI to draft it.",
+    detailed_project_description: "A detailed description is crucial for generating a high-quality RFP. Type \"auto\" and the AI will draft it from the context you\u2019ve already provided.",
+    technical_requirements: "Technical requirements tell vendors what specifications to meet. Type \"auto\" to let the AI infer them from your project details.",
+    deliverables: "Deliverables define what vendors must hand over \u2014 this is non-negotiable in an RFP. Type \"auto\" to auto-generate them.",
+    vendor_qualifications: "Vendor qualifications protect you by filtering out unqualified bidders. Type \"auto\" to let the AI recommend sensible defaults.",
+    implementation_timeline: "A timeline sets expectations for delivery. Without it, vendors can\u2019t estimate effort or cost. Type \"auto\" to generate a draft.",
+    budget_framework: "Budget information guides vendor proposals and prevents mismatched bids. Type \"auto\" if you prefer the AI to suggest a framework.",
+    evaluation_criteria: "Evaluation criteria ensure a fair and transparent vendor selection process. Type \"auto\" to have the AI propose a scoring model.",
+    risk_management: "Risk management demonstrates maturity and helps vendors plan for contingencies. Type \"auto\" to auto-draft this section.",
+    legal_and_contractual: "Legal & contractual terms protect your organization in any agreement with a vendor. Even a brief note on IP ownership or NDA requirements is valuable. Type \"auto\" to have the AI draft standard clauses.",
+    contact_information: "Contact information is how vendors reach you with questions and submit proposals. It\u2019s a required section in any professional RFP. Type \"auto\" if you\u2019d like the AI to insert placeholder details.",
+  };
+  return tips[key] || `\"${shortLabel}\" is a core part of the RFP that vendors depend on. You can always type \"auto\" and the AI will write it based on your other answers.`;
 }
 
 function isBoilerplateSummary(text: string): boolean {
@@ -942,6 +967,12 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     const currentKey = currentPromptKey;
     if (!currentKey || intaking || flowState !== "idle") return;
 
+    // Guard: don’t allow skipping mandatory questions via the button either.
+    const questionConfig = currentKey === FINAL_INTAKE_KEY
+      ? { optional: true }
+      : RFP_QUESTIONS.find((q) => q.key === currentKey);
+    if (!questionConfig?.optional) return;
+
     const currentQuestionLabel = getQuestionLabelForKey(currentKey) || "the current question";
     const nextSkippedQuestions = new Set(skippedQuestions);
     nextSkippedQuestions.add(currentKey);
@@ -987,6 +1018,24 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     }
 
     if (currentKey && isSkipRequest(answerText)) {
+      // Determine whether this question can be skipped.
+      const questionConfig = currentKey === FINAL_INTAKE_KEY
+        ? { optional: true }
+        : RFP_QUESTIONS.find((q) => q.key === currentKey);
+      const isOptional = questionConfig?.optional === true;
+
+      if (!isOptional) {
+        // Mandatory question — show a persuasive reason instead of skipping.
+        const persuasion = getMandatorySkipMessage(currentKey, currentQuestion?.label || currentKey);
+        setMessages((prev) => [
+          ...prev,
+          { role: "user", text: answerText },
+          { role: "bot", text: `⚠️ ${persuasion}` },
+        ]);
+        setInputValue("");
+        return;
+      }
+
       setMessages((prev) => [...prev, { role: "user", text: answerText }]);
       setInputValue("");
       handleSkipCurrentQuestion();
@@ -1861,9 +1910,22 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
                 style={{ flex: 1, resize: "none" }}
               />
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                <button className="btn-outline" style={{ fontSize: 13, padding: "6px 16px" }} onClick={handleSkipCurrentQuestion} disabled={intaking || !currentQuestion}>
-                  Skip
-                </button>
+                {/* Skip button is only shown for optional questions */}
+                {(() => {
+                  const qConfig = currentPromptKey === FINAL_INTAKE_KEY
+                    ? { optional: true }
+                    : RFP_QUESTIONS.find((q) => q.key === currentPromptKey);
+                  return qConfig?.optional ? (
+                    <button
+                      className="btn-outline"
+                      style={{ fontSize: 13, padding: "6px 16px" }}
+                      onClick={handleSkipCurrentQuestion}
+                      disabled={intaking || !currentQuestion}
+                    >
+                      Skip
+                    </button>
+                  ) : null;
+                })()}
                 <button className="btn-primary" style={{ fontSize: 13, padding: "6px 16px" }} onClick={() => submitAnswer(inputValue)} disabled={intaking}>
                   {intaking ? "Thinking..." : "Send"}
                 </button>

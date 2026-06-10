@@ -5,6 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
 import { supabase } from "@/services/supabase";
+import { randomUUID } from "@/lib/uuid";
 
 function toDate(value: any): Date | null {
   if (!value) return null;
@@ -79,6 +80,15 @@ const ICON_MAP: Record<string, { icon: React.ReactNode; color: string; bg: strin
     color: "",
     bg: "",
   },
+  pending_verification: {
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+      </svg>
+    ),
+    color: "",
+    bg: "",
+  },
 };
 
 const ICON_STYLE: Record<string, { iconColor: string; bgColor: string }> = {
@@ -88,6 +98,7 @@ const ICON_STYLE: Record<string, { iconColor: string; bgColor: string }> = {
   proposal_rejected: { iconColor: "#fb7185", bgColor: "#FDE8E8" },
   deadline_reminder: { iconColor: "#fbbf24", bgColor: "#2e2408" },
   new_review: { iconColor: "#a78bfa", bgColor: "#1e1640" },
+  pending_verification: { iconColor: "#fbbf24", bgColor: "#2e2408" },
 };
 const DEFAULT_ICON_STYLE = { iconColor: "#333333", bgColor: "#E5E2D8" };
 
@@ -108,11 +119,19 @@ function getNotifCategory(type: string): string {
 }
 
 export default function NotificationsPage() {
-  const { user, loading } = useAuth();
+  const { user, profile, loading } = useAuth();
   const router = useRouter();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [filter, setFilter] = useState<FilterTab>("all");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+
+  // Verification request moderation states
+  const [verificationRequester, setVerificationRequester] = useState<any | null>(null);
+  const [verificationNotifId, setVerificationNotifId] = useState<string | null>(null);
+  const [modalLoading, setModalLoading] = useState(false);
+  const [actioning, setActioning] = useState(false);
+
+  const isAdmin = profile?.company_name === "ylogx" || profile?.email === "admin@example.com";
 
   useEffect(() => {
     if (!user) return;
@@ -170,6 +189,93 @@ export default function NotificationsPage() {
     setOpenMenuId(null);
   };
 
+  const handleVerify = async (approved: boolean) => {
+    if (!verificationRequester || !user) return;
+    setActioning(true);
+    try {
+      const targetUserId = verificationRequester.id;
+      const targetLicenses = verificationRequester.licenses || [];
+      const updatedLicenses = targetLicenses.map((lic: any) => {
+        if (lic.status === "pending") {
+          return { ...lic, status: approved ? "approved" : "rejected" };
+        }
+        return lic;
+      });
+
+      // Get user's JWT access token from session
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      // Make post request to verify-vendor admin endpoint
+      const res = await fetch("/api/admin/verify-vendor", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token || ""}`
+        },
+        body: JSON.stringify({
+          targetUserId,
+          approved,
+          updatedLicenses,
+          notificationId: verificationNotifId,
+          requesterCompanyName: verificationRequester.company_name
+        })
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || "Failed to process verification via server API");
+      }
+
+      setVerificationRequester(null);
+      setVerificationNotifId(null);
+      
+      // Reload admin's notifications list
+      const { data, error } = await supabase
+        .from("notifications")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("timestamp", { ascending: false });
+
+      if (!error && data) {
+        setNotifications(data.map((row) => ({ notification_id: row.id, ...row })));
+      }
+    } catch (err: any) {
+      console.error("Failed to action verification request:", err);
+      alert(err.message || "An error occurred while processing the verification. Please try again.");
+    } finally {
+      setActioning(false);
+    }
+  };
+
+  const openDataUrlInNewTab = (dataUrl: string, fileName: string) => {
+    if (!dataUrl) return;
+    if (!dataUrl.startsWith("data:")) {
+      window.open(dataUrl, "_blank");
+      return;
+    }
+    try {
+      const arr = dataUrl.split(',');
+      const mimeMatch = arr[0].match(/:(.*?);/);
+      const mime = mimeMatch ? mimeMatch[1] : '';
+      const bstr = atob(arr[1]);
+      let n = bstr.length;
+      const u8arr = new Uint8Array(n);
+      while (n--) {
+        u8arr[n] = bstr.charCodeAt(n);
+      }
+      const blob = new Blob([u8arr], { type: mime });
+      const blobUrl = URL.createObjectURL(blob);
+      window.open(blobUrl, "_blank");
+    } catch (err) {
+      console.error("Failed to open document:", err);
+      const newWindow = window.open();
+      if (newWindow) {
+        newWindow.document.write(`<iframe src="${dataUrl}" frameborder="0" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`);
+      }
+    }
+  };
+
   useEffect(() => {
     if (!loading && !user) router.push("/login");
   }, [user, loading, router]);
@@ -224,7 +330,31 @@ export default function NotificationsPage() {
     return (
       <div
         key={n.notification_id}
-        onClick={() => !n.read && markAsRead(n.notification_id)}
+        onClick={async () => {
+          if (!n.read) {
+            await markAsRead(n.notification_id);
+          }
+          if (n.type === "pending_verification" && isAdmin) {
+            const match = n.message.match(/Request details:\s*([a-f0-9-]+)/);
+            const requesterId = match ? match[1] : null;
+            if (requesterId) {
+              setModalLoading(true);
+              setVerificationNotifId(n.notification_id);
+              try {
+                const { data, error } = await supabase.from("users").select("*").eq("id", requesterId).single();
+                if (!error && data) {
+                  setVerificationRequester(data);
+                } else {
+                  alert("Failed to load company details. The user might have deleted their profile.");
+                }
+              } catch (err) {
+                console.error("Error fetching requester profile:", err);
+              } finally {
+                setModalLoading(false);
+              }
+            }
+          }
+        }}
         className="group relative cursor-pointer transition-all duration-200"
         style={{
           background: !n.read ? "#E5E2D8" : "#EFECE3",
@@ -379,6 +509,147 @@ export default function NotificationsPage() {
           )}
         </div>
       </div>
+
+      {/* Verification Dialog Modal */}
+      {verificationRequester && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-2xl bg-[#EFECE3] border border-[#D4D1C8] rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+            {/* Modal Header */}
+            <div className="px-6 py-5 border-b border-[#D4D1C8] bg-[#E5E2D8] flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-bold text-[#000000]">Verification Request</h3>
+                <p className="text-xs text-[#333333] mt-0.5">Review company details and uploaded documentation</p>
+              </div>
+              <button
+                onClick={() => { setVerificationRequester(null); setVerificationNotifId(null); }}
+                className="p-1.5 rounded-lg hover:bg-[#D4D1C8] transition-colors"
+              >
+                <svg className="w-5 h-5 text-[#333333]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="px-6 py-6 max-h-[70vh] overflow-y-auto space-y-6">
+              {/* Company Info Header */}
+              <div className="flex items-center gap-4">
+                <div className="w-16 h-16 rounded-xl flex items-center justify-center text-2xl font-bold bg-[#D4D1C8] text-[#333333] overflow-hidden shrink-0">
+                  {verificationRequester.profile_image ? (
+                    <img src={verificationRequester.profile_image} alt={verificationRequester.company_name} className="w-full h-full object-cover" />
+                  ) : (
+                    verificationRequester.company_name?.charAt(0) || "?"
+                  )}
+                </div>
+                <div>
+                  <h4 className="text-xl font-bold text-[#000000]">{verificationRequester.company_name}</h4>
+                  <p className="text-sm font-medium text-[#4A70A9]">{verificationRequester.industry || "No Industry Specified"}</p>
+                </div>
+              </div>
+
+              {/* Description */}
+              <div className="bg-[#E5E2D8] rounded-xl p-4 border border-[#D4D1C8]">
+                <h5 className="text-xs font-bold text-[#333333] uppercase tracking-wider mb-2">Company Overview</h5>
+                <p className="text-sm text-[#000000] leading-relaxed whitespace-pre-wrap">
+                  {verificationRequester.description || "No description provided."}
+                </p>
+              </div>
+
+              {/* Metadata Details Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {[
+                  { label: "Location", value: verificationRequester.location },
+                  { label: "Website", value: verificationRequester.website, isLink: true },
+                  { label: "Founded Year", value: verificationRequester.founded_year },
+                  { label: "Company Size", value: verificationRequester.company_size ? `${verificationRequester.company_size} employees` : "" },
+                  { label: "Phone", value: verificationRequester.phone },
+                  { label: "Registration No.", value: verificationRequester.registration_number },
+                  { label: "Email", value: verificationRequester.email },
+                ].filter(item => item.value).map((item, i) => (
+                  <div key={i} className="flex justify-between py-2 border-b border-[#D4D1C8]">
+                    <span className="text-xs font-semibold text-[#888]">{item.label}</span>
+                    {item.isLink ? (
+                      <a href={item.value!.startsWith("http") ? item.value! : `https://${item.value}`} target="_blank" rel="noopener noreferrer" className="text-xs font-bold text-[#4A70A9] hover:underline truncate max-w-[200px]">{item.value}</a>
+                    ) : (
+                      <span className="text-xs font-bold text-[#000000]">{item.value}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Uploaded Documents */}
+              <div className="space-y-3">
+                <h5 className="text-xs font-bold text-[#333333] uppercase tracking-wider">Submitted Document</h5>
+                {verificationRequester.licenses && verificationRequester.licenses.length > 0 ? (
+                  <div className="space-y-2">
+                    {verificationRequester.licenses.map((lic: any, idx: number) => (
+                      <div key={idx} className="flex items-center justify-between p-3.5 bg-[#E5E2D8] border border-[#D4D1C8] rounded-xl">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-10 h-10 rounded-lg bg-[#D4D1C8] flex items-center justify-center shrink-0">
+                            <svg className="w-5 h-5 text-[#333333]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                            </svg>
+                          </div>
+                          <div className="min-w-0">
+                            <span className="text-sm font-semibold text-[#000000] block truncate">{lic.name}</span>
+                            <span className="text-xs text-[#333333]">Uploaded on {new Date(lic.uploaded_at).toLocaleDateString()}</span>
+                          </div>
+                        </div>
+                        <a
+                          href="#"
+                          onClick={(e) => { e.preventDefault(); openDataUrlInNewTab(lic.url, lic.name); }}
+                          className="px-4 py-2 rounded-lg text-xs font-bold bg-[#D4D1C8] text-[#000000] hover:opacity-80 transition-opacity whitespace-nowrap"
+                        >
+                          View Document
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-[#333333] italic">No document submitted.</p>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 border-t border-[#D4D1C8] bg-[#E5E2D8] flex items-center justify-between">
+              <button
+                onClick={() => { setVerificationRequester(null); setVerificationNotifId(null); }}
+                disabled={actioning}
+                className="px-5 py-2.5 rounded-lg text-xs font-bold bg-[#D4D1C8] text-[#000000] hover:opacity-80 transition-opacity"
+              >
+                Close
+              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleVerify(false)}
+                  disabled={actioning}
+                  className="px-5 py-2.5 rounded-lg text-xs font-bold bg-rose-600 hover:bg-rose-700 text-[#EFECE3] disabled:opacity-50 transition-colors shadow-sm"
+                >
+                  {actioning ? "Processing..." : "Reject Verification"}
+                </button>
+                <button
+                  onClick={() => handleVerify(true)}
+                  disabled={actioning}
+                  className="px-5 py-2.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-[#EFECE3] disabled:opacity-50 transition-colors shadow-sm"
+                >
+                  {actioning ? "Processing..." : "Verify & Approve"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Loading overlay for fetching company details */}
+      {modalLoading && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/30 backdrop-blur-sm">
+          <div className="p-6 bg-[#EFECE3] border border-[#D4D1C8] rounded-xl flex items-center gap-3 shadow-xl">
+            <div className="w-5 h-5 border-2 border-t-transparent border-[#000000] rounded-full animate-spin" />
+            <span className="text-sm font-semibold text-[#000000]">Fetching company details...</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
