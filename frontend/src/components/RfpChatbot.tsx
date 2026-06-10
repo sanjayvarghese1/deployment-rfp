@@ -498,6 +498,7 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
         setPdfBase64(snapshot.pdfBase64);
         setDecomposition(snapshot.decomposition);
         setProgress(null);
+        resetBackgroundGeneration();
       }
       if (snapshot.status === "error" && snapshot.error) {
         if (snapshot.error.includes("expired")) {
