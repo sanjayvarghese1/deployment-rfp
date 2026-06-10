@@ -76,7 +76,6 @@ function EmailModal({
     setSending(true);
     setError("");
     try {
-      // Use mailto as a fallback — replace with your email API if available
       const mailto = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
       window.open(mailto, "_blank");
       setSent(true);
@@ -196,7 +195,7 @@ function ApproveModal({
           </div>
           <h2 className="font-bold text-[var(--foreground)] text-lg">Approve Contract?</h2>
           <p className="text-sm text-[var(--muted)] mt-2 leading-relaxed">
-            This will publish <span className="font-semibold text-[var(--foreground)]">"{contract.title}"</span> as <span className="text-[var(--primary)] font-semibold">Open</span>, making it visible to all vendors.
+            This will publish <span className="font-semibold text-[var(--foreground)]">&quot;{contract.title}&quot;</span> as <span className="text-[var(--primary)] font-semibold">Open</span>, making it visible to all vendors.
           </p>
         </div>
         <div className="px-6 pb-6 flex gap-3">
@@ -220,16 +219,65 @@ function ApproveModal({
   );
 }
 
+// ── Archive Confirm Modal ──────────────────────────────────────────────────────
+function ArchiveModal({
+  contract,
+  onConfirm,
+  onClose,
+}: {
+  contract: Contract;
+  onConfirm: () => Promise<void>;
+  onClose: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.45)", backdropFilter: "blur(4px)" }}>
+      <div className="card w-full max-w-sm !p-0 overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+        <div className="px-6 pt-6 pb-4 text-center">
+          <div className="w-14 h-14 rounded-2xl bg-amber-50 flex items-center justify-center mx-auto mb-4">
+            <svg className="w-7 h-7 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="m20.25 7.5-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z" />
+            </svg>
+          </div>
+          <h2 className="font-bold text-[var(--foreground)] text-lg">Archive this RFP?</h2>
+          <p className="text-sm text-[var(--muted)] mt-2 leading-relaxed">
+            <span className="font-semibold text-[var(--foreground)]">&quot;{contract.title}&quot;</span> will be archived and hidden from vendors. You can reopen it later.
+          </p>
+        </div>
+        <div className="px-6 pb-6 flex gap-3">
+          <button onClick={onClose} className="flex-1 px-4 py-2.5 rounded-xl border border-[var(--divider)] text-sm font-medium text-[var(--muted)] hover:bg-[var(--surface)] transition-all">
+            Cancel
+          </button>
+          <button
+            onClick={async () => {
+              setConfirming(true);
+              await onConfirm();
+              setConfirming(false);
+            }}
+            disabled={confirming}
+            className="flex-1 px-4 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition-colors"
+          >
+            {confirming ? "Archiving..." : "Yes, Archive"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function MyContractsPage() {
   const { user, profile, loading: authLoading } = useAuth();
   const router = useRouter();
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [loadingContracts, setLoadingContracts] = useState(true);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [filterStatus, setFilterStatus] = useState<"all" | "open" | "closed" | "pending">("all");
+  const [archivingId, setArchivingId] = useState<string | null>(null);
+  const [reopeningId, setReopeningId] = useState<string | null>(null);
+  const [filterStatus, setFilterStatus] = useState<"all" | "open" | "closed" | "pending" | "archived">("all");
   const [emailContract, setEmailContract] = useState<Contract | null>(null);
   const [approveContract, setApproveContract] = useState<Contract | null>(null);
+  const [archiveContract, setArchiveContract] = useState<Contract | null>(null);
   const [search, setSearch] = useState("");
 
   // Auth guard
@@ -266,19 +314,63 @@ export default function MyContractsPage() {
     setApproveContract(null);
   };
 
-  const handleDelete = async (contract: Contract) => {
-    if (deletingId === contract.contract_id) return;
-    const confirmed = window.confirm(`Delete "${contract.title}"? This cannot be undone.`);
-    if (!confirmed) return;
-    setDeletingId(contract.contract_id);
+  const handleArchive = async (contract: Contract) => {
+    if (!user || archivingId === contract.contract_id) return;
+    setArchivingId(contract.contract_id);
     try {
-      const { error } = await supabase.from("contracts").delete().eq("id", contract.contract_id);
+      const { error } = await supabase.from("contracts").update({ status: "archived" }).eq("id", contract.contract_id);
       if (error) throw error;
-      setContracts((prev) => prev.filter((c) => c.contract_id !== contract.contract_id));
+      setContracts((prev) => prev.map((c) => c.contract_id === contract.contract_id ? { ...c, status: "archived" } : c));
+
+      // Fetch vendors who submitted proposals for this contract
+      const { data: propData } = await supabase
+        .from("proposals")
+        .select("vendor_id")
+        .eq("contract_id", contract.contract_id);
+
+      if (propData && propData.length > 0) {
+        const uniqueVendorIds = Array.from(new Set(propData.map((p: any) => p.vendor_id)));
+        
+        // Send notifications
+        const notifs = uniqueVendorIds.map((vId: any) => ({
+          id: crypto.randomUUID(),
+          user_id: vId,
+          type: "proposal_rejected",
+          message: `The project "${contract.title}" has been dropped for the time being. We apologize for the inconvenience.`,
+          read: false,
+          timestamp: new Date().toISOString()
+        }));
+        await supabase.from("notifications").insert(notifs);
+
+        // Send direct messages
+        const msgs = uniqueVendorIds.map((vId: any) => ({
+          id: crypto.randomUUID(),
+          sender_id: user.id,
+          receiver_id: vId,
+          text: `Dear Partner, we are sorry to inform you that the project "${contract.title}" has been dropped for the time being. We appreciate your interest and hope to work together on future opportunities.`,
+          read: false,
+          timestamp: new Date().toISOString()
+        }));
+        await supabase.from("messages").insert(msgs);
+      }
     } catch (err) {
-      console.error("Delete failed:", err);
+      console.error("Archive failed:", err);
     }
-    setDeletingId(null);
+    setArchivingId(null);
+    setArchiveContract(null);
+  };
+
+  const handleReopen = async (contract: Contract) => {
+    if (reopeningId === contract.contract_id) return;
+    setReopeningId(contract.contract_id);
+    try {
+      const { error } = await supabase.from("contracts").update({ status: "pending_approval" }).eq("id", contract.contract_id);
+      if (error) throw error;
+      setContracts((prev) => prev.map((c) => c.contract_id === contract.contract_id ? { ...c, status: "pending_approval" } : c));
+    } catch (err) {
+      console.error("Reopen failed:", err);
+    }
+    setReopeningId(null);
   };
 
   if (authLoading || !user) {
@@ -297,20 +389,44 @@ export default function MyContractsPage() {
       c.industry?.toLowerCase().includes(search.toLowerCase());
 
     const matchStatus =
-      filterStatus === "all" ||
-      (filterStatus === "pending" && isPendingApproval(c.status)) ||
-      (filterStatus === "open" && c.status === "open") ||
-      (filterStatus === "closed" && c.status === "closed");
+      filterStatus === "all"
+        ? c.status !== "archived"
+        : filterStatus === "pending"
+          ? isPendingApproval(c.status)
+          : filterStatus === "open"
+            ? c.status === "open"
+            : filterStatus === "closed"
+              ? c.status === "closed"
+              : filterStatus === "archived"
+                ? c.status === "archived"
+                : false;
 
     return matchSearch && matchStatus;
   });
 
   const counts = {
-    all: contracts.length,
+    all: contracts.filter((c) => c.status !== "archived").length,
     open: contracts.filter((c) => c.status === "open").length,
     pending: contracts.filter((c) => isPendingApproval(c.status)).length,
     closed: contracts.filter((c) => c.status === "closed").length,
+    archived: contracts.filter((c) => c.status === "archived").length,
   };
+
+  // Status accent bar color
+  function statusBarColor(status: string) {
+    if (status === "open") return "bg-[var(--primary)]";
+    if (isPendingApproval(status)) return "bg-amber-400";
+    if (status === "archived") return "bg-stone-400";
+    return "bg-gray-300";
+  }
+
+  // Status badge
+  function statusBadge(status: string) {
+    if (status === "open") return { cls: "bg-[var(--primary-light)] text-[var(--primary)]", label: "Open" };
+    if (isPendingApproval(status)) return { cls: "bg-amber-500/10 text-amber-600", label: "Pending Approval" };
+    if (status === "archived") return { cls: "bg-stone-200 text-stone-500", label: "Archived" };
+    return { cls: "bg-gray-500/10 text-gray-400", label: status };
+  }
 
   return (
     <>
@@ -320,6 +436,13 @@ export default function MyContractsPage() {
           contract={approveContract}
           onConfirm={() => handleApprove(approveContract)}
           onClose={() => setApproveContract(null)}
+        />
+      )}
+      {archiveContract && (
+        <ArchiveModal
+          contract={archiveContract}
+          onConfirm={() => handleArchive(archiveContract)}
+          onClose={() => setArchiveContract(null)}
         />
       )}
 
@@ -341,13 +464,14 @@ export default function MyContractsPage() {
           </Link>
         </div>
 
-        {/* Stats row */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+        {/* Stats row — 5 cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
           {([
             { key: "all", label: "Total", color: "text-[var(--foreground)]", bg: "bg-[var(--surface)]" },
             { key: "open", label: "Open", color: "text-[var(--primary)]", bg: "bg-[var(--primary-light)]" },
             { key: "pending", label: "Pending", color: "text-amber-600", bg: "bg-amber-50" },
             { key: "closed", label: "Closed", color: "text-gray-500", bg: "bg-gray-100" },
+            { key: "archived", label: "Archived", color: "text-stone-500", bg: "bg-stone-100" },
           ] as const).map((s) => (
             <button
               key={s.key}
@@ -392,17 +516,29 @@ export default function MyContractsPage() {
         ) : filtered.length === 0 ? (
           <div className="text-center py-20">
             <div className="w-16 h-16 bg-[var(--surface)] rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-[var(--muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m3.75 9v6m3-3H9m1.5-12H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
-              </svg>
+              {filterStatus === "archived" ? (
+                <svg className="w-8 h-8 text-[var(--muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m20.25 7.5-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z" />
+                </svg>
+              ) : (
+                <svg className="w-8 h-8 text-[var(--muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m3.75 9v6m3-3H9m1.5-12H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                </svg>
+              )}
             </div>
             <p className="font-semibold text-[var(--foreground)]">
-              {contracts.length === 0 ? "No RFPs yet" : "No RFPs match your filter"}
+              {filterStatus === "archived"
+                ? "No archived RFPs"
+                : contracts.length === 0
+                  ? "No RFPs yet"
+                  : "No RFPs match your filter"}
             </p>
             <p className="text-sm text-[var(--muted)] mt-1 mb-5">
-              {contracts.length === 0
-                ? "Create your first RFP to start receiving proposals"
-                : "Try changing the status filter or search"}
+              {filterStatus === "archived"
+                ? "RFPs you archive will appear here"
+                : contracts.length === 0
+                  ? "Create your first RFP to start receiving proposals"
+                  : "Try changing the status filter or search"}
             </p>
             {contracts.length === 0 && (
               <Link href="/rfp" className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[var(--primary)] text-[#EFECE3] text-sm font-semibold hover:opacity-90 transition-opacity">
@@ -415,125 +551,142 @@ export default function MyContractsPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {filtered.map((c) => (
-              <div key={c.contract_id} className="card !p-0 overflow-hidden group hover:shadow-md transition-all">
-                <div className="flex items-stretch">
-                  {/* Status bar */}
-                  <div className={`w-1 shrink-0 ${
-                    c.status === "open" ? "bg-[var(--primary)]"
-                    : isPendingApproval(c.status) ? "bg-amber-400"
-                    : "bg-gray-300"
-                  }`} />
+            {filtered.map((c) => {
+              const badge = statusBadge(c.status);
+              const isArchived = c.status === "archived";
+              return (
+                <div key={c.contract_id} className="card !p-0 overflow-hidden group hover:shadow-md transition-all">
+                  <div className="flex items-stretch">
+                    {/* Status bar */}
+                    <div className={`w-1 shrink-0 ${statusBarColor(c.status)}`} />
 
-                  <div className="flex-1 px-5 py-4">
-                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                      {/* Info */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2.5 mb-1.5 flex-wrap">
-                          <Link
-                            href={c.status === "draft" ? `/contracts/${c.contract_id}/preview?from=my-contracts` : `/contracts/${c.contract_id}?from=my-contracts`}
-                            className="font-semibold text-[var(--foreground)] text-[15px] group-hover:text-[var(--primary)] transition-colors"
-                          >
-                            {c.title}
-                          </Link>
-                          <span className={`text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded shrink-0 ${
-                            c.status === "open" ? "bg-[var(--primary-light)] text-[var(--primary)]"
-                            : isPendingApproval(c.status) ? "bg-amber-500/10 text-amber-600"
-                            : "bg-gray-500/10 text-gray-400"
-                          }`}>
-                            {isPendingApproval(c.status) ? "Pending Approval" : c.status}
-                          </span>
+                    <div className="flex-1 px-5 py-4">
+                      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                        {/* Info */}
+                        <div className={`flex-1 min-w-0 ${isArchived ? "opacity-60" : ""}`}>
+                          <div className="flex items-center gap-2.5 mb-1.5 flex-wrap">
+                            <Link
+                              href={c.status === "draft" ? `/contracts/${c.contract_id}/preview?from=my-contracts` : `/contracts/${c.contract_id}?from=my-contracts`}
+                              className="font-semibold text-[var(--foreground)] text-[15px] group-hover:text-[var(--primary)] transition-colors"
+                            >
+                              {c.title}
+                            </Link>
+                            <span className={`text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded shrink-0 ${badge.cls}`}>
+                              {badge.label}
+                            </span>
+                          </div>
+                          <p className="text-sm text-[var(--muted)] line-clamp-2 leading-relaxed mb-3">{c.description}</p>
+                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-[var(--muted)]">
+                            {c.industry && (
+                              <span className="px-2 py-0.5 rounded-md bg-[var(--primary-light)] text-[var(--primary)] font-medium">{c.industry}</span>
+                            )}
+                            <span className="flex items-center gap-1">
+                              <svg className="w-3.5 h-3.5 text-[var(--accent)]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                              </svg>
+                              <span className="font-semibold text-[var(--foreground)]">{shortValue(c.budget, "TBD")}</span>
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5" />
+                              </svg>
+                              {shortValue(c.deadline, "TBD")}
+                            </span>
+                          </div>
                         </div>
-                        <p className="text-sm text-[var(--muted)] line-clamp-2 leading-relaxed mb-3">{c.description}</p>
-                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-[var(--muted)]">
-                          {c.industry && (
-                            <span className="px-2 py-0.5 rounded-md bg-[var(--primary-light)] text-[var(--primary)] font-medium">{c.industry}</span>
+
+                        {/* Actions */}
+                        <div className="flex flex-wrap items-center gap-2 shrink-0">
+                          {/* Reopen (only for archived) */}
+                          {isArchived && (
+                            <button
+                              onClick={() => handleReopen(c)}
+                              disabled={reopeningId === c.contract_id}
+                              className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg bg-[var(--primary-light)] text-[var(--primary)] hover:bg-[var(--primary)]/20 transition-colors disabled:opacity-50"
+                              title="Reopen for approval"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" />
+                              </svg>
+                              {reopeningId === c.contract_id ? "..." : "Reopen"}
+                            </button>
                           )}
-                          <span className="flex items-center gap-1">
-                            <svg className="w-3.5 h-3.5 text-[var(--accent)]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-                            </svg>
-                            <span className="font-semibold text-[var(--foreground)]">{shortValue(c.budget, "TBD")}</span>
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5" />
-                            </svg>
-                            {shortValue(c.deadline, "TBD")}
-                          </span>
+
+                          {/* Send Email (not for archived) */}
+                          {!isArchived && (
+                            <button
+                              onClick={() => setEmailContract(c)}
+                              className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border border-[var(--divider)] text-[var(--muted)] hover:text-[var(--primary)] hover:border-[var(--primary)]/30 transition-all"
+                              title="Send RFP via Email"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" />
+                              </svg>
+                              Send Email
+                            </button>
+                          )}
+
+                          {/* Download PDF */}
+                          {extractPdfBase64(c.rfp_pdf_base64) && (
+                            <button
+                              onClick={() => downloadPdfFromBase64(extractPdfBase64(c.rfp_pdf_base64) as string, `${c.rfp_file_name || c.title || "RFP"}.pdf`)}
+                              className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border border-[var(--divider)] text-[var(--muted)] hover:text-[var(--primary)] hover:border-[var(--primary)]/30 transition-all"
+                              title="Download RFP PDF"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                              </svg>
+                              PDF
+                            </button>
+                          )}
+
+                          {/* Approve (only for pending) */}
+                          {isPendingApproval(c.status) && (
+                            <button
+                              onClick={() => setApproveContract(c)}
+                              className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg bg-[var(--primary-light)] text-[var(--primary)] hover:bg-[var(--primary)]/20 transition-colors"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                              </svg>
+                              Approve
+                            </button>
+                          )}
+
+                          {/* View Details */}
+                          {!isArchived && (
+                            <Link
+                              href={c.status === "draft" ? `/contracts/${c.contract_id}/preview?from=my-contracts` : `/contracts/${c.contract_id}?from=my-contracts`}
+                              className="inline-flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-lg bg-[var(--primary)] text-[#EFECE3] hover:opacity-90 transition-opacity"
+                            >
+                              View
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+                              </svg>
+                            </Link>
+                          )}
+
+                          {/* Archive button (replaces Delete) — not shown for already archived */}
+                          {!isArchived && (
+                            <button
+                              onClick={() => setArchiveContract(c)}
+                              disabled={archivingId === c.contract_id}
+                              className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg text-amber-600 hover:bg-amber-500/10 transition-colors disabled:opacity-50"
+                              title="Archive this RFP"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="m20.25 7.5-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z" />
+                              </svg>
+                              {archivingId === c.contract_id ? "..." : "Archive"}
+                            </button>
+                          )}
                         </div>
-                      </div>
-
-                      {/* Actions */}
-                      <div className="flex flex-wrap items-center gap-2 shrink-0">
-                        {/* Send Email */}
-                        <button
-                          onClick={() => setEmailContract(c)}
-                          className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border border-[var(--divider)] text-[var(--muted)] hover:text-[var(--primary)] hover:border-[var(--primary)]/30 transition-all"
-                          title="Send RFP via Email"
-                        >
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" />
-                          </svg>
-                          Send Email
-                        </button>
-
-                        {/* Download PDF */}
-                        {extractPdfBase64(c.rfp_pdf_base64) && (
-                          <button
-                            onClick={() => downloadPdfFromBase64(extractPdfBase64(c.rfp_pdf_base64) as string, `${c.rfp_file_name || c.title || "RFP"}.pdf`)}
-                            className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg border border-[var(--divider)] text-[var(--muted)] hover:text-[var(--primary)] hover:border-[var(--primary)]/30 transition-all"
-                            title="Download RFP PDF"
-                          >
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                            </svg>
-                            PDF
-                          </button>
-                        )}
-
-                        {/* Approve */}
-                        {isPendingApproval(c.status) && (
-                          <button
-                            onClick={() => setApproveContract(c)}
-                            className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg bg-[var(--primary-light)] text-[var(--primary)] hover:bg-[var(--primary)]/20 transition-colors"
-                          >
-                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                            </svg>
-                            Approve
-                          </button>
-                        )}
-
-                        {/* View Details */}
-                        <Link
-                          href={c.status === "draft" ? `/contracts/${c.contract_id}/preview?from=my-contracts` : `/contracts/${c.contract_id}?from=my-contracts`}
-                          className="inline-flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-lg bg-[var(--primary)] text-[#EFECE3] hover:opacity-90 transition-opacity"
-                        >
-                          View
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
-                          </svg>
-                        </Link>
-
-                        {/* Delete */}
-                        <button
-                          onClick={() => handleDelete(c)}
-                          disabled={deletingId === c.contract_id}
-                          className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
-                          title="Delete"
-                        >
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
-                          </svg>
-                          {deletingId === c.contract_id ? "..." : "Delete"}
-                        </button>
                       </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

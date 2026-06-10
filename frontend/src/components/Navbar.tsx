@@ -41,7 +41,7 @@ export default function Navbar() {
       try {
         const { data, error } = await supabase
           .from("notifications")
-          .select("*")
+          .select("id")
           .eq("user_id", user.id)
           .eq("read", false);
         
@@ -54,6 +54,27 @@ export default function Navbar() {
     };
 
     void fetchNotifications();
+
+    // Subscribe to realtime changes to notifications table
+    const channel = supabase
+      .channel(`user-notifications:${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "notifications",
+          filter: `user_id=eq.${user.id}`,
+        },
+        () => {
+          void fetchNotifications();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
   }, [user]);
 
   // Fetch pending message requests count for RFP companies (vendor→rfp + rfp→rfp)

@@ -270,10 +270,18 @@ export interface RfpQuestion {
   isMetadata?: boolean;
   isTextarea?: boolean;
   options?: string[];
+  /**
+   * If true the Skip button is shown and the user can freely skip this question.
+   * If false/undefined the Skip button is hidden and a persuasive message is shown
+   * instead when the user tries to skip.
+   */
+  optional?: boolean;
 }
 
 export const FINAL_INTAKE_KEY = "additional_details";
-export const MANDATORY_SECTIONS_KEY = "mandatory_rfp_requirements";
+// MANDATORY_SECTIONS_KEY removed — the "mandatory RFP sections" intake question
+// was never consumed by the generation pipeline or Stage 4 mandatory criteria;
+// Stage 4 builds criteria independently from project context.
 
 export const CATEGORY_QUESTION_TEMPLATES: Record<string, Partial<Record<string, string>>> = {
   software: {
@@ -318,9 +326,11 @@ export function getFinalIntakeQuestionLabel(): string {
 }
 
 export const RFP_QUESTIONS: RfpQuestion[] = [
+  // ── Core metadata (mandatory) ───────────────────────────────────────────────
   { key: "organization_name", label: "What is the name of your organization?", placeholder: "e.g., Acme Corporation", isMetadata: true },
   { key: "project_title", label: "What is the project title?", placeholder: "e.g., Enterprise Cloud Migration", isMetadata: true },
   { key: "category", label: "What is the project category?", placeholder: "Select a category", isMetadata: true, options: ["software", "manufacturing", "logistics", "construction", "other"] },
+  // ── Core RFP content (mandatory — type "auto" to let AI fill it) ─────────────
   { key: "organization_background", label: 'Describe your organization background (or type "auto")', placeholder: "Company history, capabilities...", isTextarea: true },
   { key: "project_overview", label: 'Provide a project overview (or type "auto")', placeholder: "High-level project description...", isTextarea: true },
   { key: "project_objectives", label: 'What are the project objectives? (or type "auto")', placeholder: "Key goals and success criteria...", isTextarea: true },
@@ -333,9 +343,9 @@ export const RFP_QUESTIONS: RfpQuestion[] = [
   { key: "budget_framework", label: 'Describe the budget framework (or type "auto")', placeholder: "Budget range, payment terms...", isTextarea: true },
   { key: "evaluation_criteria", label: 'What are the evaluation criteria? (or type "auto")', placeholder: "Scoring methodology, weights...", isTextarea: true },
   { key: "risk_management", label: 'What are the risk management requirements? (or type "auto")', placeholder: "Risks, mitigation, contingencies...", isTextarea: true },
-  { key: "cybersecurity_compliance", label: 'What cybersecurity & compliance requirements? (or type "auto")', placeholder: "Standards, certifications needed...", isTextarea: true },
   { key: "legal_and_contractual", label: 'Any legal & contractual requirements? (or type "auto")', placeholder: "Contract terms, IP, NDA...", isTextarea: true },
-  { key: "submission_instructions", label: 'Submission instructions for vendors? (or type "auto")', placeholder: "Format, deadline, required documents...", isTextarea: true },
   { key: "contact_information", label: 'Provide contact information (or type "auto")', placeholder: "Name, email, phone, address...", isTextarea: true },
-  { key: MANDATORY_SECTIONS_KEY, label: "Which RFP sections are mandatory for vendors to address? (or type \"auto\")", placeholder: "List the section names or leave blank for auto-detection...", isTextarea: true },
+  // ── Supplementary sections (optional — skip button visible) ─────────────────
+  { key: "cybersecurity_compliance", label: 'What cybersecurity & compliance requirements? (or type "auto")', placeholder: "Standards, certifications needed...", isTextarea: true, optional: true },
+  { key: "submission_instructions", label: 'Submission instructions for vendors? (or type "auto")', placeholder: "Format, deadline, required documents...", isTextarea: true, optional: true },
 ];

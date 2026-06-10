@@ -76,6 +76,7 @@ export default function ContractDetailPage() {
     return "";
   });
   const [backgroundJobId, setBackgroundJobId] = useState<string | null>(null);
+  const [showProposalModal, setShowProposalModal] = useState(false);
 
   const savedAnalysis = contract?.last_analysis_result;
   const liveAnalysis = backgroundJobId || analyzing || judgeResult || Object.keys(analyses).length > 0 ? {
@@ -729,24 +730,157 @@ export default function ContractDetailPage() {
       )}
 
       {/* Already Applied Banner */}
-      {user && !isOwner && hasSubmitted && (
-        <div className="bg-[var(--success-light)] rounded-xl border border-[var(--success)]/20 p-6 mb-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-semibold text-[var(--success)] flex items-center gap-2">
-              <svg className="w-5 h-5 text-[var(--success)]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-              </svg>
-              Proposal Submitted
-            </h2>
-            <p className="text-sm text-[var(--success)]/80 mt-1">
-              You have already submitted a proposal for this contract. We will notify you once the RFP company reviews it.
-            </p>
-          </div>
-          <span className="px-3.5 py-1.5 rounded-lg bg-white/70 border border-[var(--success)]/30 text-xs font-semibold text-[var(--success)] shrink-0 capitalize">
-            Status: {proposals.find(p => p.vendor_id === user.id)?.status || "pending"}
-          </span>
-        </div>
-      )}
+      {user && !isOwner && hasSubmitted && (() => {
+        const myProposal = proposals.find((p) => p.vendor_id === user.id);
+        return (
+          <>
+            <div className="bg-[var(--success-light)] rounded-xl border border-[var(--success)]/20 p-6 mb-4">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-[var(--success)] flex items-center gap-2">
+                    <svg className="w-5 h-5 text-[var(--success)]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                    </svg>
+                    Proposal Submitted
+                  </h2>
+                  <p className="text-sm text-[var(--success)]/80 mt-1">
+                    You have already submitted a proposal for this contract. We will notify you once the RFP company reviews it.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                  <span className="px-3.5 py-1.5 rounded-lg bg-white/70 border border-[var(--success)]/30 text-xs font-semibold text-[var(--success)] capitalize">
+                    Status: {myProposal?.status || "pending"}
+                  </span>
+                  {myProposal?.proposal_file ? (
+                    <a
+                      href={myProposal.proposal_file}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-white/70 border border-[var(--success)]/30 text-xs font-semibold text-[var(--success)] hover:bg-white transition-colors"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                      </svg>
+                      View Your Proposal
+                    </a>
+                  ) : (
+                    <button
+                      onClick={() => setShowProposalModal(true)}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-white/70 border border-[var(--success)]/30 text-xs font-semibold text-[var(--success)] hover:bg-white transition-colors"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                      </svg>
+                      View Your Proposal
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* View Proposal Modal */}
+            {showProposalModal && myProposal && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)" }}>
+                <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+                  {/* Modal Header */}
+                  <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--divider)]">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-[var(--success-light)] flex items-center justify-center">
+                        <svg className="w-5 h-5 text-[var(--success)]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <h3 className="font-semibold text-[var(--foreground)] text-sm">Your Submitted Proposal</h3>
+                        <p className="text-xs text-[var(--muted)]">{contract.title}</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setShowProposalModal(false)}
+                      className="w-8 h-8 rounded-full flex items-center justify-center text-[var(--muted)] hover:bg-[var(--surface)] transition-colors"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  {/* Modal Body */}
+                  <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+                    {/* Meta info */}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {[
+                        { label: "Status", value: (myProposal.status || "pending") as string },
+                        { label: "Price", value: (myProposal.price || "—") as string },
+                        { label: "Timeline", value: (myProposal.timeline || "—") as string },
+                      ].map((item) => (
+                        <div key={item.label} className="bg-[var(--surface)] rounded-xl p-3 border border-[var(--divider)]">
+                          <p className="text-[10px] uppercase tracking-wider font-semibold text-[var(--muted)] mb-1">{item.label}</p>
+                          <p className="text-sm font-semibold text-[var(--foreground)] capitalize">{item.value}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Experience */}
+                    {myProposal.experience && (
+                      <div>
+                        <p className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider mb-2">Experience / Cover Note</p>
+                        <div className="bg-[var(--surface)] rounded-xl p-4 border border-[var(--divider)] text-sm text-[var(--foreground)] leading-relaxed whitespace-pre-wrap">
+                          {myProposal.experience}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Proposal content */}
+                    {myProposal.proposal_data && (
+                      <div>
+                        <p className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider mb-2">Proposal Content</p>
+                        <div className="bg-[var(--surface)] rounded-xl p-4 border border-[var(--divider)] text-sm text-[var(--foreground)] leading-relaxed whitespace-pre-wrap max-h-60 overflow-y-auto">
+                          {myProposal.proposal_data}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Uploaded PDF */}
+                    {myProposal.proposal_file && (
+                      <div>
+                        <p className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider mb-2">Uploaded Document</p>
+                        <a
+                          href={myProposal.proposal_file}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--primary)] text-[#EFECE3] text-sm font-semibold hover:opacity-90 transition-opacity"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                          </svg>
+                          View / Download Proposal PDF
+                        </a>
+                      </div>
+                    )}
+
+                    {!myProposal.proposal_data && !myProposal.proposal_file && !myProposal.experience && (
+                      <p className="text-sm text-[var(--muted)] text-center py-6">No proposal content to display.</p>
+                    )}
+                  </div>
+
+                  {/* Footer */}
+                  <div className="px-6 py-4 border-t border-[var(--divider)]">
+                    <button
+                      onClick={() => setShowProposalModal(false)}
+                      className="w-full px-4 py-2.5 rounded-xl border border-[var(--divider)] text-sm font-medium text-[var(--muted)] hover:bg-[var(--surface)] transition-all"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        );
+      })()}
 
       {/* Apply Button for vendors */}
       {user && !isOwner && !hasSubmitted && contract.status === "open" && (

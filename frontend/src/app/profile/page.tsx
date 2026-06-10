@@ -1,15 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth, UserProfile } from "@/contexts/AuthContext";
 import ProfileHeader from "@/components/ProfileHeader";
 import PostCard from "@/components/PostCard";
 import ContractCard from "@/components/ContractCard";
 import { supabase } from "@/services/supabase";
+import { randomUUID } from "@/lib/uuid";
 
 
 export default function ProfilePage() {
-  const { user, profile } = useAuth();
+  const { user, profile: authProfile } = useAuth();
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [username, setUsername] = useState<string>("");
   const [posts, setPosts] = useState<any[]>([]);
   const [contracts, setContracts] = useState<any[]>([]);
@@ -41,6 +43,40 @@ export default function ProfilePage() {
       .replace(/\s+/g, "-")
       .replace(/[^a-z0-9\-_.]/g, "");
 
+  const openDataUrlInNewTab = (dataUrl: string, fileName: string) => {
+    if (!dataUrl) return;
+    if (!dataUrl.startsWith("data:")) {
+      window.open(dataUrl, "_blank");
+      return;
+    }
+    try {
+      const arr = dataUrl.split(',');
+      const mimeMatch = arr[0].match(/:(.*?);/);
+      const mime = mimeMatch ? mimeMatch[1] : '';
+      const bstr = atob(arr[1]);
+      let n = bstr.length;
+      const u8arr = new Uint8Array(n);
+      while (n--) {
+        u8arr[n] = bstr.charCodeAt(n);
+      }
+      const blob = new Blob([u8arr], { type: mime });
+      const blobUrl = URL.createObjectURL(blob);
+      window.open(blobUrl, "_blank");
+    } catch (err) {
+      console.error("Failed to open document:", err);
+      const newWindow = window.open();
+      if (newWindow) {
+        newWindow.document.write(`<iframe src="${dataUrl}" frameborder="0" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (authProfile) {
+      setProfile(authProfile);
+    }
+  }, [authProfile]);
+
   useEffect(() => {
     if (profile) {
       setEditForm({
@@ -61,6 +97,17 @@ export default function ProfilePage() {
   useEffect(() => {
     if (!user) return;
     void (async () => {
+      // Fetch latest profile directly from DB to prevent stale state issues
+      const { data: dbProfile } = await supabase
+        .from("users")
+        .select("*")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (dbProfile) {
+        setProfile(dbProfile);
+      }
+
       const { data: profileUser } = await supabase
         .from("profiles")
         .select("username")
@@ -103,6 +150,7 @@ export default function ProfilePage() {
         specialties,
       }).eq("id", user.id);
       if (error) throw error;
+      window.location.reload();
     } catch (err) {
       console.error("Failed to save profile:", err);
       alert("Failed to save changes. Please try again.");
@@ -184,13 +232,34 @@ export default function ProfilePage() {
     setUploadingLicense(true);
     try {
       const dataUrl = await fileToDataUrl(file);
-      const licenseEntry = { name: file.name, url: dataUrl, uploaded_at: new Date().toISOString() };
+      const licenseEntry = { 
+        name: file.name, 
+        url: dataUrl, 
+        uploaded_at: new Date().toISOString(),
+        status: "pending"
+      };
       const nextLicenses = [...licenses, licenseEntry];
       const { error } = await supabase.from("users").update({
         licenses: nextLicenses,
-        verified: true,
+        verified: false, // set false, moderation required
       }).eq("id", user.id);
       if (error) throw error;
+
+      // Notify the admin account (ylogx)
+      const adminId = "7d11f7bd-9742-42b3-a62c-df9447235d7a";
+      const { error: notifErr } = await supabase.from("notifications").insert({
+        id: randomUUID(),
+        user_id: adminId,
+        type: "pending_verification",
+        title: "Pending Verification Request",
+        message: `Company "${profile?.company_name || 'A company'}" has requested verification. Request details: ${user.id}`,
+        read: false,
+        timestamp: new Date().toISOString(),
+      });
+      if (notifErr) console.warn("Admin notification insertion failed:", notifErr);
+
+      // Force page reload to reflect state immediately
+      window.location.reload();
     } catch (err) {
       console.error("License upload failed:", err);
       alert("License upload failed. Please try a smaller file.");
@@ -220,6 +289,16 @@ export default function ProfilePage() {
 
   const licenses = profile?.licenses ?? [];
   const specialties = profile?.specialties ?? [];
+  const latestLicense = licenses.length > 0 ? licenses[licenses.length - 1] : null;
+  const verificationStatus = (latestLicense as any)?.status || (profile.verified ? "approved" : "none");
+
+  const requirementsList = [
+    { label: "Industry specified", done: !!profile.industry },
+    { label: "Location added", done: !!profile.location },
+    { label: "Company description", done: !!profile.description },
+    { label: "Registration / License number", done: !!profile.registration_number },
+    { label: "Upload company documents (approved & verified)", done: licenses.length > 0 && (verificationStatus === "approved" || profile.verified) },
+  ];
 
   const navItems = [
     { key: "about", label: "About" },
@@ -452,7 +531,7 @@ export default function ProfilePage() {
                   <p className="text-sm mt-1" style={{ color: "#333333" }}>Posts you create will appear here</p>
                 </div>
               ) : (
-                posts.map((p) => <PostCard key={p.post_id} post={p} />)
+                posts.map((p) => <PostCard key={p.post_id || p.id} post={p} />)
               )}
             </div>
           )}
@@ -472,7 +551,7 @@ export default function ProfilePage() {
                   <p className="text-sm mt-1" style={{ color: "#333333" }}>Your procurement contracts will appear here</p>
                 </div>
               ) : (
-                <div className="grid gap-4">{contracts.map((c) => <ContractCard key={c.contract_id} contract={c} />)}</div>
+                <div className="grid gap-4">{contracts.map((c) => <ContractCard key={c.id || c.contract_id} contract={c} />)}</div>
               )}
             </div>
           )}
@@ -517,7 +596,7 @@ export default function ProfilePage() {
                 </div>
               ) : (
                 reviews.map((r) => (
-                  <div key={r.review_id} className="rounded-xl p-5 transition-all" style={{ background: "#E5E2D8", border: "1px solid #D4D1C8" }}>
+                  <div key={r.review_id || r.id} className="rounded-xl p-5 transition-all" style={{ background: "#E5E2D8", border: "1px solid #D4D1C8" }}>
                     <div className="flex items-start gap-3">
                       <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0" style={{ background: "#D4D1C8", color: "#333333" }}>
                         {(r.reviewer_name || "A").charAt(0)}
@@ -570,7 +649,7 @@ export default function ProfilePage() {
                 notifications.map((n) => {
                   const ts = n.timestamp ? new Date(n.timestamp) : null;
                   return (
-                    <div key={n.notification_id} className="rounded-xl p-4 transition-all" style={{ background: n.read ? "#E5E2D8" : "#E5E2D8", border: `1px solid ${n.read ? "#D4D1C8" : "#B8B5AC"}` }}>
+                    <div key={n.notification_id || n.id} className="rounded-xl p-4 transition-all" style={{ background: n.read ? "#E5E2D8" : "#E5E2D8", border: `1px solid ${n.read ? "#D4D1C8" : "#B8B5AC"}` }}>
                       <div className="flex items-start gap-3">
                         {!n.read && <span className="w-2.5 h-2.5 rounded-full mt-1.5 shrink-0" style={{ background: "#000000" }} />}
                         <div className="flex-1 min-w-0">
@@ -591,24 +670,85 @@ export default function ProfilePage() {
           {/* === VERIFICATION SECTION === */}
           {activeSection === "verification" && (
             <div className="space-y-6">
-              {/* Verification Status */}
-              <div className="rounded-xl p-6" style={{ background: profile.verified ? "#0a2e1a" : "#2e2408", border: `1px solid ${profile.verified ? "#166534" : "#854d0e"}` }}>
+              {/* Verification Status Card */}
+              <div 
+                className="rounded-xl p-6" 
+                style={{ 
+                  background: 
+                    verificationStatus === "approved" 
+                      ? "#0a2e1a" 
+                      : verificationStatus === "pending" 
+                      ? "#2e2408" 
+                      : verificationStatus === "rejected" 
+                      ? "#3b1111" 
+                      : "#2e2408", 
+                  border: `1px solid ${
+                    verificationStatus === "approved" 
+                      ? "#166534" 
+                      : verificationStatus === "pending" 
+                      ? "#854d0e" 
+                      : verificationStatus === "rejected" 
+                      ? "#991b1b" 
+                      : "#854d0e"
+                  }` 
+                }}
+              >
                 <div className="flex items-start gap-4">
-                  <div className="w-14 h-14 rounded-full flex items-center justify-center shrink-0" style={{ background: profile.verified ? "#14532d" : "#422006" }}>
-                    {profile.verified ? (
+                  <div 
+                    className="w-14 h-14 rounded-full flex items-center justify-center shrink-0" 
+                    style={{ 
+                      background: 
+                        verificationStatus === "approved" 
+                          ? "#14532d" 
+                          : verificationStatus === "pending" 
+                          ? "#422006" 
+                          : verificationStatus === "rejected" 
+                          ? "#5c1d1d" 
+                          : "#422006" 
+                    }}
+                  >
+                    {verificationStatus === "approved" ? (
                       <svg className="w-7 h-7" style={{ color: "#4ade80" }} fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"/></svg>
+                    ) : verificationStatus === "pending" ? (
+                      <svg className="w-7 h-7" style={{ color: "#fbbf24" }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                     ) : (
-                      <svg className="w-7 h-7" style={{ color: "#fbbf24" }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/></svg>
+                      <svg className="w-7 h-7" style={{ color: "#f87171" }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/></svg>
                     )}
                   </div>
                   <div>
-                    <h3 className="text-lg font-bold" style={{ color: profile.verified ? "#4ade80" : "#fbbf24" }}>
-                      {profile.verified ? "Verified Company \u2713" : "Not Yet Verified"}
+                    <h3 
+                      className="text-lg font-bold" 
+                      style={{ 
+                        color: 
+                          verificationStatus === "approved" 
+                            ? "#4ade80" 
+                            : verificationStatus === "pending" 
+                            ? "#fbbf24" 
+                            : "#f87171" 
+                      }}
+                    >
+                      {verificationStatus === "approved" 
+                        ? "Verified Company \u2713" 
+                        : verificationStatus === "pending" 
+                        ? "Verification Pending \u29D6" 
+                        : "Verification Rejected \u2717"}
                     </h3>
-                    <p className="text-sm mt-1" style={{ color: profile.verified ? "#86efac" : "#fde68a" }}>
-                      {profile.verified
+                    <p 
+                      className="text-sm mt-1" 
+                      style={{ 
+                        color: 
+                          verificationStatus === "approved" 
+                            ? "#86efac" 
+                            : verificationStatus === "pending" 
+                            ? "#fde68a" 
+                            : "#fca5a5" 
+                      }}
+                    >
+                      {verificationStatus === "approved"
                         ? "Your company has been verified. Your profile displays a verification badge visible to all users."
-                        : "Upload your company license and registration documents to get a verified badge on your profile."}
+                        : verificationStatus === "pending"
+                        ? "Your verification documents have been uploaded and are currently under review by the admin. You will be notified once the review is complete."
+                        : "Your verification request was rejected by the admin. Please check your uploaded document and upload a valid license/certificate to request again."}
                     </p>
                   </div>
                 </div>
@@ -618,14 +758,7 @@ export default function ProfilePage() {
               <div className="rounded-xl p-6" style={{ background: "#E5E2D8", border: "1px solid #D4D1C8" }}>
                 <h2 className="text-lg font-bold mb-4" style={{ color: "#000000" }}>Verification Requirements</h2>
                 <div className="space-y-3">
-                  {[
-                    { label: "Company license or registration document", done: licenses.length > 0 },
-                    { label: "Company name", done: !!profile.company_name },
-                    { label: "Industry specified", done: !!profile.industry },
-                    { label: "Location added", done: !!profile.location },
-                    { label: "Company description", done: !!profile.description },
-                    { label: "Registration/License number", done: !!profile.registration_number },
-                  ].map((req, i) => (
+                  {requirementsList.map((req, i) => (
                     <div key={i} className="flex items-center gap-3 p-3 rounded-lg" style={{ background: req.done ? "#0a2e1a" : "#E5E2D8" }}>
                       <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0" style={{ background: req.done ? "#166534" : "#D4D1C8" }}>
                         {req.done ? (
@@ -672,10 +805,10 @@ export default function ProfilePage() {
                             <svg className="w-5 h-5" style={{ color: "#333333" }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>
                           </div>
                           <div className="flex-1 min-w-0">
-                            <a href={lic.url} target="_blank" rel="noopener noreferrer" className="text-sm font-medium truncate block" style={{ color: "#444444" }}>{lic.name}</a>
+                            <a href="#" onClick={(e) => { e.preventDefault(); openDataUrlInNewTab(lic.url, lic.name); }} className="text-sm font-medium truncate block hover:underline" style={{ color: "#444444" }}>{lic.name}</a>
                             <p className="text-xs" style={{ color: "#333333" }}>{new Date(lic.uploaded_at).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}</p>
                           </div>
-                          <svg className="w-4 h-4" style={{ color: "#333333" }} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                          <svg className="w-4 h-4 cursor-pointer hover:opacity-80" style={{ color: "#333333" }} fill="none" stroke="currentColor" viewBox="0 0 24 24" onClick={(e) => { e.preventDefault(); openDataUrlInNewTab(lic.url, lic.name); }}><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
                         </div>
                       ))}
                     </div>
@@ -802,15 +935,50 @@ export default function ProfilePage() {
               <div className="my-1" style={{ height: "1px", background: "#D4D1C8" }} />
               <div className="flex items-center justify-between">
                 <span className="text-sm" style={{ color: "#333333" }}>Status</span>
-                <span className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full" style={{ background: profile.verified ? "#0a2e1a" : "#2e2408", color: profile.verified ? "#4ade80" : "#fbbf24", border: `1px solid ${profile.verified ? "#166534" : "#854d0e"}` }}>
-                  {profile.verified ? "\u2713 Verified" : "\u25cb Unverified"}
+                <span 
+                  className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full" 
+                  style={{ 
+                    background: 
+                      verificationStatus === "approved" 
+                        ? "#0a2e1a" 
+                        : verificationStatus === "pending" 
+                        ? "#2e2408" 
+                        : verificationStatus === "rejected" 
+                        ? "#3b1111" 
+                        : "#2e2408", 
+                    color: 
+                      verificationStatus === "approved" 
+                        ? "#4ade80" 
+                        : verificationStatus === "pending" 
+                        ? "#fbbf24" 
+                        : verificationStatus === "rejected" 
+                        ? "#f87171" 
+                        : "#fbbf24", 
+                    border: `1px solid ${
+                      verificationStatus === "approved" 
+                        ? "#166534" 
+                        : verificationStatus === "pending" 
+                        ? "#854d0e" 
+                        : verificationStatus === "rejected" 
+                        ? "#991b1b" 
+                        : "#854d0e"
+                    }` 
+                  }}
+                >
+                  {verificationStatus === "approved" 
+                    ? "\u2713 Verified" 
+                    : verificationStatus === "pending" 
+                    ? "\u29D6 Pending" 
+                    : verificationStatus === "rejected" 
+                    ? "\u2717 Rejected" 
+                    : "\u25cb Unverified"}
                 </span>
               </div>
             </div>
           </div>
 
           {/* Verification Progress */}
-          {!profile.verified && (
+          {verificationStatus !== "approved" && (
             <div className="rounded-xl p-5" style={{ background: "#E5E2D8", border: "1px solid #D4D1C8" }}>
               <h3 className="text-sm font-bold mb-2" style={{ color: "#000000" }}>Get Verified</h3>
               <p className="text-xs mb-3" style={{ color: "#333333" }}>Complete your profile and upload documents to earn the verification badge.</p>
@@ -819,16 +987,13 @@ export default function ProfilePage() {
                   className="h-full rounded-full transition-all duration-500"
                   style={{
                     background: "#000000",
-                    width: `${Math.round(([!!profile.company_name, !!profile.industry, !!profile.location, !!profile.description, !!profile.registration_number, licenses.length > 0].filter(Boolean).length / 6) * 100)}%`
+                    width: `${Math.round((requirementsList.filter(r => r.done).length / requirementsList.length) * 100)}%`
                   }}
                 />
               </div>
               <p className="text-xs mt-2 font-medium" style={{ color: "#000000" }}>
-                {[!!profile.company_name, !!profile.industry, !!profile.location, !!profile.description, !!profile.registration_number, licenses.length > 0].filter(Boolean).length} of 6 steps complete
+                {requirementsList.filter(r => r.done).length} of {requirementsList.length} steps complete
               </p>
-              <button onClick={() => setActiveSection("verification")} className="mt-3 w-full text-center text-xs font-semibold rounded-lg py-2 transition-colors" style={{ color: "#000000", background: "#EFECE3", border: "1px solid #D4D1C8" }}>
-                Complete Verification \u2192
-              </button>
             </div>
           )}
 

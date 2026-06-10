@@ -52,9 +52,27 @@ export default function ContractsPage() {
   const [contracts, setContracts] = useState<any[]>([]);
   const [myContracts, setMyContracts] = useState<any[]>([]);
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<"all" | "open" | "closed">("all");
+  const [filter, setFilter] = useState<"all" | "open" | "closed" | "submitted">("all");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [searchFocused, setSearchFocused] = useState(false);
+  const [submittedContractIds, setSubmittedContractIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!user || isRfpCompany) return;
+    void (async () => {
+      const { data, error } = await supabase
+        .from("proposals")
+        .select("contract_id")
+        .eq("vendor_id", user.id);
+
+      if (error) {
+        console.warn("Proposals load failed:", error);
+        return;
+      }
+
+      setSubmittedContractIds(new Set((data || []).map((row: any) => row.contract_id)));
+    })();
+  }, [user, isRfpCompany]);
 
   useEffect(() => {
     void (async () => {
@@ -112,18 +130,27 @@ export default function ContractsPage() {
     );
   }
 
+  const isVisibleContract = (c: any) => c.status === "open" || c.status === "closed";
+
   const filtered = contracts.filter((c) => {
-    if (isPendingApproval(c.status)) return false;
+    if (!isVisibleContract(c)) return false;
     const matchSearch =
       c.title?.toLowerCase().includes(search.toLowerCase()) ||
       c.description?.toLowerCase().includes(search.toLowerCase()) ||
       c.industry?.toLowerCase().includes(search.toLowerCase());
-    const matchStatus = filter === "all" || c.status === filter;
+    const matchStatus =
+      filter === "all"
+        ? true
+        : filter === "submitted"
+          ? submittedContractIds.has(c.contract_id)
+          : c.status === filter;
     return matchSearch && matchStatus;
   });
 
+  const totalCount = contracts.filter(isVisibleContract).length;
   const openCount = contracts.filter((c) => c.status === "open").length;
   const closedCount = contracts.filter((c) => c.status === "closed").length;
+  const submittedCount = contracts.filter((c) => isVisibleContract(c) && submittedContractIds.has(c.contract_id)).length;
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6">
@@ -151,27 +178,35 @@ export default function ContractsPage() {
       </div>
 
       {/* Tabs — Vendors see Marketplace; RFP Companies see only My Contracts */}
-      {!isRfpCompany && (
-        <div className="flex items-center gap-1 p-1 rounded-xl bg-[var(--surface)] w-fit mb-6">
-          <button
-            onClick={() => setTab("marketplace")}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              tab === "marketplace"
-                ? "bg-[var(--card)] text-[var(--foreground)] shadow-sm"
-                : "text-[var(--muted)] hover:text-[var(--foreground)]"
-            }`}
-          >
-            Marketplace
-          </button>
+      {/* Stats cards row — Only for vendors in Marketplace tab */}
+      {!isRfpCompany && tab === "marketplace" && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+          {([
+            { key: "all" as const, label: "Total", count: totalCount, color: "text-[var(--foreground)]", bg: "bg-[var(--surface)]" },
+            { key: "open" as const, label: "Open", count: openCount, color: "text-[var(--primary)]", bg: "bg-[var(--primary-light)]" },
+            { key: "closed" as const, label: "Closed", count: closedCount, color: "text-gray-500", bg: "bg-gray-100" },
+            { key: "submitted" as const, label: "Submitted", count: submittedCount, color: "text-[var(--success)]", bg: "bg-[var(--success-light)]" },
+          ]).map((s) => (
+            <button
+              key={s.key}
+              onClick={() => setFilter(s.key)}
+              className={`rounded-xl p-4 text-left transition-all border-2 ${
+                filter === s.key ? "border-[var(--primary)] shadow-sm" : "border-transparent"
+              } ${s.bg}`}
+            >
+              <p className={`text-2xl font-bold ${s.color}`}>{s.count}</p>
+              <p className="text-xs text-[var(--muted)] font-medium mt-0.5">{s.label}</p>
+            </button>
+          ))}
         </div>
       )}
 
       {/* ═══ Marketplace Tab ═══ */}
       {tab === "marketplace" && (
         <>
-          {/* Search + Filter bar */}
+          {/* Search bar */}
           <div className="card !p-0 overflow-hidden mb-6">
-            <div className={`flex items-center gap-3 px-5 py-3.5 border-b transition-colors ${searchFocused ? "border-[var(--primary)]" : "border-[var(--divider)]"}`}>
+            <div className={`flex items-center gap-3 px-5 py-3.5 transition-colors ${searchFocused ? "border-[var(--primary)]" : ""}`}>
               <svg className={`w-4.5 h-4.5 shrink-0 transition-colors ${searchFocused ? "text-[var(--primary)]" : "text-[var(--muted)]"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
               </svg>
@@ -190,31 +225,9 @@ export default function ContractsPage() {
                   </svg>
                 </button>
               )}
-            </div>
-            <div className="flex items-center gap-2 px-5 py-2.5">
-              <span className="text-xs text-[var(--muted)] font-medium mr-1">Status:</span>
-              {([
-                { key: "all" as const, label: "All", count: contracts.filter(c => !isPendingApproval(c.status)).length },
-                { key: "open" as const, label: "Open", count: openCount },
-                { key: "closed" as const, label: "Closed", count: closedCount },
-              ]).map((f) => (
-                <button
-                  key={f.key}
-                  onClick={() => setFilter(f.key)}
-                  className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
-                    filter === f.key
-                      ? "bg-[var(--primary-light)] text-[var(--primary)]"
-                      : "text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--surface)]"
-                  }`}
-                >
-                  {f.label}
-                  <span className={`text-[10px] ${filter === f.key ? "opacity-70" : "opacity-50"}`}>{f.count}</span>
-                </button>
-              ))}
-              <div className="flex-1" />
-              <span className="text-xs text-[var(--muted)]">
+              <div className="text-xs text-[var(--muted)] border-l pl-3 ml-1 border-[var(--divider)] shrink-0 font-medium">
                 {filtered.length} result{filtered.length !== 1 ? "s" : ""}
-              </span>
+              </div>
             </div>
           </div>
 
@@ -241,6 +254,11 @@ export default function ContractsPage() {
                           }`}>
                             {c.status}
                           </span>
+                          {submittedContractIds.has(c.contract_id) && (
+                            <span className="text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded shrink-0 bg-[var(--success-light)] text-[var(--success)]">
+                              Submitted
+                            </span>
+                          )}
                         </div>
 
                         <p className="text-sm text-[var(--muted)] line-clamp-2 leading-relaxed mb-3">{c.description}</p>

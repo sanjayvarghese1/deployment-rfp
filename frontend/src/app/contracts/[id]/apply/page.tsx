@@ -101,6 +101,10 @@ export default function ApplyPage() {
   /* ═══ QUICK UPLOAD PDF HANDLER ═══ */
   const handleQuickUploadPdf = async () => {
     if (!quickPdfFile || !user) return;
+    if (!profile?.verified) {
+      alert("Verification required: You must be a verified vendor to submit a proposal.");
+      return;
+    }
     setQuickPdfUploading(true);
     try {
       // Upload PDF via backend API (no CORS issues)
@@ -220,58 +224,80 @@ export default function ApplyPage() {
         {/* ═══════════════════════════════════════════════════ */}
         {step === "quick_upload" && (
           <div className="space-y-6">
-            <div className="text-center mb-6">
-              <h2 className="text-2xl font-bold text-[var(--foreground)]">Submit Your Proposal</h2>
-              <p className="text-sm text-[var(--muted)] mt-2">Upload your PDF proposal directly. It will be submitted to the company for analysis.</p>
-            </div>
-
-            <div className="card !p-8">
-              <label className="group flex flex-col items-center justify-center w-full h-48 border-2 border-dashed border-[var(--divider)] hover:border-[var(--primary)] hover:bg-[var(--primary-light)]/30 rounded-xl cursor-pointer transition-all">
-                <input type="file" accept=".pdf" onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) {
-                    if (f.size > 10_000_000) {
-                      alert("PDF must be under 10 MB.");
-                      return;
-                    }
-                    if (f.type !== "application/pdf") {
-                      alert("Please select a PDF file.");
-                      return;
-                    }
-                    setQuickPdfFile(f);
-                  }
-                }} className="hidden" />
-                {quickPdfFile ? (
-                  <div className="text-center">
-                    <div className="w-12 h-12 bg-[var(--primary-light)] rounded-xl flex items-center justify-center mx-auto mb-3">
-                      <svg className="w-6 h-6 text-[var(--primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                    </div>
-                    <p className="text-sm font-semibold text-[var(--foreground)]">{quickPdfFile.name}</p>
-                    <p className="text-xs text-[var(--muted)] mt-1">Click to replace</p>
-                  </div>
-                ) : (
-                  <div className="text-center">
-                    <svg className="w-10 h-10 text-[var(--muted)] mx-auto mb-3 group-hover:text-[var(--primary)] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
-                    <p className="text-sm font-medium text-[var(--foreground)]">Click to upload PDF proposal</p>
-                    <p className="text-xs text-[var(--muted)] mt-1">PDF only &middot; Up to 10 MB</p>
-                  </div>
-                )}
-              </label>
-
-              {quickPdfFile && (
-                <button
-                  onClick={handleQuickUploadPdf}
-                  disabled={quickPdfUploading}
-                  className="mt-5 w-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[#EFECE3] px-6 py-3.5 rounded-full text-sm font-semibold disabled:opacity-50 transition-all"
+            {!profile?.verified ? (
+              <div className="card !p-8 border-2 border-amber-500/30 bg-amber-500/10 rounded-2xl text-center">
+                <div className="w-16 h-16 bg-amber-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <svg className="w-8 h-8 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                  </svg>
+                </div>
+                <h2 className="text-xl font-bold text-amber-900 mb-2">Verification Required</h2>
+                <p className="text-sm text-amber-800 max-w-md mx-auto mb-6">
+                  You must be a verified vendor to submit a proposal for an RFP. Please visit your profile dashboard to complete your verification and upload documents.
+                </p>
+                <Link
+                  href="/profile"
+                  className="inline-flex items-center justify-center bg-amber-600 hover:bg-amber-700 text-[#EFECE3] px-6 py-3 rounded-full text-sm font-semibold transition-all shadow-sm"
                 >
-                  {quickPdfUploading ? (
-                    <><div className="w-4 h-4 border-2 border-[#EFECE3]/30 border-t-[#EFECE3] rounded-full animate-spin inline-block mr-2" />Uploading & Submitting...</>
-                  ) : (
-                    "Upload & Submit Proposal"
+                  Go to Profile Verification
+                </Link>
+              </div>
+            ) : (
+              <>
+                <div className="text-center mb-6">
+                  <h2 className="text-2xl font-bold text-[var(--foreground)]">Submit Your Proposal</h2>
+                  <p className="text-sm text-[var(--muted)] mt-2">Upload your PDF proposal directly. It will be submitted to the company for analysis.</p>
+                </div>
+
+                <div className="card !p-8">
+                  <label className="group flex flex-col items-center justify-center w-full h-48 border-2 border-dashed border-[var(--divider)] hover:border-[var(--primary)] hover:bg-[var(--primary-light)]/30 rounded-xl cursor-pointer transition-all">
+                    <input type="file" accept=".pdf" onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) {
+                        if (f.size > 10_000_000) {
+                          alert("PDF must be under 10 MB.");
+                          return;
+                        }
+                        if (f.type !== "application/pdf") {
+                          alert("Please select a PDF file.");
+                          return;
+                        }
+                        setQuickPdfFile(f);
+                      }
+                    }} className="hidden" />
+                    {quickPdfFile ? (
+                      <div className="text-center">
+                        <div className="w-12 h-12 bg-[var(--primary-light)] rounded-xl flex items-center justify-center mx-auto mb-3">
+                          <svg className="w-6 h-6 text-[var(--primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                        </div>
+                        <p className="text-sm font-semibold text-[var(--foreground)]">{quickPdfFile.name}</p>
+                        <p className="text-xs text-[var(--muted)] mt-1">Click to replace</p>
+                      </div>
+                    ) : (
+                      <div className="text-center">
+                        <svg className="w-10 h-10 text-[var(--muted)] mx-auto mb-3 group-hover:text-[var(--primary)] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                        <p className="text-sm font-medium text-[var(--foreground)]">Click to upload PDF proposal</p>
+                        <p className="text-xs text-[var(--muted)] mt-1">PDF only &middot; Up to 10 MB</p>
+                      </div>
+                    )}
+                  </label>
+
+                  {quickPdfFile && (
+                    <button
+                      onClick={handleQuickUploadPdf}
+                      disabled={quickPdfUploading}
+                      className="mt-5 w-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[#EFECE3] px-6 py-3.5 rounded-full text-sm font-semibold disabled:opacity-50 transition-all"
+                    >
+                      {quickPdfUploading ? (
+                        <><div className="w-4 h-4 border-2 border-[#EFECE3]/30 border-t-[#EFECE3] rounded-full animate-spin inline-block mr-2" />Uploading & Submitting...</>
+                      ) : (
+                        "Upload & Submit Proposal"
+                      )}
+                    </button>
                   )}
-                </button>
-              )}
-            </div>
+                </div>
+              </>
+            )}
           </div>
         )}
 
