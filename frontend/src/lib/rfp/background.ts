@@ -15,6 +15,7 @@ export interface BackgroundGenerationSnapshot {
   decomposition: DecompositionData | null;
   error: string | null;
   startedAt: number | null;
+  mode?: "scratch" | "upload" | null;
 }
 
 type Listener = (snapshot: BackgroundGenerationSnapshot) => void;
@@ -31,6 +32,7 @@ const emptySnapshot: BackgroundGenerationSnapshot = {
   decomposition: null,
   error: null,
   startedAt: null,
+  mode: null,
 };
 
 function normalizeStartedAt(value: unknown): number | null {
@@ -295,6 +297,13 @@ async function runLegacySseGeneration(
     const { value, done } = await reader.read();
     if (done) break;
 
+    const currentStore = getStore();
+    if (!currentStore || currentStore.snapshot.jobId !== runningSnapshot.jobId) {
+      console.log("Legacy generation job was cancelled, aborting reader.");
+      await reader.cancel().catch(() => {});
+      return;
+    }
+
     buffer += decoder.decode(value, { stream: true });
 
     while (true) {
@@ -389,6 +398,7 @@ export function subscribeBackgroundGeneration(listener: Listener): () => void {
 export async function startBackgroundRfpGeneration(
   input: RfpInput,
   userId: string,
+  mode: "scratch" | "upload",
   callbacks: {
     onProgress?: (progress: PipelineProgress) => void;
     onResult?: (result: Omit<PipelineResult, "pdfBase64">, pdfBase64: string, decomposition: DecompositionData) => void;
@@ -412,6 +422,7 @@ export async function startBackgroundRfpGeneration(
     decomposition: null,
     error: null,
     startedAt,
+    mode,
   };
 
   publish(runningSnapshot);
@@ -440,6 +451,13 @@ export async function startBackgroundRfpGeneration(
       publish({ ...runningSnapshot, jobId: backgroundJobId });
 
       while (true) {
+        // Check if the generation job was cancelled
+        const currentStore = getStore();
+        if (!currentStore || currentStore.snapshot.jobId !== backgroundJobId) {
+          console.log("Generation job was cancelled, stopping polling loop for:", backgroundJobId);
+          return;
+        }
+
         const pollRes = await fetch(apiUrl(`/api/rfp/generate/jobs/${backgroundJobId}`), {
           method: "GET",
           headers: { Accept: "application/json", "Cache-Control": "no-cache" },
@@ -479,6 +497,7 @@ export async function startBackgroundRfpGeneration(
             decomposition,
             error: null,
             startedAt,
+            mode,
           };
 
           persistSnapshot(finalSnapshot);
@@ -506,6 +525,7 @@ export async function startBackgroundRfpGeneration(
         decomposition: null,
         error: message,
         startedAt,
+        mode,
       };
       persistSnapshot(failedSnapshot);
       publish(failedSnapshot);

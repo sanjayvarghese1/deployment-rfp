@@ -479,6 +479,13 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
   useEffect(() => {
     return subscribeBackgroundGeneration((snapshot) => {
       setGenerationSnapshot(snapshot);
+      
+      const expectedMode = initialUploadAnalysis ? "upload" : "scratch";
+      const snapshotMode = snapshot.mode || "scratch";
+      if (snapshotMode !== expectedMode) {
+        return;
+      }
+
       if (snapshot.status === "running") {
         setFlowState("generating");
         setWizardStep(3);
@@ -506,7 +513,7 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
         }
       }
     });
-  }, []);
+  }, [initialUploadAnalysis]);
 
   const applyEditedDraft = useCallback((draft: EditorDraftSnapshot) => {
     setPdfBase64(draft.pdfBase64);
@@ -1254,7 +1261,7 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     clearEditorDraftStorage();
 
     try {
-      await startBackgroundRfpGeneration(input, user?.id || profile?.company_name || "anonymous", {
+      await startBackgroundRfpGeneration(input, user?.id || profile?.company_name || "anonymous", initialUploadAnalysis ? "upload" : "scratch", {
         onProgress: (progress) => { setProgress(progress); },
         onResult: (generatedResult, generatedPdfBase64, generatedDecomposition) => {
           setResult(generatedResult);
@@ -1677,6 +1684,27 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
             </div>
             <div style={{ fontSize: 12, color: "var(--muted)" }}>{activeGenerationProgress.message}</div>
             <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)", opacity: 0.75 }}>Generation is running in the background. You can leave this page and come back.</div>
+            <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
+              <button
+                onClick={() => {
+                  resetBackgroundGeneration();
+                  setFlowState("idle");
+                  setWizardStep(initialUploadAnalysis ? 2 : 1);
+                  setError(null);
+                  setProgress(null);
+                }}
+                className="btn-outline"
+                style={{
+                  padding: "6px 12px",
+                  fontSize: 12,
+                  borderColor: "var(--danger)",
+                  color: "var(--danger)",
+                  cursor: "pointer",
+                }}
+              >
+                Cancel Generation
+              </button>
+            </div>
           </div>
         )}
 
@@ -2035,6 +2063,27 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
               {activeGenerationProgress
                 ? `${activeGenerationProgress.stage} — ${activeGenerationProgress.percent}% • ${formatTime(elapsed)} elapsed`
                 : `Generating... ${formatTime(elapsed)} elapsed`}
+              <div style={{ marginTop: 10 }}>
+                <button
+                  onClick={() => {
+                    resetBackgroundGeneration();
+                    setFlowState("idle");
+                    setWizardStep(initialUploadAnalysis ? 2 : 1);
+                    setError(null);
+                    setProgress(null);
+                  }}
+                  className="btn-outline"
+                  style={{
+                    padding: "4px 10px",
+                    fontSize: 11,
+                    borderColor: "var(--danger)",
+                    color: "var(--danger)",
+                    cursor: "pointer"
+                  }}
+                >
+                  Cancel Generation
+                </button>
+              </div>
             </div>
           )}
         </div>
