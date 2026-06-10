@@ -2059,34 +2059,7 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
             </div>
           )}
 
-          {wizardStep === 3 && flowState === "generating" && (
-            <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 12, padding: "6px 8px" }}>
-              {activeGenerationProgress
-                ? `${activeGenerationProgress.stage} — ${activeGenerationProgress.percent}% • ${formatTime(elapsed)} elapsed`
-                : `Generating... ${formatTime(elapsed)} elapsed`}
-              <div style={{ marginTop: 10 }}>
-                <button
-                  onClick={() => {
-                    resetBackgroundGeneration();
-                    setFlowState("idle");
-                    setWizardStep(initialUploadAnalysis ? 2 : 1);
-                    setError(null);
-                    setProgress(null);
-                  }}
-                  className="btn-outline"
-                  style={{
-                    padding: "4px 10px",
-                    fontSize: 11,
-                    borderColor: "var(--danger)",
-                    color: "var(--danger)",
-                    cursor: "pointer"
-                  }}
-                >
-                  Cancel Generation
-                </button>
-              </div>
-            </div>
-          )}
+
         </div>
       </div>
 
