@@ -7,6 +7,6 @@ interface RfpTabProps {
 }
 
 export default function RfpTab({ onSaved }: RfpTabProps) {
-  return <RfpChatbot onSaved={onSaved || (() => {})} />;
+  return <RfpChatbot onSaved={onSaved || (() => {})} mode="scratch" />;
 }
 

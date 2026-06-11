@@ -15,6 +15,9 @@ export interface BackgroundGenerationSnapshot {
   decomposition: DecompositionData | null;
   error: string | null;
   startedAt: number | null;
+  mode?: "scratch" | "upload" | null;
+  userId?: string;
+  input?: RfpInput;
 }
 
 type Listener = (snapshot: BackgroundGenerationSnapshot) => void;
@@ -31,6 +34,7 @@ const emptySnapshot: BackgroundGenerationSnapshot = {
   decomposition: null,
   error: null,
   startedAt: null,
+  mode: null,
 };
 
 function normalizeStartedAt(value: unknown): number | null {
@@ -81,6 +85,109 @@ declare global {
   }
 }
 
+function resumeBackgroundRfpGeneration(runningSnapshot: BackgroundGenerationSnapshot) {
+  const store = window.__rfpBackgroundGeneration;
+  if (!store || !runningSnapshot.jobId) return;
+
+  const backgroundJobId = runningSnapshot.jobId;
+  const mode = runningSnapshot.mode || "scratch";
+  const startedAt = runningSnapshot.startedAt || Date.now();
+  const userId = runningSnapshot.userId || "anonymous";
+  const input = runningSnapshot.input;
+
+  store.runningPromise = (async () => {
+    try {
+      while (true) {
+        const currentStore = getStore();
+        if (!currentStore || currentStore.snapshot.jobId !== backgroundJobId) {
+          console.log("Resumed generation job was cancelled, stopping polling loop for:", backgroundJobId);
+          return;
+        }
+
+        const pollRes = await fetch(apiUrl(`/api/rfp/generate/jobs/${backgroundJobId}`), {
+          method: "GET",
+          headers: { Accept: "application/json", "Cache-Control": "no-cache" },
+        });
+
+        if (!pollRes.ok) {
+          throw new Error(await pollRes.text().catch(() => "Failed to read generation job"));
+        }
+
+        const pollData = (await pollRes.json()) as { job?: any };
+        const job = pollData.job;
+        if (!job) {
+          throw new Error("Generation job missing");
+        }
+
+        if (job.progress) {
+          const progress = job.progress as PipelineProgress;
+          publish({ ...runningSnapshot, jobId: backgroundJobId, progress, status: mapJobStatus(job.status) });
+        }
+
+        if (job.status === "completed") {
+          const result = job.result as Omit<PipelineResult, "pdfBase64">;
+          const pdfBase64 = job.pdf_base64 as string;
+          const decomposition = (job.decomposition || result?.decomposition) as DecompositionData;
+
+          if (!result || !pdfBase64) {
+            throw new Error("Generation finished without a result.");
+          }
+
+          const finalSnapshot: BackgroundGenerationSnapshot = {
+            jobId: backgroundJobId,
+            status: "complete",
+            progress: null,
+            result,
+            pdfBase64,
+            decomposition,
+            error: null,
+            startedAt,
+            mode,
+            userId,
+            input,
+          };
+
+          persistSnapshot(finalSnapshot);
+          publish(finalSnapshot);
+          if (input) {
+            await notifyCompletion(input, finalSnapshot, userId);
+          }
+          return;
+        }
+
+        if (job.status === "failed") {
+          throw new Error(job.error || "Generation failed");
+        }
+
+        await new Promise((resolve) => window.setTimeout(resolve, 4000));
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const failedSnapshot: BackgroundGenerationSnapshot = {
+        jobId: backgroundJobId,
+        status: "error",
+        progress: null,
+        result: null,
+        pdfBase64: null,
+        decomposition: null,
+        error: message,
+        startedAt,
+        mode,
+        userId,
+        input,
+      };
+      persistSnapshot(failedSnapshot);
+      publish(failedSnapshot);
+      throw error;
+    } finally {
+      const currentStore = getStore();
+      if (currentStore && currentStore.snapshot.jobId === backgroundJobId) {
+        currentStore.runningPromise = null;
+      }
+    }
+  })();
+}
+
 function getStore() {
   if (typeof window === "undefined") return null;
   if (!window.__rfpBackgroundGeneration) {
@@ -111,6 +218,10 @@ function getStore() {
   if (JSON.stringify(normalized) !== JSON.stringify(store.snapshot)) {
     store.snapshot = normalized;
     persistSnapshot(normalized);
+  }
+
+  if (store.snapshot.status === "running" && !store.runningPromise && store.snapshot.jobId) {
+    resumeBackgroundRfpGeneration(store.snapshot);
   }
 
   return window.__rfpBackgroundGeneration;
@@ -147,10 +258,14 @@ async function notifyCompletion(input: RfpInput, snapshot: BackgroundGenerationS
     });
 
     if ("Notification" in window && Notification.permission === "granted") {
-      new Notification(`RFP ready: ${input.project_title}`, {
+      const notification = new Notification(`RFP ready: ${input.project_title}`, {
         body: `Your RFP for ${input.organization_name} finished generating. Open the results or edit the draft now.`,
         tag: snapshot.jobId || undefined,
       });
+      notification.onclick = () => {
+        window.focus();
+        window.location.href = snapshot.mode === "upload" ? "/rfp/upload-review" : "/rfp/intake";
+      };
     }
   } catch (error) {
     console.warn("Failed to create completion notification:", error);
@@ -295,6 +410,13 @@ async function runLegacySseGeneration(
     const { value, done } = await reader.read();
     if (done) break;
 
+    const currentStore = getStore();
+    if (!currentStore || currentStore.snapshot.jobId !== runningSnapshot.jobId) {
+      console.log("Legacy generation job was cancelled, aborting reader.");
+      await reader.cancel().catch(() => {});
+      return;
+    }
+
     buffer += decoder.decode(value, { stream: true });
 
     while (true) {
@@ -389,6 +511,7 @@ export function subscribeBackgroundGeneration(listener: Listener): () => void {
 export async function startBackgroundRfpGeneration(
   input: RfpInput,
   userId: string,
+  mode: "scratch" | "upload",
   callbacks: {
     onProgress?: (progress: PipelineProgress) => void;
     onResult?: (result: Omit<PipelineResult, "pdfBase64">, pdfBase64: string, decomposition: DecompositionData) => void;
@@ -412,6 +535,9 @@ export async function startBackgroundRfpGeneration(
     decomposition: null,
     error: null,
     startedAt,
+    mode,
+    userId,
+    input,
   };
 
   publish(runningSnapshot);
@@ -440,6 +566,13 @@ export async function startBackgroundRfpGeneration(
       publish({ ...runningSnapshot, jobId: backgroundJobId });
 
       while (true) {
+        // Check if the generation job was cancelled
+        const currentStore = getStore();
+        if (!currentStore || currentStore.snapshot.jobId !== backgroundJobId) {
+          console.log("Generation job was cancelled, stopping polling loop for:", backgroundJobId);
+          return;
+        }
+
         const pollRes = await fetch(apiUrl(`/api/rfp/generate/jobs/${backgroundJobId}`), {
           method: "GET",
           headers: { Accept: "application/json", "Cache-Control": "no-cache" },
@@ -479,6 +612,9 @@ export async function startBackgroundRfpGeneration(
             decomposition,
             error: null,
             startedAt,
+            mode,
+            userId,
+            input,
           };
 
           persistSnapshot(finalSnapshot);
@@ -506,6 +642,9 @@ export async function startBackgroundRfpGeneration(
         decomposition: null,
         error: message,
         startedAt,
+        mode,
+        userId,
+        input,
       };
       persistSnapshot(failedSnapshot);
       publish(failedSnapshot);

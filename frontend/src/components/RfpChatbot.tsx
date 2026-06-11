@@ -175,6 +175,7 @@ interface RfpChatbotProps {
   onSaved?: () => void;
   contractId?: string;
   initialUploadAnalysis?: UploadAnalysisPayload | null;
+  mode?: "scratch" | "upload";
   onRfpGenerated?: (data: {
     title: string;
     sections: Record<string, string>;
@@ -234,6 +235,7 @@ interface EditorDraftSnapshot {
   decomposition?: DecompositionData | null;
   subsystemName?: string;
   updatedAt?: string;
+  qa?: QAResult;
 }
 
 type TargetRfp = "full" | string;
@@ -305,12 +307,13 @@ function loadPersistedChatState(): Partial<ChatStateSnapshot> | null {
   }
 }
 
-export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initialUploadAnalysis }: RfpChatbotProps = {}) {
+export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initialUploadAnalysis, mode = "scratch" }: RfpChatbotProps = {}) {
+  const activeMode = mode === "upload" || initialUploadAnalysis ? "upload" : "scratch";
   const { user, profile } = useAuth();
   const router = useRouter();
   const [flowState, setFlowState] = useState<FlowState>("idle");
   const [wizardStep, setWizardStep] = useState<WizardStep>(1);
-  const persistedChatState = loadPersistedChatState();
+  const persistedChatState = activeMode === "scratch" ? loadPersistedChatState() : null;
   const [answers, setAnswers] = useState<Record<string, string>>(() => (persistedChatState?.answers && typeof persistedChatState.answers === "object" ? persistedChatState.answers : {}));
   const [inputValue, setInputValue] = useState(() => (typeof persistedChatState?.inputValue === "string" ? persistedChatState.inputValue : ""));
   const [selectedTemplate, setSelectedTemplate] = useState<PdfTemplate>("software");
@@ -381,6 +384,7 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
   }, [wizardStep]);
 
   useIsomorphicLayoutEffect(() => {
+    if (activeMode !== "scratch") return;
     try {
       const snapshot: ChatStateSnapshot = {
         messages,
@@ -394,9 +398,10 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     } catch {
       // Ignore storage failures.
     }
-  }, [answers, forcedQuestionKey, inputValue, messages, questionWarnings, skippedQuestions]);
+  }, [answers, forcedQuestionKey, inputValue, messages, questionWarnings, skippedQuestions, activeMode]);
 
   useEffect(() => {
+    if (activeMode !== "scratch") return;
     const syncChatStateFromStorage = () => {
       try {
         const raw = window.localStorage.getItem(CHAT_STATE_KEY);
@@ -428,7 +433,7 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     syncChatStateFromStorage();
     window.addEventListener("storage", syncChatStateFromStorage);
     return () => window.removeEventListener("storage", syncChatStateFromStorage);
-  }, []);
+  }, [activeMode]);
 
   const currentPromptKey = forcedQuestionKey || getNextConversationKey(answers, skippedQuestions);
   const currentQuestion = currentPromptKey
@@ -438,18 +443,32 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     : null;
 
   const questionProgress = useMemo<ChatProgressItem[]>(() => {
-    return RFP_QUESTIONS.map((question, index) => {
+    const items = RFP_QUESTIONS.map((question, index) => {
       const hasAnswer = !!answers[question.key]?.trim();
       const isSkipped = skippedQuestions.has(question.key);
       const isCurrent = currentPromptKey === question.key && !hasAnswer;
       const status: ChatProgressStatus = isSkipped ? "skipped" : hasAnswer ? "answered" : isCurrent ? "current" : "pending";
       return { key: question.key, label: question.label, status, index };
     });
+
+    const hasFinalAnswer = !!answers[FINAL_INTAKE_KEY]?.trim();
+    const isFinalSkipped = skippedQuestions.has(FINAL_INTAKE_KEY);
+    const isFinalCurrent = currentPromptKey === FINAL_INTAKE_KEY && !hasFinalAnswer;
+    const finalStatus: ChatProgressStatus = isFinalSkipped ? "skipped" : hasFinalAnswer ? "answered" : isFinalCurrent ? "current" : "pending";
+
+    items.push({
+      key: FINAL_INTAKE_KEY,
+      label: getFinalIntakeQuestionLabel(),
+      status: finalStatus,
+      index: RFP_QUESTIONS.length,
+    });
+
+    return items;
   }, [answers, currentPromptKey, skippedQuestions]);
 
   const completedCount = questionProgress.filter((item) => item.status === "answered").length;
   const skippedCount = questionProgress.filter((item) => item.status === "skipped").length;
-  const completionPercent = Math.round((completedCount / Math.max(1, RFP_QUESTIONS.length)) * 100);
+  const completionPercent = Math.round((completedCount / Math.max(1, questionProgress.length)) * 100);
 
   useEffect(() => {
     if (wizardStep !== 1) return;
@@ -479,6 +498,13 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
   useEffect(() => {
     return subscribeBackgroundGeneration((snapshot) => {
       setGenerationSnapshot(snapshot);
+      
+      const expectedMode = activeMode;
+      const snapshotMode = snapshot.mode || "scratch";
+      if (snapshotMode !== expectedMode) {
+        return;
+      }
+
       if (snapshot.status === "running") {
         setFlowState("generating");
         setWizardStep(3);
@@ -491,6 +517,18 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
         setPdfBase64(snapshot.pdfBase64);
         setDecomposition(snapshot.decomposition);
         setProgress(null);
+        try {
+          window.localStorage.setItem("rfp-editor-draft", JSON.stringify({
+            metadata: snapshot.result.metadata,
+            sections: snapshot.result.sections,
+            sectionLabels: snapshot.result.sectionLabels,
+            template: snapshot.result.template,
+            pdfBase64: snapshot.pdfBase64,
+            decomposition: snapshot.decomposition,
+            qa: snapshot.result.qa,
+          }));
+        } catch { /* ignore */ }
+        resetBackgroundGeneration();
       }
       if (snapshot.status === "error" && snapshot.error) {
         if (snapshot.error.includes("expired")) {
@@ -506,20 +544,35 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
         }
       }
     });
-  }, []);
+  }, [initialUploadAnalysis]);
 
   const applyEditedDraft = useCallback((draft: EditorDraftSnapshot) => {
     setPdfBase64(draft.pdfBase64);
     setDecomposition(draft.decomposition || null);
     setSaved(false);
     setResult((current) => {
-      if (!current) return current;
+      const baseResult = current || {
+        sections: draft.sections,
+        sectionLabels: draft.sectionLabels,
+        metadata: draft.metadata,
+        qa: draft.qa || {
+          overallScore: 70,
+          missingSections: [],
+          improvements: [],
+          strengths: ["Restored completed RFP draft from local storage."],
+          readinessLevel: "ready",
+          scoreExplanation: "Restored completed RFP draft from local storage."
+        },
+        template: draft.template,
+        decomposition: draft.decomposition || { subsystems: {}, inferredRequirements: [], needsDecomposition: false, subsystemPdfs: [], subsystemDrafts: [] },
+      };
       return {
-        ...current,
+        ...baseResult,
         metadata: draft.metadata,
         sections: draft.sections,
         sectionLabels: draft.sectionLabels,
         template: draft.template,
+        qa: draft.qa || baseResult.qa,
       };
     });
     if (draft.decomposition && draft.decomposition.subsystemPdfs && draft.decomposition.subsystemPdfs.length > 0) {
@@ -679,42 +732,85 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
       detailed_project_description: current.detailed_project_description || initialUploadAnalysis.analysis.extractedText.slice(0, 5000),
     }));
 
-    const initialMetadata = restoredDraft?.metadata || {
-      organization_name: profile?.company_name || "Organization",
-      project_title: projectTitle,
-      category,
-      date: nowDate,
-    };
+    const bgSnapshot = getBackgroundGenerationSnapshot();
+    const isBgComplete = bgSnapshot.mode === activeMode && bgSnapshot.status === "complete" && bgSnapshot.result && bgSnapshot.pdfBase64 && bgSnapshot.decomposition;
+    const isBgGenerating = bgSnapshot.mode === activeMode && bgSnapshot.status === "running";
 
-    setResult({
-      sections: restoredDraft?.sections || sections,
-      sectionLabels: restoredDraft?.sectionLabels || sectionLabels,
-      metadata: initialMetadata,
-      qa: qaFromUpload,
-      template: (restoredDraft?.template as PdfTemplate) || selectedTemplate,
-      decomposition: restoredDraft?.decomposition || {
-        subsystems: {},
-        inferredRequirements: [],
-        needsDecomposition: false,
-        subsystemPdfs: [],
-        subsystemDrafts: [],
-      },
-    });
-    if (restoredDraft?.pdfBase64) {
-      setPdfBase64(restoredDraft.pdfBase64);
-      setDecomposition(restoredDraft.decomposition || null);
+    if (isBgComplete) {
+      const completedResult = bgSnapshot.result!;
+      const completedPdf = bgSnapshot.pdfBase64!;
+      const completedDecomposition = bgSnapshot.decomposition!;
+
+      setResult(completedResult);
+      setPdfBase64(completedPdf);
+      setDecomposition(completedDecomposition);
+      const activeQa = completedResult.qa || qaFromUpload;
+      setQaReview(activeQa);
+      initializeQaSuggestionStates(activeQa);
+
+      setFlowState("review");
+      setWizardStep(3);
+
+      try {
+        window.localStorage.setItem("rfp-editor-draft", JSON.stringify({
+          metadata: completedResult.metadata,
+          sections: completedResult.sections,
+          sectionLabels: completedResult.sectionLabels,
+          template: completedResult.template,
+          pdfBase64: completedPdf,
+          decomposition: completedDecomposition,
+          qa: completedResult.qa,
+        }));
+      } catch { /* ignore */ }
+
+      resetBackgroundGeneration();
+    } else if (isBgGenerating) {
+      setFlowState("generating");
+      setWizardStep(3);
+      if (bgSnapshot.progress) {
+        setProgress(bgSnapshot.progress);
+      }
+    } else {
+      const initialMetadata = restoredDraft?.metadata || {
+        organization_name: profile?.company_name || "Organization",
+        project_title: projectTitle,
+        category,
+        date: nowDate,
+      };
+
+      const finalQa = restoredDraft?.qa || qaFromUpload;
+      setResult({
+        sections: restoredDraft?.sections || sections,
+        sectionLabels: restoredDraft?.sectionLabels || sectionLabels,
+        metadata: initialMetadata,
+        qa: finalQa,
+        template: (restoredDraft?.template as PdfTemplate) || selectedTemplate,
+        decomposition: restoredDraft?.decomposition || {
+          subsystems: {},
+          inferredRequirements: [],
+          needsDecomposition: false,
+          subsystemPdfs: [],
+          subsystemDrafts: [],
+        },
+      });
+      if (restoredDraft?.pdfBase64) {
+        setPdfBase64(restoredDraft.pdfBase64);
+        setDecomposition(restoredDraft.decomposition || null);
+      }
+      setQaReview(finalQa);
+      initializeQaSuggestionStates(finalQa);
+
+      setFlowState("review");
+      setWizardStep(restoredDraft ? 3 : 2);
     }
-    setQaReview(qaFromUpload);
-    initializeQaSuggestionStates(qaFromUpload);
-    setFlowState("review");
-    setWizardStep(restoredDraft ? 3 : 2);
+
     setMessages([]);
     setError(null);
     setSelectedSubsystems(new Set(["full"]));
     setDownloadTarget("full");
     setEditTarget("full");
     setMandatoryCriteria({ loading: false, ready: false, targets: [], activeTargetIndex: 0, criteriaByTarget: {}, error: null });
-  }, [answers.category, initialUploadAnalysis, initializeQaSuggestionStates, profile?.company_name, selectedTemplate]);
+  }, [answers.category, initialUploadAnalysis, initializeQaSuggestionStates, profile?.company_name, selectedTemplate, activeMode]);
 
   useEffect(() => {
     if (!intakeComplete || decompositionAnalysis) return;
@@ -887,8 +983,12 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     setEditTarget("full");
     setMessages(createInitialChatMessages());
     uploadInitRef.current = false;
-    router.replace("/rfp/intake");
-  }, [router]);
+    if (activeMode === "upload") {
+      router.replace("/rfp/intake?mode=upload");
+    } else {
+      router.replace("/rfp/intake");
+    }
+  }, [router, activeMode]);
 
   useEffect(() => {
     if (availableFileTargets.length === 0) return;
@@ -941,6 +1041,7 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
         organizationName: answers.organization_name || profile?.company_name || "Organization",
         category: answers.category || "software",
         additionalDetails: answers[FINAL_INTAKE_KEY] || "",
+        skippedQuestions: Array.from(skippedQuestions),
       }),
     })
       .then(async (res) => {
@@ -1057,7 +1158,12 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
       const res = await fetch(apiUrl("/api/rfp/intake"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: answerText, answers, currentQuestionKey: currentKey }),
+        body: JSON.stringify({
+          message: answerText,
+          answers,
+          currentQuestionKey: currentKey,
+          skippedQuestions: Array.from(skippedQuestions),
+        }),
       });
       if (!res.ok) {
         const errText = await res.text().catch(() => "Failed to extract intake fields");
@@ -1101,7 +1207,8 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     organizationName: answers.organization_name || profile?.company_name || "Organization",
     category: answers.category || "software",
     additionalDetails: answers[FINAL_INTAKE_KEY] || "",
-  }), [answers, profile?.company_name, selectedSubsystems, selectedTemplate]);
+    skippedQuestions: Array.from(skippedQuestions),
+  }), [answers, profile?.company_name, selectedSubsystems, selectedTemplate, skippedQuestions]);
 
   // Fingerprint of current intake state — used to invalidate the prefetch cache when answers change.
   const qaFingerprint = useMemo(() => {
@@ -1185,9 +1292,15 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
   }, [answers, fetchQaReview, initializeQaSuggestionStates, qaFingerprint, scrollChatToBottom, skippedQuestions]);
 
   const startGeneration = async () => {
-    const organizationName = answers.organization_name || profile?.company_name || "Organization";
-    const projectTitle = answers.project_title || "Project";
-    const category = (answers.category || "software").toLowerCase();
+    const organizationName = activeMode === "upload" && result?.metadata?.organization_name
+      ? result.metadata.organization_name
+      : (answers.organization_name || profile?.company_name || "Organization");
+    const projectTitle = activeMode === "upload" && result?.metadata?.project_title
+      ? result.metadata.project_title
+      : (answers.project_title || "Project");
+    const category = activeMode === "upload" && result?.metadata?.category
+      ? result.metadata.category.toLowerCase()
+      : (answers.category || "software").toLowerCase();
 
     if (!organizationName.trim() || !projectTitle.trim()) {
       setError("Please provide an organization name and project title before generating the RFP.");
@@ -1231,8 +1344,14 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
 
     const qaRevisionNotes = buildQaRevisionNotes();
     const sections: Record<string, string> = {};
-    for (const q of RFP_QUESTIONS) {
-      if (!q.isMetadata && q.key !== "detailed_project_description") sections[q.key] = finalAnswers[q.key];
+    if (activeMode === "upload") {
+      if (result?.sections) {
+        Object.assign(sections, result.sections);
+      }
+    } else {
+      for (const q of RFP_QUESTIONS) {
+        if (!q.isMetadata && q.key !== "detailed_project_description") sections[q.key] = finalAnswers[q.key];
+      }
     }
 
     const input: RfpInput = {
@@ -1254,7 +1373,7 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
     clearEditorDraftStorage();
 
     try {
-      await startBackgroundRfpGeneration(input, user?.id || profile?.company_name || "anonymous", {
+      await startBackgroundRfpGeneration(input, user?.id || profile?.company_name || "anonymous", activeMode, {
         onProgress: (progress) => { setProgress(progress); },
         onResult: (generatedResult, generatedPdfBase64, generatedDecomposition) => {
           setResult(generatedResult);
@@ -1470,6 +1589,7 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
         onRfpGenerated({ title: result.metadata.project_title, sections: result.sections, sectionLabels: result.sectionLabels, pdfBase64: pdfBase64 || "", metadata: result.metadata, mandatoryCriteria });
         setSaved(true);
         setMessages((prev) => [...prev, { role: "bot", text: "RFP generated! Returning to contract view..." }]);
+        resetBackgroundGeneration();
         onSaved?.();
         return;
       }
@@ -1482,6 +1602,7 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
 
       const results = await Promise.all(saves);
       setSaved(true);
+      resetBackgroundGeneration();
 
       const createdContractId = results[0] as string | undefined;
       if (createdContractId) {
@@ -1612,9 +1733,10 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
                 className="btn-outline"
                 onClick={() => {
                   setError(null);
+                  resetBackgroundGeneration();
                   if (wizardStep === 3 && !result) {
-                    setWizardStep(1);
-                    setFlowState("idle");
+                    setWizardStep(activeMode === "upload" ? 2 : 1);
+                    setFlowState(activeMode === "upload" ? "review" : "idle");
                   }
                 }}
                 style={{
@@ -1628,7 +1750,7 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
                   fontWeight: 600,
                 }}
               >
-                Back to Intake
+                {activeMode === "upload" ? "Back to Review" : "Back to Intake"}
               </button>
               <button
                 type="button"
@@ -1677,6 +1799,27 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
             </div>
             <div style={{ fontSize: 12, color: "var(--muted)" }}>{activeGenerationProgress.message}</div>
             <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)", opacity: 0.75 }}>Generation is running in the background. You can leave this page and come back.</div>
+            <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
+              <button
+                onClick={() => {
+                  resetBackgroundGeneration();
+                  setFlowState("idle");
+                  setWizardStep(initialUploadAnalysis ? 2 : 1);
+                  setError(null);
+                  setProgress(null);
+                }}
+                className="btn-outline"
+                style={{
+                  padding: "6px 12px",
+                  fontSize: 12,
+                  borderColor: "var(--danger)",
+                  color: "var(--danger)",
+                  cursor: "pointer",
+                }}
+              >
+                Cancel Generation
+              </button>
+            </div>
           </div>
         )}
 
@@ -1779,14 +1922,27 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
                     Continue without changes
                   </button>
                 )}
-                <button className="btn-outline" onClick={() => { setWizardStep(1); setQaReview(null); setQaSuggestionStates({}); }}>Back to intake</button>
+                <button
+                  className="btn-outline"
+                  onClick={() => {
+                    if (activeMode === "upload") {
+                      router.replace("/rfp/intake?mode=upload");
+                    } else {
+                      setWizardStep(1);
+                      setQaReview(null);
+                      setQaSuggestionStates({});
+                    }
+                  }}
+                >
+                  Back to intake
+                </button>
               </div>
             </div>
           </div>
         )}
 
         {/* Results */}
-        {wizardStep === 3 && result && (
+        {wizardStep === 3 && result && generationSnapshot.status !== "running" && (
           <div className="animate-fadeIn" style={{ margin: "12px 20px" }}>
             <div style={{ background: "linear-gradient(180deg, var(--surface) 0%, rgba(239,236,227,0.7) 100%)", borderRadius: 18, padding: 18, marginBottom: 12, border: "1px solid var(--card-border)" }}>
               <div style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: "0.18em", color: "var(--muted)", marginBottom: 8 }}>File summary</div>
@@ -2030,13 +2186,7 @@ export default function RfpChatbot({ onSaved, contractId, onRfpGenerated, initia
             </div>
           )}
 
-          {wizardStep === 3 && flowState === "generating" && (
-            <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 12, padding: "6px 8px" }}>
-              {activeGenerationProgress
-                ? `${activeGenerationProgress.stage} — ${activeGenerationProgress.percent}% • ${formatTime(elapsed)} elapsed`
-                : `Generating... ${formatTime(elapsed)} elapsed`}
-            </div>
-          )}
+
         </div>
       </div>
 
