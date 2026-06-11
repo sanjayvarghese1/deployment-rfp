@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { TourProvider } from "@/contexts/TourContext";
+import TourManager from "@/components/TourManager";
 import Navbar from "@/components/Navbar";
 import BackgroundGenerationSubscriber from "@/components/BackgroundGenerationSubscriber";
 
@@ -29,9 +31,12 @@ export default function RootLayout({
     <html lang="en">
       <body className={`${inter.variable} ${jetbrainsMono.variable} antialiased min-h-screen`} style={{ background: "var(--background)" }}>
         <AuthProvider>
-          <BackgroundGenerationSubscriber />
-          <Navbar />
-          <main className="pt-2">{children}</main>
+          <TourProvider>
+            <TourManager />
+            <BackgroundGenerationSubscriber />
+            <Navbar />
+            <main className="pt-2">{children}</main>
+          </TourProvider>
         </AuthProvider>
       </body>
     </html>

@@ -127,7 +127,7 @@ export default function PostRfpPage() {
             {/* Cards Container */}
             <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
               {/* Build from Scratch Card */}
-              <div onMouseEnter={() => setHoveredCard("scratch")} onMouseLeave={() => setHoveredCard(null)} onClick={handleBuildFromScratch} className="group cursor-pointer">
+              <div id="rfp-scratch-card" onMouseEnter={() => setHoveredCard("scratch")} onMouseLeave={() => setHoveredCard(null)} onClick={handleBuildFromScratch} className="group cursor-pointer">
                 <div className={`card p-6 transition-all duration-200 hover:shadow-lg hover:border-[var(--primary)]/20 ${hoveredCard === "scratch" ? "scale-105" : ""}`}>
                   <div className="flex flex-col h-full justify-between">
                     <div>
@@ -169,7 +169,7 @@ export default function PostRfpPage() {
               </div>
 
               {/* Upload Existing RFP Card */}
-              <div onMouseEnter={() => setHoveredCard("upload")} onMouseLeave={() => setHoveredCard(null)} onClick={handleUploadExisting} className="group cursor-pointer">
+              <div id="rfp-upload-card" onMouseEnter={() => setHoveredCard("upload")} onMouseLeave={() => setHoveredCard(null)} onClick={handleUploadExisting} className="group cursor-pointer">
                 <div className={`card p-6 transition-all duration-200 hover:shadow-lg hover:border-[var(--primary)]/20 ${hoveredCard === "upload" ? "scale-105" : ""}`}>
                   <div className="flex flex-col h-full justify-between">
                     <div>

@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useTour } from "@/contexts/TourContext";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/services/supabase";
@@ -47,6 +48,7 @@ export default function ApplyPage() {
   const router = useRouter();
   const contractId = params?.id;
   const { user, profile, loading: authLoading } = useAuth();
+  const { activeTour } = useTour();
 
   /* ─── core state ─── */
   const [contract, setContract] = useState<Record<string, unknown> | null>(null);
@@ -73,7 +75,7 @@ export default function ApplyPage() {
         setContract({ contract_id: contractRes.data.id, ...normalizeDoc(contractRes.data as Record<string, unknown>) });
       }
 
-      if (proposalRes.data) {
+      if (proposalRes.data && activeTour !== "vendor") {
         // Already submitted, redirect back to contract details where already-applied banner is shown
         router.push(`/contracts/${contractId}`);
         return;
@@ -82,7 +84,7 @@ export default function ApplyPage() {
       setLoading(false);
     };
     fetchData();
-  }, [contractId, user, router]);
+  }, [contractId, user, router, activeTour]);
 
   useEffect(() => {
     if (!authLoading && !user) router.push("/login");
@@ -249,7 +251,7 @@ export default function ApplyPage() {
                   <p className="text-sm text-[var(--muted)] mt-2">Upload your PDF proposal directly. It will be submitted to the company for analysis.</p>
                 </div>
 
-                <div className="card !p-8">
+                <div id="apply-form" className="card !p-8">
                   <label className="group flex flex-col items-center justify-center w-full h-48 border-2 border-dashed border-[var(--divider)] hover:border-[var(--primary)] hover:bg-[var(--primary-light)]/30 rounded-xl cursor-pointer transition-all">
                     <input type="file" accept=".pdf" onChange={(e) => {
                       const f = e.target.files?.[0];
@@ -284,6 +286,7 @@ export default function ApplyPage() {
 
                   {quickPdfFile && (
                     <button
+                      id="apply-submit-btn"
                       onClick={handleQuickUploadPdf}
                       disabled={quickPdfUploading}
                       className="mt-5 w-full bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[#EFECE3] px-6 py-3.5 rounded-full text-sm font-semibold disabled:opacity-50 transition-all"

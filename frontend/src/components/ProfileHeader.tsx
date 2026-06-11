@@ -22,12 +22,14 @@ interface ProfileHeaderProps {
   uploadingImage?: boolean;
   onBannerUpload?: (e: React.ChangeEvent<HTMLInputElement>) => void;
   uploadingBanner?: boolean;
+  onTutorialClick?: () => void;
 }
 
 export default function ProfileHeader({
   company_name, industry, location, website, description, rating, followers, profile_image,
   banner_image, verified, founded_year, company_size, specialties, phone, reviewCount,
-  onFollow, isFollowing, isOwn, onImageUpload, uploadingImage, onBannerUpload, uploadingBanner
+  onFollow, isFollowing, isOwn, onImageUpload, uploadingImage, onBannerUpload, uploadingBanner,
+  onTutorialClick
 }: ProfileHeaderProps) {
   return (
     <div className="rounded-xl overflow-hidden" style={{ background: "#E5E2D8", border: "1px solid #D4D1C8" }}>
@@ -90,6 +92,19 @@ export default function ProfileHeader({
 
           {/* Actions (right-aligned, at avatar bottom level) */}
           <div className="flex gap-2 shrink-0 pb-1">
+            {isOwn && onTutorialClick && (
+              <button
+                onClick={onTutorialClick}
+                className="px-5 py-2 text-sm font-semibold rounded-lg transition-all cursor-pointer"
+                style={{
+                  color: "#EFECE3",
+                  background: "var(--primary)",
+                  border: "1px solid var(--primary)",
+                }}
+              >
+                Show Tutorial
+              </button>
+            )}
             {!isOwn && onFollow && (
               <button
                 onClick={onFollow}

@@ -5,11 +5,17 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/services/supabase";
 import { useAuth } from "@/contexts/AuthContext";
+import { useTour } from "@/contexts/TourContext";
 
 type UserType = "vendor" | "rfp_company";
 
 export default function SignupPage() {
   const [step, setStep] = useState<"role" | "details">("role");
+  const { startTour, goToStep } = useTour();
+  
+  useEffect(() => {
+    startTour("signup");
+  }, []);
   const [userType, setUserType] = useState<UserType | null>(null);
   const [form, setForm] = useState({
     company_name: "",
@@ -39,6 +45,7 @@ export default function SignupPage() {
   const handleRoleSelect = (role: UserType) => {
     setUserType(role);
     setStep("details");
+    goToStep(1);
   };
 
   const handleSignup = async (e: React.FormEvent) => {
@@ -167,10 +174,11 @@ export default function SignupPage() {
             <p className="text-[var(--muted)] text-sm mt-2">First, tell us how you'll use the platform</p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <div id="signup-role-container" className="grid grid-cols-1 md:grid-cols-2 gap-5">
             {/* RFP Company Card */}
             <button
               onClick={() => handleRoleSelect("rfp_company")}
+              id="signup-role-rfp"
               className="group relative card p-8 text-left cursor-pointer hover:border-[var(--primary)] hover:shadow-xl transition-all duration-200 hover:-translate-y-1"
             >
               <div className="w-14 h-14 rounded-2xl bg-[var(--primary-light)] flex items-center justify-center mb-5 group-hover:bg-[var(--primary)] transition-colors duration-200">
@@ -200,6 +208,7 @@ export default function SignupPage() {
             {/* Vendor Card */}
             <button
               onClick={() => handleRoleSelect("vendor")}
+              id="signup-role-vendor"
               className="group relative card p-8 text-left cursor-pointer hover:border-[var(--primary)] hover:shadow-xl transition-all duration-200 hover:-translate-y-1"
             >
               <div className="w-14 h-14 rounded-2xl bg-[var(--surface)] flex items-center justify-center mb-5 group-hover:bg-[var(--primary)] transition-colors duration-200">
@@ -263,7 +272,7 @@ export default function SignupPage() {
           <h1 className="text-3xl font-semibold text-[var(--foreground)]">Create Account</h1>
           <p className="text-[var(--muted)] text-sm mt-1">Complete your profile to get started</p>
         </div>
-        <div className="card">
+        <div id="signup-details-card" className="card">
           {error && <div className="bg-[var(--danger-light)] text-[var(--danger)] text-sm p-3 rounded-lg mb-4">{error}</div>}
           {successMessage && <div className="bg-[var(--success-light)] text-[var(--success)] text-sm p-3 rounded-lg mb-4">{successMessage}</div>}
           <form onSubmit={handleSignup} className="space-y-4">
@@ -298,7 +307,7 @@ export default function SignupPage() {
               <label className="block text-sm font-medium text-[var(--foreground)] mb-1.5">Description</label>
               <textarea name="description" value={form.description} onChange={handleChange} rows={3} className="input-field w-full" />
             </div>
-            <button type="submit" disabled={loading} className="btn-primary w-full justify-center py-3">
+            <button id="signup-details-submit" type="submit" disabled={loading} className="btn-primary w-full justify-center py-3">
               {loading ? "Creating account..." : "Create Account"}
             </button>
           </form>

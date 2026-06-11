@@ -126,6 +126,7 @@ export default function Navbar() {
                   <Link
                     key={item.href}
                     href={item.href}
+                    id={item.label === "Bidders" ? "nav-link-bidders" : item.label === "My Homepage" ? "nav-link-my-homepage" : item.label === "RFPs" ? "nav-link-rfps" : item.label === "RFP" ? "nav-link-rfp-post" : undefined}
                     className="relative px-3.5 py-1.5 text-[13px] font-medium rounded-full transition-all duration-200"
                     style={{
                       color: active ? "#000000" : "#333333",
@@ -170,6 +171,7 @@ export default function Navbar() {
                 <div className="flex items-center gap-2">
                   <Link
                     href="/profile"
+                    id="profile-nav-link"
                     className="flex items-center h-8 w-8 rounded-full overflow-hidden transition-all"
                     style={{
                       border: "2px solid #D4D1C8",

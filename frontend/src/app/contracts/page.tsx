@@ -147,6 +147,9 @@ export default function ContractsPage() {
     return matchSearch && matchStatus;
   });
 
+  const firstUnsubmittedIndex = filtered.findIndex(c => c.status === "open" && !submittedContractIds.has(c.contract_id));
+  const highlightIndex = firstUnsubmittedIndex !== -1 ? firstUnsubmittedIndex : 0;
+
   const totalCount = contracts.filter(isVisibleContract).length;
   const openCount = contracts.filter((c) => c.status === "open").length;
   const closedCount = contracts.filter((c) => c.status === "closed").length;
@@ -156,7 +159,7 @@ export default function ContractsPage() {
     <div className="max-w-6xl mx-auto px-4 py-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-        <div>
+        <div id="rfps-header">
           <h1 className="text-2xl font-bold text-[var(--foreground)] tracking-tight">
             {isRfpCompany ? "My Homepage" : "RFPs"}
           </h1>
@@ -180,7 +183,7 @@ export default function ContractsPage() {
       {/* Tabs — Vendors see Marketplace; RFP Companies see only My Contracts */}
       {/* Stats cards row — Only for vendors in Marketplace tab */}
       {!isRfpCompany && tab === "marketplace" && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+        <div id="rfps-stats-filters" className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
           {([
             { key: "all" as const, label: "Total", count: totalCount, color: "text-[var(--foreground)]", bg: "bg-[var(--surface)]" },
             { key: "open" as const, label: "Open", count: openCount, color: "text-[var(--primary)]", bg: "bg-[var(--primary-light)]" },
@@ -232,8 +235,8 @@ export default function ContractsPage() {
           </div>
 
           {/* Contract cards */}
-          <div className="space-y-3">
-            {filtered.map((c) => (
+          <div id="rfps-list" className="space-y-3">
+            {filtered.map((c, index) => (
               <div key={c.contract_id} className="card !p-0 overflow-hidden hover:border-[var(--primary)]/20 transition-all group">
                 <div className="flex items-stretch">
                   {/* Status accent bar */}
@@ -314,6 +317,7 @@ export default function ContractsPage() {
                         )}
                         <Link
                           href={`/contracts/${c.contract_id}?from=contracts`}
+                          id={index === highlightIndex ? "rfps-first-card-view" : undefined}
                           className="inline-flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-lg bg-[var(--primary)] text-[#EFECE3] hover:opacity-90 transition-opacity"
                         >
                           View Details

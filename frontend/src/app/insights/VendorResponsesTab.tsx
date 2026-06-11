@@ -233,7 +233,7 @@ export default function VendorResponsesTab() {
 
           // Save the result to Supabase from the client as a fallback/safeguard
           const analysisPayload = {
-            cache_key: job.result.cache_key || `${backgroundJobId}`,
+            cache_key: (job.result as any).cache_key || `${backgroundJobId}`,
             created_at: new Date().toISOString(),
             analyses_by_proposal_id: newAnalyses,
             judge_result: job.result.judge ?? null,

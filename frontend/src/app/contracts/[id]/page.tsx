@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useTour } from "@/contexts/TourContext";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { getCachedFullPipeline, saveProposalAnalysisResult, ProposalAnalysis, JudgeResult } from "@/services/aiService";
@@ -54,6 +55,7 @@ export default function ContractDetailPage() {
   const router = useRouter();
   const contractId: string = String(params?.id || "");
   const { user, profile, loading: authLoading } = useAuth();
+  const { activeTour } = useTour();
   const [contract, setContract] = useState<any>(null);
   const [proposals, setProposals] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -580,7 +582,7 @@ export default function ContractDetailPage() {
   ) || "TBD";
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
+    <div id="rfp-details-content" className="max-w-4xl mx-auto px-4 py-8">
       {/* Back link */}
       <button
         onClick={() => {
@@ -730,7 +732,7 @@ export default function ContractDetailPage() {
       )}
 
       {/* Already Applied Banner */}
-      {user && !isOwner && hasSubmitted && (() => {
+      {user && !isOwner && hasSubmitted && activeTour !== "vendor" && (() => {
         const myProposal = proposals.find((p) => p.vendor_id === user.id);
         return (
           <>
@@ -883,14 +885,14 @@ export default function ContractDetailPage() {
       })()}
 
       {/* Apply Button for vendors */}
-      {user && !isOwner && !hasSubmitted && contract.status === "open" && (
+      {((user && !isOwner && !hasSubmitted && contract.status === "open") || (activeTour === "vendor" && user && !isOwner)) && (
         <div className="bg-[var(--surface)] rounded-xl border border-[var(--divider)] p-6 mb-4">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div>
               <h2 className="text-lg font-semibold text-[var(--foreground)]">Interested in this contract?</h2>
               <p className="text-sm text-[var(--muted)] mt-0.5">Submit your vendor proposal to compete for this project.</p>
             </div>
-            <Link href={`/contracts/${contractId}/apply`} className="btn-primary shrink-0">
+            <Link href={`/contracts/${contractId}/apply`} id="rfp-apply-btn" className="btn-primary shrink-0">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
               Apply Now
             </Link>
