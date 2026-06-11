@@ -11,6 +11,7 @@ interface QaReviewRequestBody {
   organizationName?: string;
   category?: string;
   additionalDetails?: string;
+  skippedQuestions?: string[];
 }
 
 interface QaReviewResponse {
@@ -92,14 +93,19 @@ export async function POST(req: NextRequest) {
   const mandatorySections = Array.isArray(body.mandatorySections)
     ? body.mandatorySections.map(normalizeSectionKey).filter(Boolean)
     : [];
+  const skippedQuestions = Array.isArray(body.skippedQuestions)
+    ? new Set(body.skippedQuestions)
+    : new Set<string>();
 
   // ─── Completeness accounting ─────────────────────────────────────────────
   const totalRfpFields = RFP_QUESTIONS.length; // 20
   const answeredFields   = RFP_QUESTIONS.filter((q) => normalize(answers[q.key]));
-  const emptyFields      = RFP_QUESTIONS.filter((q) => !normalize(answers[q.key]));
+  const emptyFields      = RFP_QUESTIONS.filter((q) => !skippedQuestions.has(q.key) && !normalize(answers[q.key]));
   const missingRequired  = emptyFields.map((q) => q.key);
 
-  if (!normalize(answers[FINAL_INTAKE_KEY])) missingRequired.push(FINAL_INTAKE_KEY);
+  if (!skippedQuestions.has(FINAL_INTAKE_KEY) && !normalize(answers[FINAL_INTAKE_KEY])) {
+    missingRequired.push(FINAL_INTAKE_KEY);
+  }
 
   const missingQuestionKey   = missingRequired[0] ?? null;
   const missingQuestionLabel = missingQuestionKey ? getQuestionLabel(missingQuestionKey) : null;

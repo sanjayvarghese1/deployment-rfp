@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import RfpChatbot, { type UploadAnalysisPayload } from "@/components/RfpChatbot";
+import { getBackgroundGenerationSnapshot } from "@/lib/rfp/background";
 
 export default function RfpUploadReviewPage() {
   const router = useRouter();
@@ -12,21 +13,27 @@ export default function RfpUploadReviewPage() {
   useEffect(() => {
     try {
       const raw = window.sessionStorage.getItem("rfp-upload-analysis");
-      if (!raw) {
+      const snapshot = getBackgroundGenerationSnapshot();
+      const hasActiveUploadJob = snapshot.mode === "upload" && (snapshot.status === "running" || snapshot.status === "complete");
+
+      if (!raw && !hasActiveUploadJob) {
         router.replace("/rfp/intake?mode=upload");
         return;
       }
 
-      const parsed = JSON.parse(raw) as UploadAnalysisPayload;
-      const isValid =
-        typeof parsed?.overallScore === "number" &&
-        Array.isArray(parsed?.suggestions) &&
-        Array.isArray(parsed?.strengths) &&
-        typeof parsed?.analysis?.extractedText === "string";
+      let parsed: UploadAnalysisPayload | null = null;
+      if (raw) {
+        parsed = JSON.parse(raw) as UploadAnalysisPayload;
+        const isValid =
+          typeof parsed?.overallScore === "number" &&
+          Array.isArray(parsed?.suggestions) &&
+          Array.isArray(parsed?.strengths) &&
+          typeof parsed?.analysis?.extractedText === "string";
 
-      if (!isValid) {
-        router.replace("/rfp/intake?mode=upload");
-        return;
+        if (!isValid) {
+          router.replace("/rfp/intake?mode=upload");
+          return;
+        }
       }
 
       setUploadAnalysis(parsed);
@@ -45,7 +52,7 @@ export default function RfpUploadReviewPage() {
     );
   }
 
-  if (!uploadAnalysis) {
+  if (!uploadAnalysis && !getBackgroundGenerationSnapshot().jobId) {
     return null;
   }
 
@@ -67,7 +74,7 @@ export default function RfpUploadReviewPage() {
           Back
         </button>
       </div>
-      <RfpChatbot initialUploadAnalysis={uploadAnalysis} onSaved={handleSaved} />
+      <RfpChatbot initialUploadAnalysis={uploadAnalysis} onSaved={handleSaved} mode="upload" />
     </div>
   );
 }

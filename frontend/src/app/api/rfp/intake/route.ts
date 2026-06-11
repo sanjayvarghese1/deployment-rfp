@@ -33,6 +33,7 @@ interface IntakeRequestBody {
   answers?: Record<string, string>;
   currentQuestionKey?: string | null;
   mandatorySections?: string[];
+  skippedQuestions?: string[];
 }
 
 interface IntakeResponse {
@@ -68,40 +69,44 @@ function getSectionLabel(key: string): string {
   return SECTION_LABELS[key as keyof typeof SECTION_LABELS] || key;
 }
 
-function getNextRequiredKey(values: Record<string, string>): string | null {
+function getNextRequiredKey(values: Record<string, string>, skippedQuestions: Set<string>): string | null {
   for (const key of REQUIRED_KEYS) {
+    if (skippedQuestions.has(key)) continue;
     const current = normalizeText(values[key]);
     if (!current) return key;
   }
   return null;
 }
 
-function getNextMandatoryKey(values: Record<string, string>, mandatorySections: string[]): string | null {
+function getNextMandatoryKey(values: Record<string, string>, mandatorySections: string[], skippedQuestions: Set<string>): string | null {
   for (const key of mandatorySections) {
     if (key === FINAL_INTAKE_KEY) continue;
+    if (skippedQuestions.has(key)) continue;
     if (!RFP_SECTIONS.includes(key as never)) continue;
     if (!normalizeText(values[key])) return key;
   }
   return null;
 }
 
-function getNextSupplementaryKey(values: Record<string, string>): string | null {
+function getNextSupplementaryKey(values: Record<string, string>, skippedQuestions: Set<string>): string | null {
+  if (skippedQuestions.has(FINAL_INTAKE_KEY)) return null;
   if (!normalizeText(values[FINAL_INTAKE_KEY])) return FINAL_INTAKE_KEY;
   return null;
 }
 
-function getNextKeyAfter(currentKey: string, values: Record<string, string>, mandatorySections: string[]): string | null {
+function getNextKeyAfter(currentKey: string, values: Record<string, string>, mandatorySections: string[], skippedQuestions: Set<string>): string | null {
   const currentIdx = REQUIRED_KEYS.indexOf(currentKey);
-  if (currentIdx < 0) return getNextRequiredKey(values);
+  if (currentIdx < 0) return getNextRequiredKey(values, skippedQuestions);
   for (let i = currentIdx + 1; i < REQUIRED_KEYS.length; i += 1) {
     const key = REQUIRED_KEYS[i];
+    if (skippedQuestions.has(key)) continue;
     if (!normalizeText(values[key])) return key;
   }
-  const mandatoryKey = getNextMandatoryKey(values, mandatorySections);
+  const mandatoryKey = getNextMandatoryKey(values, mandatorySections, skippedQuestions);
   if (mandatoryKey) return mandatoryKey;
 
   // After all REQUIRED_KEYS and mandatory org sections are answered, check for supplementary key (extra details)
-  return getNextSupplementaryKey(values);
+  return getNextSupplementaryKey(values, skippedQuestions);
 }
 
 export async function POST(req: NextRequest) {
@@ -112,13 +117,16 @@ export async function POST(req: NextRequest) {
   const mandatorySections = Array.isArray(body.mandatorySections)
     ? body.mandatorySections.map(normalizeSectionKey).filter((key) => RFP_SECTIONS.includes(key as never))
     : [];
+  const skippedQuestions = Array.isArray(body.skippedQuestions)
+    ? new Set(body.skippedQuestions)
+    : new Set<string>();
 
   if (!message) {
     return NextResponse.json({ error: "message is required" }, { status: 400 });
   }
 
   if (message.length > MAX_INTAKE_MESSAGE_CHARS) {
-    const defaultCurrentKey = getNextRequiredKey(answers) || getNextMandatoryKey(answers, mandatorySections) || getNextSupplementaryKey(answers);
+    const defaultCurrentKey = getNextRequiredKey(answers, skippedQuestions) || getNextMandatoryKey(answers, mandatorySections, skippedQuestions) || getNextSupplementaryKey(answers, skippedQuestions);
     const nextQuestion = defaultCurrentKey
       ? defaultCurrentKey === FINAL_INTAKE_KEY
         ? getFinalIntakeQuestionLabel()
@@ -145,7 +153,7 @@ export async function POST(req: NextRequest) {
     if (mergedBase.project_title) mergedBase.project_title = normalizeText(mergedBase.project_title);
     if (mergedBase.category) mergedBase.category = normalizeCategory(mergedBase.category);
 
-    const defaultCurrentKey = getNextRequiredKey(mergedBase) || getNextMandatoryKey(mergedBase, mandatorySections) || getNextSupplementaryKey(mergedBase);
+    const defaultCurrentKey = getNextRequiredKey(mergedBase, skippedQuestions) || getNextMandatoryKey(mergedBase, mandatorySections, skippedQuestions) || getNextSupplementaryKey(mergedBase, skippedQuestions);
     const currentQuestionIsValid = !!requestedKey && (REQUIRED_KEYS.includes(requestedKey) || mandatorySections.includes(requestedKey) || requestedKey === FINAL_INTAKE_KEY);
     const currentQuestionKey = currentQuestionIsValid ? requestedKey : defaultCurrentKey;
     const currentQuestionLabel = currentQuestionKey
@@ -232,18 +240,18 @@ Rules:
     if (merged.project_title) merged.project_title = normalizeText(merged.project_title);
     if (merged.category) merged.category = normalizeCategory(merged.category);
 
-    const missingRequired = REQUIRED_KEYS.filter((key) => !normalizeText(merged[key]));
+    const missingRequired = REQUIRED_KEYS.filter((key) => !skippedQuestions.has(key) && !normalizeText(merged[key]));
     for (const key of mandatorySections) {
-      if (!normalizeText(merged[key])) missingRequired.push(key);
+      if (!skippedQuestions.has(key) && !normalizeText(merged[key])) missingRequired.push(key);
     }
-    if (!normalizeText(merged[FINAL_INTAKE_KEY])) {
+    if (!skippedQuestions.has(FINAL_INTAKE_KEY) && !normalizeText(merged[FINAL_INTAKE_KEY])) {
       missingRequired.push(FINAL_INTAKE_KEY);
     }
     const answeredCurrent = !!(currentQuestionKey && normalizeText(merged[currentQuestionKey]));
     if (currentQuestionKey && currentQuestionKey !== FINAL_INTAKE_KEY) {
-      nextQuestionKey = answeredCurrent ? getNextKeyAfter(currentQuestionKey, merged, mandatorySections) : currentQuestionKey;
+      nextQuestionKey = answeredCurrent ? getNextKeyAfter(currentQuestionKey, merged, mandatorySections, skippedQuestions) : currentQuestionKey;
     } else {
-      nextQuestionKey = getNextRequiredKey(merged) || getNextMandatoryKey(merged, mandatorySections) || getNextSupplementaryKey(merged);
+      nextQuestionKey = getNextRequiredKey(merged, skippedQuestions) || getNextMandatoryKey(merged, mandatorySections, skippedQuestions) || getNextSupplementaryKey(merged, skippedQuestions);
     }
 
     const nextQuestion = nextQuestionKey
@@ -257,7 +265,7 @@ Rules:
 
     let chatReply: string | null = null;
     if (readyForGeneration) {
-      chatReply = "Great. I have all 19 answers. Click **Generate RFP** to continue.";
+      chatReply = "Great. I have all answers. Click **Generate RFP** to continue.";
     } else if (nextQuestion) {
       if (answeredCurrent) {
         const leadIn = normalizeAssistantText(summary) || "Thanks, that helps.";

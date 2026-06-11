@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { useCallback, useRef, useState, useEffect, type ChangeEvent, type DragEvent } from "react";
 import { useRouter } from "next/navigation";
 import { apiUrl } from "@/lib/api";
+import { getBackgroundGenerationSnapshot } from "@/lib/rfp/background";
 
 interface UploadProgress {
   stage: "idle" | "uploading" | "analyzing" | "done" | "error";
@@ -16,6 +17,17 @@ export default function RfpUploadIntake() {
   const [uploadProgress, setUploadProgress] = useState<UploadProgress>({ stage: "idle", progress: 0 });
   const [dragActive, setDragActive] = useState(false);
   const [selectedFileName, setSelectedFileName] = useState("");
+
+  useEffect(() => {
+    try {
+      const snapshot = getBackgroundGenerationSnapshot();
+      if (snapshot.mode === "upload" && (snapshot.status === "running" || snapshot.status === "complete")) {
+        router.replace("/rfp/upload-review");
+      }
+    } catch (err) {
+      console.warn("Failed to check background generation snapshot:", err);
+    }
+  }, [router]);
 
   const progressWidthClass = uploadProgress.progress >= 100 ? "w-full" : uploadProgress.progress >= 65 ? "w-[65%]" : uploadProgress.progress >= 30 ? "w-[30%]" : "w-0";
 
