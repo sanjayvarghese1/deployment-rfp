@@ -50,7 +50,7 @@ export function computeComparativeMetrics(vendorScores: any[]): ComparativeMetri
     try {
       const criteria = Array.isArray(v?.scoring_criteria) ? v.scoring_criteria : ([] as any[]);
       if (criteria.length > 0) {
-        const nonZero = criteria.filter((c) => Number(c?.score ?? 0) > 0).length;
+        const nonZero = criteria.filter((c: any) => Number(c?.score ?? 0) > 0).length;
         mandatoryCoverage = Math.round((nonZero / criteria.length) * 100);
       }
     } catch {

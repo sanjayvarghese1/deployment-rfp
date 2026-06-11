@@ -210,7 +210,7 @@ Rules:
 - Make summary one sentence that reflects what you understood from the message.
 - Do not invent facts.`;
 
-      const extracted = await guardedOpenRouterChatJSON<any>(
+      const extracted = await guardedOpenRouterChatJSON(
         {
           model: AGENT_MODEL.INTAKE_EXTRACTION,
           messages: [

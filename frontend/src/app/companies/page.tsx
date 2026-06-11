@@ -119,7 +119,7 @@ export default function CompaniesPage() {
         <div className="relative bg-gradient-to-r from-[#EFECE3] via-[#E5E2D8] to-[#EFECE3] px-6 py-8">
           <div className="absolute inset-0 opacity-10" style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.4'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E\")" }} />
           <div className="relative flex flex-col md:flex-row md:items-end md:justify-between gap-4">
-            <div>
+            <div id="bidders-header">
               <div className="flex items-center gap-2 mb-2">
                 <div className="w-10 h-10 rounded-xl bg-[#E5E2D8] flex items-center justify-center">
                   <svg className="w-5 h-5 text-[#000000]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
@@ -163,7 +163,7 @@ export default function CompaniesPage() {
         </div>
 
         {/* Filter Row */}
-        <div className="flex items-center gap-3 px-5 py-2.5 flex-wrap">
+        <div id="bidders-search-filter" className="flex items-center gap-3 px-5 py-2.5 flex-wrap">
           <div className="flex items-center gap-1.5 text-xs text-[var(--muted)] font-medium shrink-0">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75" />
@@ -261,7 +261,7 @@ export default function CompaniesPage() {
 
       {/* Grid View */}
       {view === "grid" && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <div id="bidders-list" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {filtered.map((company) => {
             const followers = Array.isArray((company as any).followers) ? (company as any).followers as string[] : [];
             const isFollowing = user ? followers.includes(user.id) : false;

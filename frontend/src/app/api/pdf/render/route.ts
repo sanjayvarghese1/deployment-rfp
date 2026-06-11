@@ -743,7 +743,7 @@ export async function POST(req: NextRequest) {
 
     const pdf = await convertHtmlToPdf(html);
     const filename = kind === "comparison-sheet" ? "comparison-sheet.pdf" : "vendor-analysis-report.pdf";
-    return new NextResponse(pdf, {
+    return new NextResponse(new Uint8Array(pdf), {
       status: 200,
       headers: { "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="${filename}"`, "Cache-Control": "no-store" },
     });

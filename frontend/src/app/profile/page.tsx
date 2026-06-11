@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useAuth, UserProfile } from "@/contexts/AuthContext";
 import ProfileHeader from "@/components/ProfileHeader";
+import { useTour } from "@/contexts/TourContext";
+import { useRouter } from "next/navigation";
 import PostCard from "@/components/PostCard";
 import ContractCard from "@/components/ContractCard";
 import { supabase } from "@/services/supabase";
@@ -11,6 +13,8 @@ import { randomUUID } from "@/lib/uuid";
 
 export default function ProfilePage() {
   const { user, profile: authProfile } = useAuth();
+  const { startTour } = useTour();
+  const router = useRouter();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [username, setUsername] = useState<string>("");
   const [posts, setPosts] = useState<any[]>([]);
@@ -321,6 +325,15 @@ export default function ProfilePage() {
         uploadingImage={uploadingImage}
         onBannerUpload={handleBannerUpload}
         uploadingBanner={uploadingBanner}
+        onTutorialClick={() => {
+          if (profile.user_type === "vendor") {
+            startTour("vendor");
+            router.push("/contracts");
+          } else if (profile.user_type === "rfp_company") {
+            startTour("rfp");
+            router.push("/companies");
+          }
+        }}
       />
 
       {/* Navigation Tabs */}
@@ -358,16 +371,33 @@ export default function ProfilePage() {
                   <div className="rounded-xl p-6" style={{ background: "#E5E2D8", border: "1px solid #D4D1C8" }}>
                     <div className="flex items-center justify-between mb-4">
                       <h2 className="text-lg font-bold" style={{ color: "#000000" }}>About</h2>
-                      <button
-                        onClick={() => setEditing(true)}
-                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-lg transition-all hover:opacity-80"
-                        style={{ background: "#000000", color: "#EFECE3" }}
-                      >
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
-                        </svg>
-                        Edit Profile
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            if (profile.user_type === "vendor") {
+                              startTour("vendor");
+                              router.push("/contracts");
+                            } else if (profile.user_type === "rfp_company") {
+                              startTour("rfp");
+                              router.push("/companies");
+                            }
+                          }}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-lg transition-all hover:opacity-80 cursor-pointer"
+                          style={{ background: "var(--primary)", color: "#EFECE3" }}
+                        >
+                          Show Tutorial
+                        </button>
+                        <button
+                          onClick={() => setEditing(true)}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-lg transition-all hover:opacity-80"
+                          style={{ background: "#000000", color: "#EFECE3" }}
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
+                          </svg>
+                          Edit Profile
+                        </button>
+                      </div>
                     </div>
                     <p className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: "#333333" }}>
                       {profile.description || "No description added yet. Click Edit Profile to add one."}

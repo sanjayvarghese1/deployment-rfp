@@ -449,12 +449,13 @@ export default function MyContractsPage() {
       <div className="max-w-5xl mx-auto px-4 py-8">
         {/* Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
-          <div>
+          <div id="my-contracts-header">
             <h1 className="text-2xl font-bold text-[var(--foreground)] tracking-tight">My Homepage</h1>
             <p className="text-sm text-[var(--muted)] mt-0.5">Manage your posted RFPs</p>
           </div>
           <Link
             href="/rfp"
+            id="my-contracts-post-btn"
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[var(--primary)] text-[#EFECE3] text-sm font-semibold hover:opacity-90 transition-opacity"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
@@ -465,7 +466,7 @@ export default function MyContractsPage() {
         </div>
 
         {/* Stats row — 5 cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
+        <div id="my-contracts-stats" className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
           {([
             { key: "all", label: "Total", color: "text-[var(--foreground)]", bg: "bg-[var(--surface)]" },
             { key: "open", label: "Open", color: "text-[var(--primary)]", bg: "bg-[var(--primary-light)]" },
@@ -550,7 +551,7 @@ export default function MyContractsPage() {
             )}
           </div>
         ) : (
-          <div className="space-y-3">
+          <div id="my-contracts-list" className="space-y-3">
             {filtered.map((c) => {
               const badge = statusBadge(c.status);
               const isArchived = c.status === "archived";
